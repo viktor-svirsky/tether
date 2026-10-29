@@ -38,6 +38,23 @@ class TetherUITestCase: XCTestCase {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
+    /// A List section header. Some iOS versions show headers in capitals and some don't, so the
+    /// match ignores case.
+    func sectionHeader(_ title: String) -> XCUIElement {
+        app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", title)).firstMatch
+    }
+
+    /// Closes a confirmation dialog without choosing anything. Before iOS 26 it has a Cancel button.
+    /// From iOS 26 it opens as a popover with no Cancel, and a tap outside it closes it.
+    func cancelDialog() {
+        let cancel = app.buttons["Cancel"].firstMatch
+        if cancel.exists {
+            cancel.tap()
+        } else {
+            app.otherElements["PopoverDismissRegion"].firstMatch.tap()
+        }
+    }
+
     /// The static text with this identifier. For a Label (icon and text) the icon carries the identifier too.
     func staticText(_ id: String) -> XCUIElement {
         app.staticTexts.matching(identifier: id).firstMatch

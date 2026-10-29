@@ -52,7 +52,7 @@ final class DeviceViewTests: TetherUITestCase {
         element("device.remove").tap()
         XCTAssertTrue(app.buttons["Remove"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Remove iPad?"].exists)
-        app.buttons["Cancel"].firstMatch.tap()
+        cancelDialog()
         waitUntilGone(app.buttons["Remove"].firstMatch)
         XCTAssertTrue(app.navigationBars["iPad"].exists, "still on the device's screen")
         goBack(to: "Tether")
@@ -77,7 +77,7 @@ final class DeviceViewTests: TetherUITestCase {
         let banner = staticText("wireguard.problem") // the warning icon carries the identifier too
         XCTAssertTrue(reveal(banner).exists)
         XCTAssertEqual(banner.label, lockedText)
-        XCTAssertTrue(app.staticTexts["WIREGUARD ISN'T RUNNING"].exists)
+        XCTAssertTrue(sectionHeader("WIREGUARD ISN'T RUNNING").exists)
         XCTAssertFalse(element("wireguard.reset").exists, "a locked Keychain gets better by unlocking, not by starting over")
         XCTAssertFalse(element("add.qr").exists)
         XCTAssertFalse(element("add.share").exists)
@@ -96,6 +96,6 @@ final class DeviceViewTests: TetherUITestCase {
         waitUntilGone(element("wireguard.problem"))
         XCTAssertFalse(element("wireguard.reset").exists)
         XCTAssertTrue(reveal(element("add.qr")).exists)
-        XCTAssertTrue(app.staticTexts["ADD A DEVICE"].exists, "no device yet after starting over")
+        XCTAssertTrue(sectionHeader("ADD A DEVICE").exists, "no device yet after starting over")
     }
 }

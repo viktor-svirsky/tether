@@ -13,14 +13,14 @@ final class StatusCardTests: TetherUITestCase {
     func testWaitingHidesTheSharingSections() {
         launch(.waiting)
         XCTAssertFalse(element("traffic.speeds").exists)
-        XCTAssertFalse(app.staticTexts["DEVICES"].exists)
+        XCTAssertFalse(sectionHeader("DEVICES").exists)
         XCTAssertTrue(reveal(element("add.qr")).exists, "it leads with the code for a device")
     }
 
     func testNoDevicesSaysNobodyUsesTetherYet() {
         launch(.noDevices)
         XCTAssertEqual(label(of: "status.title"), "Sharing")
-        XCTAssertEqual(label(of: "status.headline"), "Hotspot is on, no device is using Tether yet")
+        XCTAssertEqual(label(of: "status.headline"), "No device is using Tether yet")
         XCTAssertFalse(element("status.howToConnect").exists, "the code is on the main screen, so nothing to open")
     }
 
@@ -48,7 +48,7 @@ final class StatusCardTests: TetherUITestCase {
         // The iPad's tunnel is up and the MacBook's is not, so this is one device, not two.
         launch(.sharing)
         XCTAssertEqual(label(of: "status.title"), "Sharing")
-        XCTAssertEqual(label(of: "status.headline"), "Sharing with 1 device")
+        XCTAssertEqual(label(of: "status.headline"), "1 device connected")
     }
 
     func testSharingHasNoHowToConnectButton() {

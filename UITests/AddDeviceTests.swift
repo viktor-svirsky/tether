@@ -11,21 +11,21 @@ final class AddDeviceTests: TetherUITestCase {
         let share = reveal(element("add.share"))
         XCTAssertTrue(share.label.contains("Share as a file, for a Mac or a router"), share.label)
         XCTAssertEqual(reveal(element("add.steps")).label, steps)
-        XCTAssertTrue(app.staticTexts["ADD A DEVICE"].exists)
-        XCTAssertFalse(app.staticTexts["ADD ANOTHER DEVICE"].exists)
+        XCTAssertTrue(sectionHeader("ADD A DEVICE").exists)
+        XCTAssertFalse(sectionHeader("ADD ANOTHER DEVICE").exists)
     }
 
     func testTheQRCodeShowsWithTheHotspotOnButNoDevice() {
         launch(.noDevices)
         XCTAssertTrue(reveal(element("add.qr")).exists)
-        XCTAssertTrue(app.staticTexts["ADD A DEVICE"].exists)
+        XCTAssertTrue(sectionHeader("ADD A DEVICE").exists)
     }
 
     func testOnceADeviceExistsTheHeaderSaysAddAnotherDevice() {
         launch(.sharing)
         XCTAssertTrue(reveal(element("add.qr")).exists, "the code stays for the next device")
-        XCTAssertTrue(app.staticTexts["ADD ANOTHER DEVICE"].exists)
-        XCTAssertFalse(app.staticTexts["ADD A DEVICE"].exists)
+        XCTAssertTrue(sectionHeader("ADD ANOTHER DEVICE").exists)
+        XCTAssertFalse(sectionHeader("ADD A DEVICE").exists)
         XCTAssertTrue(reveal(element("add.share")).exists)
         XCTAssertTrue(reveal(element("add.steps")).exists)
     }

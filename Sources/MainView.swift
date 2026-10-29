@@ -100,7 +100,9 @@ struct StatusCard: View {
     private var tint: Color { model.sharing ? .green : .orange }
     private var sharing: Bool { model.sharing }
     /// Grows with the text size, like the title under it.
-    @ScaledMetric(relativeTo: .title) private var iconSize: CGFloat = 44
+    @ScaledMetric(relativeTo: .title2) private var iconSize: CGFloat = 30
+    @ScaledMetric(relativeTo: .title2) private var dotSize: CGFloat = 12
+    @Environment(\.dynamicTypeSize) private var textSize
 
     /// Sharing gets the brand's two colours, softly. Waiting stays orange, the warning colour.
     private var background: some ShapeStyle {
@@ -119,61 +121,67 @@ struct StatusCard: View {
 
     private var headline: String {
         switch model.wireGuardConnected.count {
-        case 0: return "Hotspot is on, no device is using Tether yet"
-        case 1: return "Sharing with 1 device"
-        case let n: return "Sharing with \(n) devices"
+        case 0: return "No device is using Tether yet"
+        case 1: return "1 device connected"
+        case let n: return "\(n) devices connected"
         }
     }
 
+    /// The icon sits left of the text, so the card stays a few lines tall. At the accessibility text
+    /// sizes a row would squeeze the text into a narrow column, so the icon goes above it.
+    private var layout: AnyLayout {
+        textSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 14))
+    }
+
     var body: some View {
-        VStack(spacing: 8) {
+        layout {
             Image(systemName: "link")
                 .font(.system(size: iconSize, weight: .semibold))
                 .foregroundStyle(.tint)
                 .overlay(alignment: .bottomTrailing) {
                     Circle()
                         .fill(tint)
-                        .frame(width: 16, height: 16)
-                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 3))
-                        .offset(x: 6, y: 4)
+                        .frame(width: dotSize, height: dotSize)
+                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
+                        .offset(x: 4, y: 3)
                 }
                 .accessibilityHidden(true)
-            Text(sharing ? "Sharing" : model.running ? "Tether can't share yet" : "Turn on Personal Hotspot")
-                .font(.title.bold())
-                .multilineTextAlignment(.center)
-                .accessibilityIdentifier("status.title")
-            if sharing {
-                Text(headline)
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
-                    .accessibilityIdentifier("status.headline")
-                Text("To stop, turn off Personal Hotspot.")
-                    .font(.subheadline)
-                    .multilineTextAlignment(.center)
-                    .accessibilityIdentifier("status.stopHint")
-            } else if model.running {
-                // The WireGuard section under the card says why, and what to do.
-                Text("Personal Hotspot is on, but WireGuard isn't running.")
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
-                    .accessibilityIdentifier("status.headline")
-            } else {
-                Button(action: Self.openHotspotSettings) {
-                    // The tint fails contrast on the orange card, so the text is the label colour and the underline
-                    // says "tap". Color.primary, because inside a button `.primary` is the button's tint.
-                    Text("Settings > Personal Hotspot > Allow Others to Join")
+            VStack(alignment: .leading, spacing: 4) {
+                Text(sharing ? "Sharing" : model.running ? "Tether can't share yet" : "Turn on Personal Hotspot")
+                    .font(.title2.bold())
+                    .accessibilityIdentifier("status.title")
+                if sharing {
+                    Text(headline)
+                        .font(.headline)
+                        .accessibilityIdentifier("status.headline")
+                    Text("To stop, turn off Personal Hotspot.")
                         .font(.subheadline)
-                        .underline()
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(Color.primary)
+                        .accessibilityIdentifier("status.stopHint")
+                } else if model.running {
+                    // The WireGuard section under the card says why, and what to do.
+                    Text("Personal Hotspot is on, but WireGuard isn't running.")
+                        .font(.headline)
+                        .accessibilityIdentifier("status.headline")
+                } else {
+                    Button(action: Self.openHotspotSettings) {
+                        // The tint fails contrast on the orange card, so the text is the label colour and the underline
+                        // says "tap". Color.primary, because inside a button `.primary` is the button's tint.
+                        Text("Settings > Personal Hotspot > Allow Others to Join")
+                            .font(.subheadline)
+                            .underline()
+                            .multilineTextAlignment(.leading)
+                            .foregroundStyle(Color.primary)
+                    }
+                    .accessibilityIdentifier("status.hotspotPath")
+                    .accessibilityHint("Opens Settings")
                 }
-                .accessibilityIdentifier("status.hotspotPath")
-                .accessibilityHint("Opens Settings")
             }
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-        .padding(.horizontal)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
         .background(background, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .animation(.smooth, value: sharing)
     }

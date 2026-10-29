@@ -10,7 +10,7 @@ final class DevicesTests: TetherUITestCase {
         XCTAssertTrue(ipad.label.contains("iPad") && ipad.label.contains("Connected"), ipad.label)
         XCTAssertFalse(ipad.label.contains("Not connected"), ipad.label)
         XCTAssertTrue(mac.label.contains("MacBook") && mac.label.contains("Not connected"), mac.label)
-        XCTAssertTrue(app.staticTexts["DEVICES"].exists)
+        XCTAssertTrue(sectionHeader("DEVICES").exists)
     }
 
     func testDeviceRowsHaveNoAddressesOrByteLines() {
@@ -24,7 +24,7 @@ final class DevicesTests: TetherUITestCase {
 
     func testNoDevicesMeansNoDevicesSection() {
         launch(.noDevices)
-        XCTAssertFalse(app.staticTexts["DEVICES"].exists)
+        XCTAssertFalse(sectionHeader("DEVICES").exists)
         XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "device.")).firstMatch.exists)
     }
 

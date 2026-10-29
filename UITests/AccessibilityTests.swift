@@ -36,7 +36,7 @@ final class AccessibilityTests: TetherUITestCase {
             XCTAssertGreaterThanOrEqual(e.frame.minX, window.minX - 1, "\(id) is cut off on the left")
             XCTAssertLessThanOrEqual(e.frame.maxX, window.maxX + 1, "\(id) is cut off on the right")
         }
-        XCTAssertEqual(label(of: "status.headline"), "Sharing with 1 device")
+        XCTAssertEqual(label(of: "status.headline"), "1 device connected")
     }
 
     func testLargeTextWrapsInsteadOfShrinking() {
@@ -53,7 +53,7 @@ final class AccessibilityTests: TetherUITestCase {
     func testDarkModeShowsTheMainScreenAndPassesTheContrastAudit() throws {
         XCUIDevice.shared.appearance = .dark
         launch(.sharing)
-        XCTAssertEqual(label(of: "status.headline"), "Sharing with 1 device")
+        XCTAssertEqual(label(of: "status.headline"), "1 device connected")
         try audit()
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "Main screen, dark mode"
