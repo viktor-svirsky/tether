@@ -97,7 +97,7 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 	s.mu.Lock()
 	c := s.cones[device]
 	owner := s.ownerLocked(device.Addr())
-	full := s.conesOf[owner] >= s.maxCones
+	full := s.conesOf[owner] >= s.maxCones || s.closed
 	s.mu.Unlock()
 	if c != nil {
 		if c.owner != owner {
@@ -116,16 +116,17 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 	c.last.Store(time.Now().UnixNano())
 	c.dnsOnly.Store(true) // until handleUDP's sentTo sees a packet to another port, the first one included
 	s.mu.Lock()
-	if other := s.cones[device]; other != nil || s.ownerLocked(device.Addr()) != owner || s.conesOf[owner] >= s.maxCones {
+	if other := s.cones[device]; other != nil || s.ownerLocked(device.Addr()) != owner || s.conesOf[owner] >= s.maxCones || s.closed {
 		// Another packet from the same port made one first, SetPeers changed the devices since
-		// the owner was read, or the owner's other ports reached the cap meanwhile. Only
+		// the owner was read, the owner's other ports reached the cap meanwhile, or Close
+		// began, which closes only the cones it can see. Only
 		// handleUDP makes cones, on one goroutine per device, so this is a guard, not a path.
 		s.mu.Unlock()
 		conn.Close()
 		if other != nil && other.owner == owner {
 			return other
 		}
-		return nil // the packet belonged to an owner that's gone, so it goes too
+		return nil // the packet belonged to an owner that's gone, or came too late, so it goes too
 	}
 	s.cones[device] = c
 	s.conesOf[owner]++
