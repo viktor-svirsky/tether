@@ -37,7 +37,8 @@ final class Model: ObservableObject {
     @Published private(set) var wireGuardReady: WireGuardSetup.Peer?
     /// Why there's no QR code while the devices that have one still connect: making the next one couldn't be saved.
     @Published private(set) var wireGuardReadyProblem: String?
-    /// Why WireGuard isn't running while the hotspot is on, shown on the WireGuard screen.
+    /// Why WireGuard isn't running, shown on the main screen: the saved setup's problem from launch on,
+    /// hotspot or not, or why the server didn't start on the hotspot.
     @Published private(set) var wireGuardProblem: String?
     /// The hotspot is on and WireGuard runs. `running` alone is only the hotspot.
     var sharing: Bool { running && wireGuardProblem == nil }
@@ -67,11 +68,11 @@ final class Model: ObservableObject {
         #endif
         self.wireGuardDevices = WireGuardDevices(secrets: secrets)
         publishSetup()
+        showSetupProblem() // from launch, before any device joins the hotspot
         #if DEBUG
         if let demo {
             self.demo = demo
             demo.apply(to: self)
-            if !wireGuardDevices.loaded { startWireGuard(on: Hotspot.host) } // only reports the problem, no server starts
             return // no server, keep-alive audio, watcher, sampler or scene observers
         }
         #endif
@@ -82,7 +83,6 @@ final class Model: ObservableObject {
                 self?.syncWithHotspot()
                 // On screen the sampler does this every second.
                 if self?.sceneActive == false { self?.claimReadyInBackground() }
-                self?.retryReady()
                 // The slack lets iOS wake the app for this together with other timers.
                 let interval = KeepAlivePolicy.watchInterval(sceneActive: self?.sceneActive ?? false)
                 try? await Task.sleep(for: interval.every, tolerance: interval.tolerance)
@@ -120,15 +120,22 @@ final class Model: ObservableObject {
     private var sampler: Task<Void, Never>?
     private var lastSample: (up: UInt64, down: UInt64, at: Date)?
     private var boundHost: String?
+    /// Why the saved setup can't be used, see `checkSetup`.
+    private var setupProblem: String?
+    /// Why the server didn't start on the hotspot. It goes with the hotspot.
+    private var startProblem: String?
 
     /// The hotspot interface exists only while Personal Hotspot is on. This starts WireGuard when
     /// it appears and stops it when it goes away or changes, so it never listens anywhere else.
     func syncWithHotspot() {
+        checkSetup()
         let hotspot = Interfaces.hotspotAddress()
         if running, hotspot != boundHost {
             append("hotspot address gone or changed, stopping")
             wireGuard.stop()
             running = false
+            startProblem = nil // the next hotspot gets a new try
+            showProblem()
         }
         // A WireGuard start that failed (keys locked after a restart, say) is tried again here.
         if running, !wireGuard.running, let boundHost { startWireGuard(on: boundHost) }
@@ -158,28 +165,40 @@ final class Model: ObservableObject {
         }
     }
 
-    /// If WireGuard can't start, the problem shows on the WireGuard screen. The watcher tries
-    /// again on its next round, and a problem is logged once, not on every try.
-    private func startWireGuard(on hotspot: String) {
+    /// Reads the saved setup until it can, and says why it can't. On every watcher round, hotspot
+    /// or not: without the setup there's no QR code to add a device with either.
+    private func checkSetup() {
         if !wireGuardDevices.loaded, !wireGuardDevices.needsReset {
             wireGuardDevices.load() // the Keychain can be locked until the first unlock after a restart
-            publishSetup()
+            if wireGuardDevices.loaded { publishSetup() } // not every round while it's locked, which redraws the screen
+        } else if wireGuardDevices.prepareReady() { // a QR code that couldn't be saved before
+            wireGuardPeersChanged()
         }
-        if let error = wireGuardDevices.loadError {
-            wireGuardFailed(Self.setupProblem(error), error)
-            return
-        }
+        showSetupProblem()
+    }
+
+    private func showSetupProblem() {
+        setupProblem = wireGuardDevices.loadError.map(Self.problem(with:))
+        showProblem(because: wireGuardDevices.loadError)
+    }
+
+    /// If WireGuard can't start, the problem shows on the main screen. The watcher tries again on
+    /// its next round.
+    private func startWireGuard(on hotspot: String) {
+        guard wireGuardDevices.loaded else { return } // the setup's problem shows already
         do {
             try wireGuard.start(host: hotspot, setup: wireGuardDevices.setup)
-            wireGuardProblem = nil
+            startProblem = nil
+            showProblem()
             append("WireGuard on \(hotspot):\(WireGuardSetup.port), \(wireGuardPeers.count) devices")
         } catch {
-            wireGuardFailed("It couldn't start: \(error)", error)
+            startProblem = "It couldn't start: \(error)"
+            showProblem(because: error)
         }
     }
 
     /// Why the saved setup can't be used, for `wireGuardProblem`.
-    private static func setupProblem(_ error: Error) -> String {
+    private static func problem(with error: Error) -> String {
         switch error {
         case is WireGuardDevices.Unreadable: "Its saved keys can't be read. Start over with new keys to use it."
         case let unsaved as WireGuardDevices.Unsaved: "Its new keys can't be saved: \(unsaved.reason)."
@@ -187,10 +206,13 @@ final class Model: ObservableObject {
         }
     }
 
-    private func wireGuardFailed(_ problem: String, _ error: Error) {
+    /// The setup's problem comes first: until it's solved, the server can't start anyway. A problem
+    /// is logged once, not on every try.
+    private func showProblem(because error: Error? = nil) {
+        let problem = setupProblem ?? startProblem
         guard problem != wireGuardProblem else { return }
         wireGuardProblem = problem
-        append("WireGuard not started: \(error)")
+        if problem != nil, let error { append("WireGuard not started: \(error)") }
     }
 
     /// The same as opening Tether, for Start Tether in Shortcuts: the 10 minutes' wait for the hotspot
@@ -222,11 +244,8 @@ final class Model: ObservableObject {
     func resetWireGuard() {
         wireGuardDevices.reset()
         publishSetup()
-        if let error = wireGuardDevices.loadError {
-            wireGuardFailed(Self.setupProblem(error), error)
-            return
-        }
-        wireGuardProblem = nil
+        showSetupProblem()
+        guard wireGuardDevices.loaded else { return }
         append("WireGuard keys started over")
         if running, let boundHost { startWireGuard(on: boundHost) }
     }
@@ -254,11 +273,6 @@ final class Model: ObservableObject {
             wireGuardReadyProblem = readyProblem
             if let readyProblem { append("WireGuard: \(readyProblem)") }
         }
-    }
-
-    /// A QR code that couldn't be saved is tried again on every watcher round, see `WireGuardDevices.prepareReady`.
-    private func retryReady() {
-        if wireGuardDevices.prepareReady() { wireGuardPeersChanged() }
     }
 
     private func wireGuardPeersChanged() {

@@ -12,6 +12,8 @@ import Foundation
 enum DemoScenario: String, CaseIterable {
     /// Hotspot off.
     case waiting
+    /// Hotspot off, and the Keychain is locked: the problem shows from launch, and there's no QR code.
+    case wireGuardLockedWaiting
     /// Hotspot on, no device yet: only the QR code.
     case noDevices
     /// Two devices, the iPad connected and the MacBook not, and a speed.
@@ -70,7 +72,7 @@ struct DemoState {
 
     init(_ scenario: DemoScenario) {
         self.scenario = scenario
-        guard scenario != .waiting else {
+        guard ![.waiting, .wireGuardLockedWaiting].contains(scenario) else {
             running = false
             return
         }
@@ -93,7 +95,7 @@ struct DemoState {
         default: break
         }
         switch scenario {
-        case .wireGuardLocked: return LockedSecrets()
+        case .wireGuardLocked, .wireGuardLockedWaiting: return LockedSecrets()
         case .wireGuardUnsaved, .qrCodeUnsaved: return UnsavableSecrets(secrets.data)
         default: return secrets
         }
