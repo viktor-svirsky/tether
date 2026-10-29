@@ -53,9 +53,26 @@ const (
 	// dnsIdle is for a cone that has only sent DNS lookups. A lookup takes a new port every time,
 	// so with a minute each, browsing would keep hundreds of sockets open.
 	dnsIdle = 10 * time.Second
-	// maxCones caps the UDP sockets, about 70 KB each with their buffers. Normal use stays far
-	// below it once lookups go after dnsIdle. Past it a new device port's packets are dropped.
-	maxCones = 512
+	// The caps below are per device, a router and the devices behind it counting as one, so one
+	// busy or misbehaving device can't use up what the others need. The budget is SetMemoryLimit's
+	// 192 MB, which a few devices at their caps together must stay inside.
+	//
+	// maxCones caps a device's UDP sockets, about 70 KB each with their buffers, so 18 MB at the
+	// cap. A lookup takes a port for dnsIdle, so a busy browser keeps a few dozen. Past it a new
+	// port of that device's gets nothing, and the other devices keep theirs, DNS included.
+	maxCones = 256
+	// maxDials caps a device's TCP connections still being dialed, each up to dialTimeout. A page
+	// load asks for a hundred or so at once, and they're done within a round trip. A port scan
+	// against hosts that drop SYNs fills it, and its device's next ones are refused.
+	maxDials = 256
+	// maxConns caps a device's TCP connections, open or being dialed. An idle one measured under
+	// 80 KB: copy buffers, three goroutines and gVisor's endpoint. So under 40 MB at the cap. A
+	// browser stays well below it, a torrent client with a thousand peers reaches it and is
+	// refused more.
+	maxConns = 512
+	// maxInFlight caps the TCP connections being dialed for all devices together, like gVisor's
+	// own cap it replaces, see handleTCP.
+	maxInFlight = 4096
 	// handshakeEvery is how often the devices' last handshakes are read back from wireguard-go.
 	// They come every 2 minutes, so more often only wakes the iPhone.
 	handshakeEvery = 10 * time.Second
@@ -161,8 +178,23 @@ type Server struct {
 	shaken       map[netip.Addr]time.Time              // tunnel address -> when its last handshake was
 	flows        map[netip.Addr]map[io.Closer]struct{} // open connections, to close a removed device's
 	cones        map[netip.AddrPort]*cone              // UDP, by device port, see udp.go
-	maxCones     int                                   // see the constant. Tests lower it
+	conesOf      map[netip.Addr]int                    // how many cones each device has
 	conesRunning sync.WaitGroup
+	// arriving holds the TCP connections between their SYN and the end of their dial, see
+	// handleTCP. dials and conns count each device's, see maxDials and maxConns.
+	forwarder *tcp.Forwarder
+	arriving  map[stack.TransportEndpointID]*arrival
+	dials     map[netip.Addr]int
+	conns     map[netip.Addr]int
+	// The caps, see the constants. Tests lower them.
+	maxCones, maxDials, maxConns int
+}
+
+// arrival is a TCP connection a device asked for, from its SYN until its dial ends.
+type arrival struct {
+	owner  netip.Addr // whose connection it is, read when the SYN came in
+	refuse bool       // nobody owns it, or its owner is at a cap. It isn't counted
+	taken  bool       // a forwardTCP is making it
 }
 
 // Start listens for WireGuard on host:port with the server's private key. Peers come from SetPeers.
@@ -174,7 +206,13 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		now:      time.Now,
 		flows:    map[netip.Addr]map[io.Closer]struct{}{},
 		cones:    map[netip.AddrPort]*cone{},
+		conesOf:  map[netip.Addr]int{},
+		arriving: map[stack.TransportEndpointID]*arrival{},
+		dials:    map[netip.Addr]int{},
+		conns:    map[netip.Addr]int{},
 		maxCones: maxCones,
+		maxDials: maxDials,
+		maxConns: maxConns,
 		// Go's default keepalive probes every idle connection every 15 s, which keeps the cellular
 		// radio awake. Probing is still needed: when the device closes first, forwardTCP half-closes
 		// and waits for the remote, so a remote that silently went away would hold it forever.
@@ -210,7 +248,9 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	s.stack.SetSpoofing(1, true)
 	s.stack.AddRoute(tcpip.Route{Destination: header.IPv4EmptySubnet, NIC: 1})
 	s.stack.AddRoute(tcpip.Route{Destination: header.IPv6EmptySubnet, NIC: 1})
-	s.stack.SetTransportProtocolHandler(tcp.ProtocolNumber, tcp.NewForwarder(s.stack, 0, 4096, s.forwardTCP).HandlePacket)
+	// gVisor's own cap is above maxInFlight, so it never drops a SYN handleTCP has counted.
+	s.forwarder = tcp.NewForwarder(s.stack, 0, 2*maxInFlight, s.forwardTCP)
+	s.stack.SetTransportProtocolHandler(tcp.ProtocolNumber, s.handleTCP)
 	s.stack.SetTransportProtocolHandler(udp.ProtocolNumber, s.handleUDP)
 
 	logger := &device.Logger{Verbosef: s.notice, Errorf: device.NewLogger(device.LogLevelError, "wireguard: ").Errorf}
@@ -584,29 +624,117 @@ func addrPort(a tcpip.Address, port uint16) netip.AddrPort {
 	return netip.AddrPortFrom(ip.Unmap(), port)
 }
 
-// forwardTCP runs on its own goroutine: gVisor's TCP forwarder starts one per connection.
+// handleTCP takes the TCP packets no open connection wanted, inline on wireguard-go's receive
+// goroutine like handleUDP. A new connection's SYN is counted against its device's caps here,
+// before gVisor's forwarder starts a goroutine for it, and its arrival is kept until forwardTCP's
+// dial ends. A SYN sent again meanwhile finds it and isn't counted twice.
+func (s *Server) handleTCP(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
+	h := header.TCP(pkt.TransportHeader().Slice())
+	if len(h) < header.TCPMinimumSize || h.Flags()&(header.TCPFlagSyn|header.TCPFlagAck) != header.TCPFlagSyn {
+		return false // not a new connection, so the stack answers with a reset
+	}
+	s.mu.Lock()
+	a, again := s.arriving[id]
+	if !again {
+		if len(s.arriving) >= maxInFlight {
+			s.mu.Unlock()
+			return true // dropped, and the device sends it again
+		}
+		owner := s.ownerLocked(addrPort(id.RemoteAddress, 0).Addr())
+		a = &arrival{owner: owner}
+		a.refuse = !owner.IsValid() || s.dials[owner] >= s.maxDials || s.conns[owner] >= s.maxConns
+		if !a.refuse {
+			s.dials[owner]++
+			s.conns[owner]++
+		}
+		s.arriving[id] = a
+	}
+	s.mu.Unlock()
+	if !s.forwarder.HandlePacket(id, pkt) {
+		// A bad checksum. No goroutine was started for it.
+		if !again {
+			s.mu.Lock()
+			s.dialed(id, a, false)
+			s.mu.Unlock()
+		}
+		return false
+	}
+	return true
+}
+
+// dialed ends an arrival: its dial is over, and its connection is open when open is true, or gone.
+// Runs with s.mu held.
+func (s *Server) dialed(id stack.TransportEndpointID, a *arrival, open bool) {
+	if s.arriving[id] == a {
+		delete(s.arriving, id)
+	}
+	if a.refuse {
+		return
+	}
+	release(s.dials, a.owner)
+	if !open {
+		release(s.conns, a.owner)
+	}
+}
+
+// release takes one off a device's count, and forgets the device at none.
+func release(counts map[netip.Addr]int, device netip.Addr) {
+	counts[device]--
+	if counts[device] <= 0 {
+		delete(counts, device)
+	}
+}
+
+// forwardTCP runs on its own goroutine: gVisor's TCP forwarder starts one per SYN handleTCP passes on.
 func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	id := r.ID()
-	src := addrPort(id.RemoteAddress, 0).Addr()
-	device := s.owner(src)
-	dst := addrPort(id.LocalAddress, id.LocalPort)
-	if !device.IsValid() || !forwardable(dst.Addr()) {
+	s.mu.Lock()
+	a := s.arriving[id]
+	mine := a != nil && !a.taken
+	if mine {
+		a.taken = true
+	}
+	s.mu.Unlock()
+	if !mine {
+		// A SYN sent again after the dial for it was refused, before its arrival was gone.
 		r.Complete(true)
+		return
+	}
+	// The arrival goes after Complete, so a SYN sent again in between still finds it.
+	refuse := func() {
+		r.Complete(true) // a reset, which is what the device would see from a refused port
+		s.mu.Lock()
+		s.dialed(id, a, false)
+		s.mu.Unlock()
+	}
+	src := addrPort(id.RemoteAddress, 0).Addr()
+	dst := addrPort(id.LocalAddress, id.LocalPort)
+	if a.refuse || !forwardable(dst.Addr()) {
+		refuse()
 		return
 	}
 	out, err := s.dial("tcp", dst.String())
 	if err != nil {
-		r.Complete(true) // a reset, which is what the device would see from a refused port
+		refuse()
 		return
 	}
 	var wq waiter.Queue
 	ep, terr := r.CreateEndpoint(&wq)
 	if terr != nil {
 		out.Close()
-		r.Complete(true)
+		refuse()
 		return
 	}
 	r.Complete(false)
+	s.mu.Lock()
+	s.dialed(id, a, true)
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		release(s.conns, a.owner)
+		s.mu.Unlock()
+	}()
+	device := a.owner
 	// A device that leaves the hotspot never closes its connections. Keepalive finds them.
 	ep.SocketOptions().SetKeepAlive(true)
 	idle, interval := tcpip.KeepaliveIdleOption(60*time.Second), tcpip.KeepaliveIntervalOption(15*time.Second)
@@ -645,10 +773,18 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	closeBoth()
 }
 
+// copyBufs hold one direction of a TCP connection between a read and its write, each for as long as
+// the connection is open. 16 KB is a dozen packets at the tunnel's MTU, and gVisor and the kernel
+// buffer the rest of each direction, so a bigger one only costs memory. The pool reuses them across
+// the many short connections a page makes.
+var copyBufs = sync.Pool{New: func() any { return new([16 << 10]byte) }}
+
 // copy moves one direction of a TCP connection and counts it, until an error. A clean end
 // returns io.EOF.
 func (s *Server) copy(dst io.Writer, src io.Reader, up bool) error {
-	buf := make([]byte, 65536)
+	b := copyBufs.Get().(*[16 << 10]byte)
+	defer copyBufs.Put(b)
+	buf := b[:]
 	for {
 		n, err := src.Read(buf)
 		if n > 0 {
