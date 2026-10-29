@@ -6,14 +6,12 @@ final class StatusCardTests: TetherUITestCase {
         launch(.waiting)
         XCTAssertEqual(label(of: "status.title"), "Turn on Personal Hotspot")
         XCTAssertEqual(label(of: "status.hotspotPath"), "Settings > Personal Hotspot > Allow Others to Join")
-        XCTAssertFalse(element("status.headline").exists)
-        XCTAssertFalse(element("status.howToConnect").exists)
+        assertNowhere(element("status.headline"), element("status.howToConnect"))
     }
 
     func testWaitingHidesTheSharingSections() {
         launch(.waiting)
-        XCTAssertFalse(element("traffic.speeds").exists)
-        XCTAssertFalse(sectionHeader("DEVICES").exists)
+        assertNowhere(element("traffic.speeds"), sectionHeader("DEVICES"))
         XCTAssertTrue(reveal(element("add.qr")).exists, "it leads with the code for a device")
     }
 
@@ -21,7 +19,7 @@ final class StatusCardTests: TetherUITestCase {
         launch(.noDevices)
         XCTAssertEqual(label(of: "status.title"), "Sharing")
         XCTAssertEqual(label(of: "status.headline"), "No device is using Tether yet")
-        XCTAssertFalse(element("status.howToConnect").exists, "the code is on the main screen, so nothing to open")
+        assertNowhere(element("status.howToConnect"), message: "the code is on the main screen, so nothing to open")
     }
 
     /// The hotspot is on but WireGuard can't start (keys locked after a restart), so nothing is shared.
@@ -29,8 +27,7 @@ final class StatusCardTests: TetherUITestCase {
         launch(.wireGuardLocked)
         XCTAssertEqual(label(of: "status.title"), "Tether can't share yet")
         XCTAssertEqual(label(of: "status.headline"), "Personal Hotspot is on, but WireGuard isn't running.")
-        XCTAssertFalse(element("status.stopHint").exists)
-        XCTAssertFalse(element("status.hotspotPath").exists, "the hotspot is already on")
+        assertNowhere(element("status.stopHint"), element("status.hotspotPath"), message: "the hotspot is already on")
     }
 
     /// A sideloaded build stops opening when its 7-day profile runs out, so the main screen says so first.
@@ -41,7 +38,7 @@ final class StatusCardTests: TetherUITestCase {
 
     func testNoExpiryWarningWithDaysToGo() {
         launch(.sharing)
-        XCTAssertFalse(element("app.expiry").exists)
+        assertNowhere(element("app.expiry"))
     }
 
     func testSharingCountsOnlyConnectedDevices() {
@@ -54,17 +51,17 @@ final class StatusCardTests: TetherUITestCase {
     func testSharingHasNoHowToConnectButton() {
         launch(.sharing)
         XCTAssertTrue(element("status.headline").exists)
-        XCTAssertFalse(element("status.howToConnect").exists)
+        assertNowhere(element("status.howToConnect"))
     }
 
     func testSharingSaysHowToStop() {
         launch(.sharing)
         XCTAssertEqual(label(of: "status.stopHint"), "To stop, turn off Personal Hotspot.")
-        XCTAssertFalse(element("sharing.switch").exists, "no switch: the hotspot is the switch")
+        assertNowhere(element("sharing.switch"), message: "no switch: the hotspot is the switch")
     }
 
     func testWaitingHasNoStopHint() {
         launch(.waiting)
-        XCTAssertFalse(element("status.stopHint").exists)
+        assertNowhere(element("status.stopHint"))
     }
 }

@@ -12,8 +12,7 @@ final class DeviceViewTests: TetherUITestCase {
         openDevice("iPad")
         XCTAssertEqual(staticText("device.status").label, "Connected")
         XCTAssertTrue(element("device.remove").exists)
-        XCTAssertFalse(element("wireguard.qr").exists, "no per-device code any more")
-        XCTAssertFalse(text(containing: "10.7.0.2").exists, "addresses are not shown")
+        assertNowhere(element("wireguard.qr"), text(containing: "10.7.0.2"), message: "no per-device code or address any more")
     }
 
     func testAnUnconnectedDeviceSaysNotConnected() {
@@ -43,7 +42,7 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertTrue(app.navigationBars["Work Mac"].waitForExistence(timeout: 5))
         goBack(to: "Tether")
         XCTAssertTrue(reveal(element("device.Work Mac")).exists)
-        XCTAssertFalse(element("device.MacBook").exists)
+        assertNowhere(element("device.MacBook"))
     }
 
     func testCancellingTheRemoveDialogKeepsTheDevice() {
@@ -68,6 +67,7 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5), "back on the main screen")
         waitUntilGone(element("device.MacBook"))
         XCTAssertTrue(reveal(element("device.iPad")).exists)
+        assertNowhere(element("device.MacBook"))
     }
 
     // MARK: problems
@@ -78,23 +78,22 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertTrue(reveal(banner).exists)
         XCTAssertEqual(banner.label, lockedText)
         XCTAssertTrue(sectionHeader("WIREGUARD ISN'T RUNNING").exists)
-        XCTAssertFalse(element("wireguard.reset").exists, "a locked Keychain gets better by unlocking, not by starting over")
-        XCTAssertFalse(element("add.qr").exists)
-        XCTAssertFalse(element("add.share").exists)
+        assertNowhere(element("wireguard.reset"), message: "a locked Keychain gets better by unlocking, not by starting over")
+        assertNowhere(element("add.qr"), element("add.share"))
     }
 
     func testUnreadableKeysOfferToStartOver() {
         launch(.wireGuardNeedsReset)
         XCTAssertEqual(staticText("wireguard.problem").label, resetText)
         XCTAssertEqual(reveal(element("wireguard.reset")).label, "Start over with new keys")
-        XCTAssertFalse(element("add.qr").exists)
+        assertNowhere(element("add.qr"))
     }
 
     func testStartingOverClearsTheProblemAndShowsTheQRCode() {
         launch(.wireGuardNeedsReset)
         reveal(element("wireguard.reset")).tap()
         waitUntilGone(element("wireguard.problem"))
-        XCTAssertFalse(element("wireguard.reset").exists)
+        assertNowhere(element("wireguard.reset"))
         XCTAssertTrue(reveal(element("add.qr")).exists)
         XCTAssertTrue(sectionHeader("ADD A DEVICE").exists, "no device yet after starting over")
     }

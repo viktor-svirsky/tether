@@ -150,6 +150,44 @@ class TetherUITestCase: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [done], timeout: timeout), .completed, "\(element) never became tappable", file: file, line: line)
     }
 
+    /// Fails if any of these elements is anywhere on the screen. A List only builds the rows near the screen, so `exists`
+    /// is false for a row that is only scrolled away. This scrolls to the top of the list, then down to its end, and
+    /// checks at every stop. Pass all the elements of a test at once: each call scrolls the whole list.
+    func assertNowhere(_ elements: XCUIElement..., message: String = "", file: StaticString = #filePath, line: UInt = #line) {
+        func found() -> Bool {
+            guard let e = elements.first(where: \.exists) else { return false }
+            XCTFail("\(e) is on the screen. \(message)", file: file, line: line)
+            return true
+        }
+        let page = list.frame.height * 0.6
+        var turns = 0
+        while drag(by: -page), turns < 30 { turns += 1 }
+        if found() { return }
+        turns = 0
+        while drag(by: page) {
+            turns += 1
+            if found() { return }
+            if turns == 30 { return XCTFail("the list never ended", file: file, line: line) }
+        }
+    }
+
+    /// Scrolls the list and says whether it moved. At an end it doesn't, or a screen without a list.
+    private func drag(by distance: CGFloat) -> Bool {
+        guard list.exists else { return false }
+        let before = listPosition()
+        scroll(by: distance)
+        waitUntilStill(list.cells.firstMatch)
+        return listPosition() != before
+    }
+
+    /// Where the list's first and last built rows are, and how many there are. Any scroll changes one of them.
+    private func listPosition() -> (rows: Int, first: CGRect, last: CGRect) {
+        let cells = list.cells
+        let count = cells.count
+        guard count > 0 else { return (0, .zero, .zero) }
+        return (count, cells.element(boundBy: 0).frame, cells.element(boundBy: count - 1).frame)
+    }
+
     /// Waits until the element is gone.
     func waitUntilGone(_ element: XCUIElement, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) {
         let done = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: element)
