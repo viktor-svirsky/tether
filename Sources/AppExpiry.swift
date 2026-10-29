@@ -28,6 +28,6 @@ enum AppExpiry {
         guard expires.timeIntervalSince(now) <= warnBefore else { return nil }
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: expires)).day ?? 0
         let when = days <= 0 ? "today" : days == 1 ? "tomorrow" : "in \(days) days"
-        return "Tether stops opening \(when). Install it again from Xcode."
+        return "Tether stops opening \(when). Refresh or reinstall it before then."
     }
 }

@@ -1,0 +1,51 @@
+# Pushing a version tag (git tag v1.2.0 && git push origin v1.2.0) builds an unsigned Tether.ipa and
+# publishes it as a GitHub release, with source.json for AltStore and SideStore. People add
+# https://github.com/viktor-svirsky/tether/releases/latest/download/source.json once and get every
+# release after that. Runs on the self-hosted runner, like CI. Only people who can push to the repo can
+# push a tag, so no outside code reaches the runner.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    runs-on: [self-hosted, macOS, xcode]
+    timeout-minutes: 30
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the build number is the commit count
+      - name: Check the tag
+        run: |
+          [[ $GITHUB_REF_NAME =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tags look like v1.2.0" >&2; exit 1; }
+          git merge-base --is-ancestor HEAD origin/main || { echo "tag a commit on main" >&2; exit 1; }
+      - name: Unit tests
+        run: |
+          scripts/build-wireguard.sh
+          swift test
+          python3 scripts/test_make_source.py
+      - name: Build Tether.ipa
+        run: scripts/build-ipa.sh "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/out"
+      - name: Write source.json
+        run: scripts/make_source.py "$RUNNER_TEMP/out/Tether.ipa" "$GITHUB_REF_NAME" > "$RUNNER_TEMP/out/source.json"
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP/out"
+          sha=$(shasum -a 256 Tether.ipa | cut -d' ' -f1)
+          gh release create "$GITHUB_REF_NAME" Tether.ipa source.json LICENSES.txt -R "$GITHUB_REPOSITORY" \
+            --verify-tag --generate-notes \
+            --notes "Unsigned. Sign it with SideStore, AltStore, Feather or your own certificate, see the README. SHA-256 of Tether.ipa: \`$sha\`"

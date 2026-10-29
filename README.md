@@ -23,7 +23,26 @@ Under the hood Tether runs a WireGuard server on UDP port 51820, on the hotspot 
 
 ## Install Tether on your iPhone
 
-You need an iPhone with Personal Hotspot, and a Mac with Xcode. A free Apple ID is enough.
+You need an iPhone with Personal Hotspot. Install a ready-made build with a signing app, or build Tether yourself on a Mac.
+
+### With SideStore, AltStore or your own certificate
+
+Each [release](https://github.com/viktor-svirsky/tether/releases) has an unsigned `Tether.ipa`. Your signing app signs it for your iPhone.
+
+- **SideStore or AltStore:** add this source once, then install Tether from it and get updates there:
+
+  ```
+  https://github.com/viktor-svirsky/tether/releases/latest/download/source.json
+  ```
+
+  Or download `Tether.ipa` from the latest release and open it in the app.
+- **Feather, a paid certificate, or anything else that signs an `.ipa`:** download `Tether.ipa` from the latest release and sign it the way you sign other apps.
+
+A signing app usually changes the bundle ID, so a Tether installed this way is a separate app from one you built with Xcode, with its own keys. Add your devices to it again.
+
+### Build it yourself
+
+You need a Mac with Xcode. A free Apple ID is enough.
 
 1. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen) and Go (`brew install xcodegen go`). `xcodegen generate` builds the WireGuard part with Go first, see `scripts/build-wireguard.sh`.
 2. Open `project.yml` and set `DEVELOPMENT_TEAM` to your own team ID, and `APP_BUNDLE_ID` to something unique like `com.yourname.tether`. You'll find your team ID in Xcode under Settings > Accounts.
@@ -72,14 +91,14 @@ iOS has no automation for "Personal Hotspot turned on", so let one shortcut turn
 
 ## Good to know
 
-- **It stops opening after 7 days** when signed with a free Apple ID. Tether says on its main screen when it has three days or less left. Build and install it again (step 3 above) before then. Your devices and settings stay.
+- **It stops opening after 7 days** when signed with a free Apple ID. Tether says on its main screen when it has three days or less left. Refresh it in SideStore or AltStore, or build and install it again (step 3 above), before then. A paid certificate lasts longer. Your devices and settings stay.
 - **Keep it running.** Tether plays silent audio so iOS doesn't suspend it in the background. It mixes with other audio, so your music keeps playing, and it picks up again after a call or Siri. With no device on the hotspot for 10 minutes it stops, to save battery, and iOS suspends Tether. Open it again, or run Start Tether, before you turn the hotspot back on, and after a restart.
 - **It only listens on the hotspot**, never on other Wi-Fi networks. WireGuard only lets in devices you added.
 - **Devices reach what the iPhone reaches**, private networks included. With a VPN on the iPhone, your devices use it too, so its networks are open to them and to everyone behind a travel router you added.
 - **The main screen** shows whether Tether is sharing, the QR code for the next device, your devices with Connected or Not connected, and the current download and upload speed. To stop sharing, turn off Personal Hotspot.
 - **The traffic leaves as your iPhone's.** If your iPhone runs a VPN, shared traffic goes through that VPN too.
 - **Your carrier can still notice.** Tether hides where the traffic comes from, not what it is. A Mac's software updates or an iPad's apps still look like a Mac or an iPad to a carrier that looks closely. Many carrier contracts don't allow tethering workarounds, and a carrier can slow down or close a line that breaks them. Check yours. Using Tether is your call and your risk.
-- **Not for the App Store.** Apple doesn't allow the silent-audio trick, so you build and install Tether yourself.
+- **Not for the App Store.** Apple doesn't allow the silent-audio trick, so you sign and install Tether yourself.
 
 ## For developers
 
@@ -87,6 +106,7 @@ iOS has no automation for "Personal Hotspot turned on", so let one shortcut turn
 Sources/WireGuardServer.swift  runs the WireGuard server; WireGuardSetup.swift has the keys and configs
 WireGuard/                   the WireGuard server in Go: wireguard-go plus a gVisor TCP/IP stack
 scripts/build-wireguard.sh   builds WireGuard/ into TetherWG.xcframework (xcodegen runs it)
+scripts/build-ipa.sh         builds the unsigned Tether.ipa; make_source.py writes source.json for it
 Sources/Model.swift          finds the hotspot, starts the server, samples traffic, feeds the screens
 Sources/MainView.swift       the main screen; DevicesView.swift has the QR code and the device screen
 Sources/KeepAlive.swift      silent audio to stay alive in the background
@@ -101,8 +121,10 @@ The file map at the top of Model.swift lists every source file.
 
 Run the unit tests with `swift test` (after `scripts/build-wireguard.sh` or `xcodegen generate`, since they link the WireGuard server), and the WireGuard server's own with `go -C WireGuard test ./...`. They start the real server on your Mac and talk to it over loopback, so you don't need a device. [TESTING.md](TESTING.md) covers the simulator UI tests and the checks by hand.
 
+To release, tag a commit on main with its version and push the tag: `git tag v1.2.0 && git push origin v1.2.0`. The Release workflow builds `Tether.ipa` with `scripts/build-ipa.sh`, writes `source.json`, and publishes both as a GitHub release. `python3 scripts/test_make_source.py` tests the source.json part.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
 
-The WireGuard server is built from [wireguard-go](https://git.zx2c4.com/wireguard-go) (MIT), [gVisor](https://gvisor.dev) (Apache 2.0) and Go's `golang.org/x` packages (BSD). `WireGuard/go.mod` pins their versions, and Go downloads each one with its license. A built Tether app contains their code, so if you give a build to someone, include their licenses with it.
+The WireGuard server is built from [wireguard-go](https://git.zx2c4.com/wireguard-go) (MIT), [gVisor](https://gvisor.dev) (Apache 2.0), [google/btree](https://github.com/google/btree) (Apache 2.0) and Go's `golang.org/x` packages (BSD). `WireGuard/go.mod` pins their versions, and Go downloads each one with its license. A built Tether app contains their code, so if you give a build to someone, include their licenses with it. `scripts/build-ipa.sh` collects them into `LICENSES.txt`, which each release has next to `Tether.ipa` and inside the app.

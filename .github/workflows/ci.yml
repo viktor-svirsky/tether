@@ -1,9 +1,9 @@
 # Runs on the self-hosted runner on Viktor's MacBook (label "xcode"). Building an iOS app needs
 # Xcode, so a Linux runner can't do it. Jobs wait in the queue while the MacBook is asleep.
 #
-# The runner is a real machine, so only trusted code may reach it. What enforces that lives outside
-# this file: the repo is private with one collaborator, and Settings > Actions has workflows from
-# fork pull requests turned off. Keep both if the repo ever opens up. The `if` below is a second guard.
+# The runner is a real machine, so only trusted code may reach it. The repo is public, so the `if`
+# below skips pull requests from forks, and only the one collaborator can push branches. Keep
+# Settings > Actions > "Require approval for all external contributors" on as a second guard.
 name: CI
 
 # Every branch push runs it, so a branch is green before it's merged into main.
@@ -26,10 +26,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # build-ipa.sh needs the commit count for the build number
       - name: Build the WireGuard server
         run: scripts/build-wireguard.sh # swift test links its macOS slice
       - name: Unit tests
         run: swift test
+      - name: Release script tests
+        run: python3 scripts/test_make_source.py
       - name: WireGuard server tests
         run: go -C WireGuard test -race ./...
       - name: Fuzz the UDP replies
@@ -43,3 +47,6 @@ jobs:
           xcodebuild -project Tether.xcodeproj -scheme Tether \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath "$RUNNER_TEMP/dd" build | tail -3
+      # The same unsigned Release build a tag publishes, so a release can't be the first to find it broken.
+      - name: Build Tether.ipa
+        run: scripts/build-ipa.sh 0.0.0 "$RUNNER_TEMP/ipa"
