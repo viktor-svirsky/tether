@@ -8,6 +8,7 @@ set -euo pipefail
 
 (( $# == 2 )) || { echo "usage: build-ipa.sh <version> <output dir>" >&2; exit 2; }
 version=$1
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "the version is X.Y.Z, not '$version'" >&2; exit 2; }
 root=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$2"
 out=$(cd "$2" && pwd)

@@ -7,8 +7,11 @@
 set -euo pipefail
 
 bump=${1:?usage: next-version.sh patch|minor|major}
-branch=${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD)}
-[[ $branch == main ]] || { echo "release from main, not $branch" >&2; exit 1; }
+[[ $bump =~ ^(patch|minor|major)$ ]] || { echo "bump is patch, minor or major, not $bump" >&2; exit 1; }
+# The full ref, because GITHUB_REF_NAME is also main for a tag named main. Outside Actions, HEAD's
+# ref, which is just HEAD when it's detached.
+ref=${GITHUB_REF:-$(git rev-parse --symbolic-full-name HEAD)}
+[[ $ref == refs/heads/main ]] || { echo "release from main, not $ref" >&2; exit 1; }
 
 if ! previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*[!0-9.]*' HEAD 2>/dev/null); then
     echo "version=1.0.0"
@@ -23,6 +26,5 @@ case $bump in
     patch) echo "version=$major.$minor.$((patch + 1))" ;;
     minor) echo "version=$major.$((minor + 1)).0" ;;
     major) echo "version=$((major + 1)).0.0" ;;
-    *) echo "bump is patch, minor or major, not $bump" >&2; exit 1 ;;
 esac
 echo "previous=$previous"
