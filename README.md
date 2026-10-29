@@ -121,6 +121,7 @@ Sources/DemoMode.swift       fake app states for the UI tests (Debug builds only
 Tests/                       unit tests, run on the Mac
 UITests/                     UI tests for every screen, run on the iOS Simulator
 scripts/make-icon.swift      draws the app icon
+scripts/screenshots.sh       makes the two screenshots above, on an iPhone simulator
 ```
 
 The file map at the top of Model.swift lists every source file.
