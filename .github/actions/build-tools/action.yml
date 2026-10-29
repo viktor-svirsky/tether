@@ -2,12 +2,18 @@
 # Go for WireGuard/, and XcodeGen.
 name: Build tools
 description: Xcode, Go and XcodeGen
+inputs:
+  xcode:
+    description: The Xcode version, as in /Applications/Xcode_<version>.app on the runner image
+    default: "26.6"
 runs:
   using: composite
   steps:
     - name: Pick Xcode
       shell: bash
-      run: sudo xcode-select -s /Applications/Xcode_26.6.app
+      env:
+        XCODE: ${{ inputs.xcode }}
+      run: sudo xcode-select -s "/Applications/Xcode_$XCODE.app"
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         # go.mod says 1.27. The newest 1.27.x, so the app ships, and govulncheck checks, the

@@ -1,5 +1,7 @@
-# Actions > UI tests > Run workflow. The full XCUITest suite takes about 18 minutes, so it runs on
-# demand and not on every push.
+# Actions > UI tests > Run workflow. The full XCUITest suite takes about 15 minutes, so it runs on
+# demand and not on every push. It runs twice at once: on the oldest iOS that GitHub's runners have,
+# on the smallest iPhone, and on the newest. iOS 17, the oldest Tether supports, isn't on any of
+# them, and iOS 27 isn't yet, so those need a phone or a Mac with that simulator (TESTING.md).
 name: UI tests
 
 on:
@@ -11,17 +13,34 @@ defaults:
 
 jobs:
   ui-tests:
-    runs-on: macos-26
+    name: UI tests, iOS ${{ matrix.ios }} on ${{ matrix.device }}
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            xcode: "26.3"
+            ios: "18.5"
+            device: iPhone SE (3rd generation)
+          - runner: macos-26
+            xcode: "26.6"
+            ios: "26.5"
+            device: iPhone 17 Pro
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/build-tools
+        with:
+          xcode: ${{ matrix.xcode }}
       - name: Create a simulator
+        env:
+          IOS: ${{ matrix.ios }}
+          DEVICE: ${{ matrix.device }}
         run: |
-          runtime=$(xcrun simctl list runtimes iOS -j | python3 -c 'import json, sys; r = [x for x in json.load(sys.stdin)["runtimes"] if x["isAvailable"]]; print(r[-1]["identifier"])')
-          id=$(xcrun simctl create "Tether CI $GITHUB_RUN_ID" com.apple.CoreSimulator.SimDeviceType.iPhone-16 "$runtime")
+          id=$(xcrun simctl create "Tether CI $GITHUB_RUN_ID" "$DEVICE" "com.apple.CoreSimulator.SimRuntime.iOS-${IOS//./-}")
           echo "SIM=$id" >> "$GITHUB_ENV"
       - name: UI tests
         run: |
@@ -29,3 +48,11 @@ jobs:
           xcodebuild test -project Tether.xcodeproj -scheme Tether -destination "id=$SIM" \
             -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/UITests.xcresult" \
             | grep -E "Test Case .* failed|Executed [0-9]+ tests|error:|TEST (SUCCEEDED|FAILED)"
+      # The result bundle has a screenshot of every failure. Open it in Xcode.
+      - name: Keep the results of a failed run
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: UITests-iOS-${{ matrix.ios }}.xcresult
+          path: ${{ runner.temp }}/UITests.xcresult
+          retention-days: 7
