@@ -43,9 +43,21 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+        # The notes list the commits since the last release. Changes land on main without pull requests,
+        # so GitHub's generated notes would be empty.
         run: |
-          cd "$RUNNER_TEMP/out"
-          sha=$(shasum -a 256 Tether.ipa | cut -d' ' -f1)
-          gh release create "$GITHUB_REF_NAME" Tether.ipa source.json LICENSES.txt -R "$GITHUB_REPOSITORY" \
-            --verify-tag --generate-notes \
-            --notes "Unsigned. Sign it with SideStore, AltStore, Feather or your own certificate, see the README. SHA-256 of Tether.ipa: \`$sha\`"
+          if previous=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null); then
+              range=$previous..HEAD
+          else
+              range=HEAD
+          fi
+          out=$RUNNER_TEMP/out
+          {
+              echo "Unsigned. Sign it with SideStore, AltStore, Feather or your own certificate, see the [README](https://github.com/$GITHUB_REPOSITORY#install-tether-on-your-iphone)."
+              echo
+              git log --no-merges --format='- %s' "$range"
+              echo
+              echo "SHA-256 of Tether.ipa: \`$(shasum -a 256 "$out/Tether.ipa" | cut -d' ' -f1)\`"
+          } > "$out/notes.md"
+          gh release create "$GITHUB_REF_NAME" "$out/Tether.ipa" "$out/source.json" "$out/LICENSES.txt" \
+            -R "$GITHUB_REPOSITORY" --verify-tag --title "Tether ${GITHUB_REF_NAME#v}" --notes-file "$out/notes.md"

@@ -1,0 +1,43 @@
+name: Something doesn't work
+description: Tether won't install, open, share, or keep running
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. A screenshot of Tether's main screen helps.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed Tether
+      options:
+        - SideStore
+        - AltStore
+        - Feather or another signing app
+        - A paid certificate
+        - LiveContainer
+        - Built it with Xcode
+        - Something else (say which above)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tether version
+      description: Settings > General > iPhone Storage > Tether shows it, for example 1.0.0 (12).
+    validations:
+      required: true
+  - type: input
+    id: iphone
+    attributes:
+      label: iPhone model and iOS version
+      placeholder: iPhone 14 Pro, iOS 26.1
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: The device you share with, and its WireGuard client
+      placeholder: iPad with the WireGuard app, GL.iNet router, Windows laptop

@@ -29,7 +29,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_CFBundleDisplayName: Tether
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Tether accepts connections from your iPad on the hotspot network.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Tether accepts connections from your devices on the hotspot network.
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
