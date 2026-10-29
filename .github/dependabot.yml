@@ -1,0 +1,18 @@
+# Weekly pull requests that bump the pinned actions and the Go modules, one for each group. Fixes
+# for known vulnerabilities come sooner, from Dependabot security updates.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/build-tools"]
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /WireGuard
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns: ["*"]
