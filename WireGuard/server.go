@@ -146,6 +146,11 @@ type Server struct {
 	peers  map[[32]byte]netip.Addr // public key -> tunnel address
 	names  map[string]netip.Addr   // wireguard-go's name for a peer -> tunnel address, see peerName
 	router netip.Addr              // the router's tunnel address, invalid without one
+	// routed says a flow from one of the router's clients has started since it got the role. The
+	// log line that makes a router doesn't say which address was dropped, so a device can get the
+	// role with a packet from an address no client has, like a tunnel address that isn't its own.
+	// Until it carries a client's flow it holds no claim, see makeRouter.
+	routed bool
 	// candidate is the latest device that sent for others, for the refresher to make the router.
 	// The latest one is kept, so none is lost while the refresher is busy.
 	candidate netip.Addr
@@ -267,8 +272,8 @@ func (s *Server) SetPeers(peers []Peer) error {
 }
 
 // makeRouter gives the private ranges to the device at addr. It takes them from the router before
-// only once that one is offline, so a device that sends for others by mistake can't cut off the
-// devices behind a router in use.
+// only once that one is offline or has carried nothing for a client, so a device that sends for
+// others by mistake can't cut off the devices behind a router in use.
 func (s *Server) makeRouter(addr netip.Addr) {
 	if !addr.IsValid() {
 		return
@@ -284,7 +289,7 @@ func (s *Server) makeRouter(addr netip.Addr) {
 		known = known || a == addr
 	}
 	at, shook := s.shaken[s.router]
-	taken := s.router.IsValid() && s.router != addr && shook && s.now().Sub(at) < onlineWithin
+	taken := s.router.IsValid() && s.router != addr && s.routed && shook && s.now().Sub(at) < onlineWithin
 	already := s.router == addr
 	s.mu.Unlock()
 	if taken {
@@ -321,11 +326,14 @@ func (s *Server) noticeHandshake(format string) {
 	})
 }
 
-// noticeRouter looks for a dropped packet: a device sent from an address that isn't its own,
+// noticeRouter looks for a dropped IPv4 packet: a device sent from an address that isn't its own,
 // which only a router does for the devices behind it. wireguard-go names the device but not the
-// address.
+// address, so the log line's IP version is all there is to go on. IPv6 doesn't count: a Linux
+// laptop routes IPv6 into the tunnel from its Wi-Fi address, since the client config sends ::/0
+// there but gives it no IPv6 address. A router is found by its IPv4 clients, and the IPv6 ones in
+// routedNets come with the role.
 func (s *Server) noticeRouter(format string, args ...any) {
-	if !strings.Contains(format, "packet with disallowed source address") || len(args) != 1 {
+	if !strings.HasPrefix(format, "IPv4 packet with disallowed source address") || len(args) != 1 {
 		return
 	}
 	name := fmt.Sprint(args[0])
@@ -363,7 +371,7 @@ func peerName(key [32]byte) string {
 // s.applying held.
 func (s *Server) apply(want map[[32]byte]netip.Addr, router netip.Addr) error {
 	s.mu.Lock()
-	have, wasRouter := s.peers, s.router
+	have, wasRouter, wasRouted := s.peers, s.router, s.routed
 	s.mu.Unlock()
 	var b strings.Builder
 	for key := range have {
@@ -389,6 +397,9 @@ func (s *Server) apply(want map[[32]byte]netip.Addr, router netip.Addr) error {
 	s.mu.Lock()
 	s.setPeersLocked(want)
 	s.router = router
+	if router != wasRouter {
+		s.routed = false
+	}
 	var closing []io.Closer
 	for key, addr := range have {
 		// A router that stops being one, or that another device takes over from, loses its
@@ -408,7 +419,7 @@ func (s *Server) apply(want map[[32]byte]netip.Addr, router netip.Addr) error {
 		if err := s.dev.IpcSet(b.String()); err != nil {
 			s.mu.Lock()
 			s.setPeersLocked(have)
-			s.router = wasRouter
+			s.router, s.routed = wasRouter, wasRouted
 			s.mu.Unlock()
 			return err
 		}
@@ -504,7 +515,8 @@ var tunnelNet = netip.MustParsePrefix("10.7.0.0/24")
 // router's for a device behind it. wireguard-go only takes routedNets sources from the router, so
 // no other device can send as one of its clients. Invalid when nobody may send from src: a device
 // just removed, or a tunnel address no device has, which the router's ranges cover too. A flow from
-// one would go to the device that gets that address later.
+// one would go to the device that gets that address later. Finding one of the router's clients
+// marks the router as in use, see routed.
 func (s *Server) owner(src netip.Addr) netip.Addr {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -520,6 +532,7 @@ func (s *Server) ownerLocked(src netip.Addr) netip.Addr {
 	if s.router.IsValid() && !tunnelNet.Contains(src) {
 		for _, n := range routedNets {
 			if n.Contains(src) {
+				s.routed = true
 				return s.router
 			}
 		}

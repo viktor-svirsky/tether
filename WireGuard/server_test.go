@@ -59,7 +59,17 @@ func newClient(t *testing.T, s *Server, serverPub, priv [32]byte, addr netip.Add
 
 // newClientWithMTU is a device whose config has its own MTU, like one set up before the MTU changed.
 func newClientWithMTU(t *testing.T, s *Server, serverPub, priv [32]byte, addr netip.Addr, mtu int) *client {
-	tdev, tnet, err := netstack.CreateNetTUN([]netip.Addr{addr}, nil, mtu)
+	return newDevice(t, s, serverPub, priv, mtu, addr)
+}
+
+// newClientAt is a device with more than one address, like a laptop that also has an IPv6 address
+// from the hotspot's Wi-Fi.
+func newClientAt(t *testing.T, s *Server, serverPub, priv [32]byte, addrs ...netip.Addr) *client {
+	return newDevice(t, s, serverPub, priv, MTU, addrs...)
+}
+
+func newDevice(t *testing.T, s *Server, serverPub, priv [32]byte, mtu int, addrs ...netip.Addr) *client {
+	tdev, tnet, err := netstack.CreateNetTUN(addrs, nil, mtu)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1036,15 +1046,102 @@ func TestRoutedNetsLeaveTheTunnelOut(t *testing.T) {
 	}
 }
 
+// A router is found by its IPv4 clients, and its IPv6 ones come with the role.
 func TestARoutersIPv6ClientsGoThroughTheTunnel(t *testing.T) {
-	s, c := setupRouter(t, netip.MustParseAddr("fd12::20"))
-	_, port, _ := net.SplitHostPort(tcpServer(t, 20_000))
+	sPriv, sPub := keyPair(t)
+	cPriv, cPub := keyPair(t)
+	s, err := Start(loopback, 0, sPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	viaLoopback(s)
+	if err := s.SetPeers([]Peer{{PublicKey: cPub, Address: netip.MustParseAddr("10.7.0.2")}}); err != nil {
+		t.Fatal(err)
+	}
+	c := newClientAt(t, s, sPub, cPriv, netip.MustParseAddr("192.168.4.20"), netip.MustParseAddr("fd12::20"))
+	target := tcpServer(t, 20_000)
+	if _, err := fetch(t, c, target); err != nil {
+		t.Fatal(err)
+	}
+	_, port, _ := net.SplitHostPort(target)
 	n, err := fetch(t, c, net.JoinHostPort("2001:db8::7", port))
 	if err != nil || n != 20_000 {
 		t.Fatalf("got %d bytes, %v", n, err)
 	}
-	if st := s.Stats(); st.Down != 20_000 {
+	if st := s.Stats(); st.Down != 40_000 {
 		t.Fatalf("counted down %d, want the IPv6 client's traffic in the totals", st.Down)
+	}
+}
+
+// A Linux laptop with wg-quick routes IPv6 into the tunnel from its Wi-Fi address, since the client
+// config sends ::/0 there but gives it no IPv6 address. wireguard-go drops those packets, and that
+// mustn't make the laptop the router, or a real one is refused while the laptop is online.
+func TestAnIPv6SourceDoesntMakeARouter(t *testing.T) {
+	sPriv, sPub := keyPair(t)
+	lPriv, lPub := keyPair(t)
+	rPriv, rPub := keyPair(t)
+	s, err := Start(loopback, 0, sPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	viaLoopback(s)
+	laptop, router := netip.MustParseAddr("10.7.0.2"), netip.MustParseAddr("10.7.0.3")
+	if err := s.SetPeers([]Peer{{PublicKey: lPub, Address: laptop}, {PublicKey: rPub, Address: router}}); err != nil {
+		t.Fatal(err)
+	}
+	l := newClientAt(t, s, sPub, lPriv, laptop, netip.MustParseAddr("2001:db8::5"))
+	target := tcpServer(t, 10)
+	fetchAndShake(t, s, l, target)
+	_, port, _ := net.SplitHostPort(target)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := l.net.DialContext(ctx, "tcp", net.JoinHostPort("2001:db8::7", port)); err == nil {
+		t.Fatal("IPv6 from the laptop's Wi-Fi address got through")
+	}
+	if r := s.routerOf(); r.IsValid() {
+		t.Fatalf("router %v after an IPv6 packet from a Wi-Fi address", r)
+	}
+	r := newClient(t, s, sPub, rPriv, netip.MustParseAddr("192.168.8.30"))
+	if _, err := fetch(t, r, target); err != nil {
+		t.Fatalf("the real router was refused while the laptop was online: %v", err)
+	}
+	if s.routerOf() != router {
+		t.Fatalf("router %v, want %v", s.routerOf(), router)
+	}
+}
+
+// A device can take the role with a packet from an address no client has, like a tunnel address
+// that isn't its own. Until a client's flow goes through it, it holds no claim, and a real router
+// takes over even while it's online.
+func TestARouterThatCarriedNothingGivesTheRoleUp(t *testing.T) {
+	sPriv, sPub := keyPair(t)
+	aPriv, aPub := keyPair(t)
+	bPriv, bPub := keyPair(t)
+	s, err := Start(loopback, 0, sPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	viaLoopback(s)
+	a, b := netip.MustParseAddr("10.7.0.2"), netip.MustParseAddr("10.7.0.3")
+	if err := s.SetPeers([]Peer{{PublicKey: aPub, Address: a}, {PublicKey: bPub, Address: b}}); err != nil {
+		t.Fatal(err)
+	}
+	ca := newClient(t, s, sPub, aPriv, netip.MustParseAddr("10.7.0.9"))
+	target := tcpServer(t, 10)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := ca.net.DialContext(ctx, "tcp", target); err == nil {
+		t.Fatal("a device got through from a tunnel address that isn't its own")
+	}
+	cb := newClient(t, s, sPub, bPriv, netip.MustParseAddr("192.168.8.30"))
+	if _, err := fetch(t, cb, target); err != nil {
+		t.Fatalf("the real router was refused: %v", err)
+	}
+	if s.routerOf() != b {
+		t.Fatalf("router %v, want %v", s.routerOf(), b)
 	}
 }
 
