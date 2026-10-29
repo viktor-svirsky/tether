@@ -1,8 +1,7 @@
 # Pushing a version tag (git tag v1.2.0 && git push origin v1.2.0) builds an unsigned Tether.ipa and
 # publishes it as a GitHub release, with source.json for AltStore and SideStore. People add
 # https://github.com/viktor-svirsky/tether/releases/latest/download/source.json once and get every
-# release after that. Runs on the self-hosted runner, like CI. Only people who can push to the repo can
-# push a tag, so no outside code reaches the runner.
+# release after that. Runs on GitHub's macOS runner, like CI.
 name: Release
 
 on:
@@ -19,7 +18,7 @@ defaults:
 
 jobs:
   release:
-    runs-on: [self-hosted, macOS, xcode]
+    runs-on: macos-26
     timeout-minutes: 30
     permissions:
       contents: write # create the release
@@ -27,6 +26,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the build number is the commit count
+      - uses: ./.github/actions/build-tools
       - name: Check the tag
         run: |
           [[ $GITHUB_REF_NAME =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tags look like v1.2.0" >&2; exit 1; }

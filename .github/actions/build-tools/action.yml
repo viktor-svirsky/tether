@@ -1,0 +1,20 @@
+# The tools every workflow needs on GitHub's macOS runner, after actions/checkout: a fixed Xcode,
+# Go for WireGuard/, and XcodeGen.
+name: Build tools
+description: Xcode, Go and XcodeGen
+runs:
+  using: composite
+  steps:
+    - name: Pick Xcode
+      shell: bash
+      run: sudo xcode-select -s /Applications/Xcode_26.6.app
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        # go.mod says 1.27. The newest 1.27.x, so the app ships, and govulncheck checks, the
+        # patched standard library.
+        go-version: "1.27"
+        check-latest: true
+        cache-dependency-path: WireGuard/go.sum
+    - name: Install XcodeGen
+      shell: bash
+      run: brew install xcodegen

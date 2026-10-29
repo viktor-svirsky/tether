@@ -1,5 +1,5 @@
 # Actions > UI tests > Run workflow. The full XCUITest suite takes about 18 minutes, so it runs on
-# demand and not on every push. It boots its own simulator and deletes it afterwards.
+# demand and not on every push.
 name: UI tests
 
 on:
@@ -11,10 +11,13 @@ defaults:
 
 jobs:
   ui-tests:
-    runs-on: [self-hosted, macOS, xcode]
+    runs-on: macos-26
+    permissions:
+      contents: read
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/build-tools
       - name: Create a simulator
         run: |
           runtime=$(xcrun simctl list runtimes iOS -j | python3 -c 'import json, sys; r = [x for x in json.load(sys.stdin)["runtimes"] if x["isAvailable"]]; print(r[-1]["identifier"])')
@@ -26,6 +29,3 @@ jobs:
           xcodebuild test -project Tether.xcodeproj -scheme Tether -destination "id=$SIM" \
             -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/UITests.xcresult" \
             | grep -E "Test Case .* failed|Executed [0-9]+ tests|error:|TEST (SUCCEEDED|FAILED)"
-      - name: Delete the simulator
-        if: always() && env.SIM != ''
-        run: xcrun simctl delete "$SIM"

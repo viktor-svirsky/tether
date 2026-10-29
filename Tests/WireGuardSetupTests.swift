@@ -296,7 +296,7 @@ final class KeychainSecretsTests: XCTestCase {
     override func setUpWithError() throws {
         service = "tether.wireguard.tests.\(UUID().uuidString)"
         secrets = KeychainSecrets(service: service)
-        // Reading can work where saving can't: the CI runner is a background service with no
+        // Reading can work where saving can't: a CI runner can be a background service with no
         // unlocked login keychain, and saving there fails with errSecInteractionNotAllowed
         // (-25308). So try both once, and skip where this Keychain isn't usable.
         do {

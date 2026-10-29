@@ -1,9 +1,5 @@
-# Runs on the self-hosted runner on Viktor's MacBook (label "xcode"). Building an iOS app needs
-# Xcode, so a Linux runner can't do it. Jobs wait in the queue while the MacBook is asleep.
-#
-# The runner is a real machine, so only trusted code may reach it. The repo is public, so the `if`
-# below skips pull requests from forks, and only the one collaborator can push branches. Keep
-# Settings > Actions > "Require approval for all external contributors" on as a second guard.
+# Runs on GitHub's macOS runner (building an iOS app needs Xcode). Every job gets a fresh VM, so
+# pull requests from forks run it too, with a read-only token.
 name: CI
 
 # Every branch push runs it, so a branch is green before it's merged into main.
@@ -21,13 +17,17 @@ defaults:
 
 jobs:
   test:
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, macOS, xcode]
+    # A branch of this repo already runs on push, so its pull request doesn't run it a second time.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-26
+    permissions:
+      contents: read
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # build-ipa.sh needs the commit count for the build number
+      - uses: ./.github/actions/build-tools
       - name: Build the WireGuard server
         run: scripts/build-wireguard.sh # swift test links its macOS slice
       - name: Unit tests
