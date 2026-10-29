@@ -88,32 +88,49 @@ class TetherUITestCase: XCTestCase {
 
     /// Scrolls until the element is fully on screen, clear of the navigation bar and the home indicator, so a tap lands on it.
     /// A List only keeps rows near the screen, so an element can exist and still be off screen: `isHittable` is not enough.
-    /// Looks down the list first, then back up. Stops when a swipe no longer moves the element (an end of the list),
-    /// and then accepts an element that is at least tappable.
+    /// Looks down the list first, then back up. Once the element exists, one drag moves it to the middle of the screen.
+    /// Stops when a drag no longer moves the element (an end of the list), and then accepts an element that is at least tappable.
     @discardableResult
     func reveal(_ element: XCUIElement, maxSwipes: Int = 14, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         let window = app.windows.firstMatch.frame
         let top: CGFloat = 110, bottom = window.maxY - 50
+        let page = (bottom - top) * 0.8
         func inPlace() -> Bool {
             element.exists && element.isHittable && element.frame.minY >= top && element.frame.maxY <= bottom
         }
         var lastFrame: CGRect?
-        var swipesUp = 0
+        var pagesDown = 0
         var turns = 0
         while !inPlace() && turns < 3 * maxSwipes {
             turns += 1
-            var up = swipesUp < maxSwipes
             if element.exists {
                 let frame = element.frame
                 if frame == lastFrame { break }
                 lastFrame = frame
-                up = frame.minY >= top
+                // A row taller than the space lines up its top, so its first line is on screen.
+                let target = frame.height > bottom - top ? top + frame.height / 2 : (top + bottom) / 2
+                scroll(by: min(max(frame.midY - target, -page), page))
+            } else if pagesDown < maxSwipes {
+                pagesDown += 1
+                scroll(by: page)
+            } else {
+                scroll(by: -page)
             }
-            if up { swipesUp += 1; list.swipeUp() } else { list.swipeDown() }
         }
         XCTAssertTrue(element.exists && element.isHittable, "\(element) could not be scrolled into view", file: file, line: line)
         waitUntilStill(element)
         return element
+    }
+
+    /// Moves the list's content up by `distance` points (down for a negative one), with a slow drag that holds still at the end,
+    /// so the list doesn't keep going. A swipe flings it, and on a small screen with large text a fling jumps right past a row.
+    /// The drag starts near the edge it moves away from and covers at most 60% of the list, so it stays on screen.
+    func scroll(by distance: CGFloat) {
+        let limit = list.frame.height * 0.6
+        let distance = min(max(distance, -limit), limit)
+        let start = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: distance > 0 ? 0.8 : 0.2))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -distance)),
+                    withVelocity: .slow, thenHoldForDuration: 0.2)
     }
 
     /// Waits until the element stops moving (a scroll or an expanding group still settling), so a tap lands where it was aimed.
