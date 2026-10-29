@@ -16,16 +16,14 @@ final class DevicesTests: TetherUITestCase {
     func testDeviceRowsHaveNoAddressesOrByteLines() {
         launch(.sharing)
         reveal(element("device.iPad"))
-        XCTAssertFalse(text(containing: "172.20.10").exists)
-        XCTAssertFalse(text(containing: "10.7.0").exists)
-        XCTAssertFalse(text(containing: "Downloaded").exists)
-        XCTAssertFalse(app.staticTexts["Active"].exists)
+        assertNowhere(text(containing: "172.20.10"), text(containing: "10.7.0"), text(containing: "Downloaded"),
+                      app.staticTexts["Active"])
     }
 
     func testNoDevicesMeansNoDevicesSection() {
         launch(.noDevices)
-        XCTAssertFalse(sectionHeader("DEVICES").exists)
-        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "device.")).firstMatch.exists)
+        assertNowhere(sectionHeader("DEVICES"),
+                      app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "device.")).firstMatch)
     }
 
     func testShowsTheCurrentSpeeds() {

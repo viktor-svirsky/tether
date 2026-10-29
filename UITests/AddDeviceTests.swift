@@ -12,7 +12,7 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertTrue(share.label.contains("Share as a file, for a Mac or a router"), share.label)
         XCTAssertEqual(reveal(element("add.steps")).label, steps)
         XCTAssertTrue(sectionHeader("ADD A DEVICE").exists)
-        XCTAssertFalse(sectionHeader("ADD ANOTHER DEVICE").exists)
+        assertNowhere(sectionHeader("ADD ANOTHER DEVICE"))
     }
 
     func testTheQRCodeShowsWithTheHotspotOnButNoDevice() {
@@ -25,16 +25,14 @@ final class AddDeviceTests: TetherUITestCase {
         launch(.sharing)
         XCTAssertTrue(reveal(element("add.qr")).exists, "the code stays for the next device")
         XCTAssertTrue(sectionHeader("ADD ANOTHER DEVICE").exists)
-        XCTAssertFalse(sectionHeader("ADD A DEVICE").exists)
+        assertNowhere(sectionHeader("ADD A DEVICE"))
         XCTAssertTrue(reveal(element("add.share")).exists)
         XCTAssertTrue(reveal(element("add.steps")).exists)
     }
 
     func testNothingElseOffersToAddADevice() {
         launch(.sharing)
-        for id in ["add.device", "add.failed", "devices.manage", "status.howToConnect"] {
-            XCTAssertFalse(element(id).exists, id)
-        }
-        XCTAssertFalse(app.buttons["Add a device"].exists)
+        assertNowhere(element("add.device"), element("add.failed"), element("devices.manage"), element("status.howToConnect"),
+                      app.buttons["Add a device"])
     }
 }
