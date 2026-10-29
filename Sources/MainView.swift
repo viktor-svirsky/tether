@@ -2,6 +2,15 @@ import SwiftUI
 
 struct MainView: View {
     @ObservedObject private var model = Model.shared
+    @Environment(\.dynamicTypeSize) private var textSize
+
+    /// A device's name and state side by side. At the accessibility text sizes they'd break words
+    /// ("Connect-ed"), so the state goes under the name.
+    private var deviceRow: AnyLayout {
+        textSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout())
+    }
 
     var body: some View {
         NavigationStack {
@@ -39,9 +48,9 @@ struct MainView: View {
                             NavigationLink { DeviceView(model: model, peer: peer) } label: {
                                 // A plain row: LabeledContent with a Label on its right grows several
                                 // rows tall inside a NavigationLink on iOS 27.
-                                HStack {
+                                deviceRow {
                                     Text(peer.name)
-                                    Spacer()
+                                    if !textSize.isAccessibilitySize { Spacer() }
                                     ConnectedLabel(connected: model.wireGuardConnected.contains(peer.address))
                                         .font(.subheadline)
                                 }
@@ -144,8 +153,8 @@ struct StatusCard: View {
                     Circle()
                         .fill(tint)
                         .frame(width: dotSize, height: dotSize)
-                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
-                        .offset(x: 4, y: 3)
+                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: dotSize / 6))
+                        .offset(x: dotSize / 3, y: dotSize / 4)
                 }
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
