@@ -161,7 +161,8 @@ class TetherUITestCase: XCTestCase {
         }
         let page = list.frame.height * 0.6
         var turns = 0
-        while drag(by: -page), turns < 30 { turns += 1 }
+        while turns < 30, drag(by: -page) { turns += 1 }
+        if turns == 30 { return XCTFail("the list never reached its top", file: file, line: line) }
         if found() { return }
         turns = 0
         while drag(by: page) {
@@ -173,7 +174,7 @@ class TetherUITestCase: XCTestCase {
 
     /// Scrolls the list and says whether it moved. At an end it doesn't, or a screen without a list.
     private func drag(by distance: CGFloat) -> Bool {
-        guard list.exists else { return false }
+        guard list.exists, list.cells.count > 0 else { return false }
         let before = listPosition()
         scroll(by: distance)
         waitUntilStill(list.cells.firstMatch)
