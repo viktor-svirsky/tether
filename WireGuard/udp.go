@@ -32,7 +32,11 @@ type cone struct {
 	// out is never closed, so a late packet from handleUDP can't panic. done ends send instead.
 	out  chan outgoing
 	done chan struct{}
-	last atomic.Int64 // when a packet last went either way, in UnixNano
+	// last is when the device last sent through the cone, in UnixNano. Replies don't move it. RFC
+	// 4787 (REQ-6) has a NAT refresh a mapping on outbound packets and leaves inbound ones up to
+	// it, and with a full cone anyone may send to the port, so a host that kept sending could hold
+	// one of the device's cones forever. A call or a game sends both ways, so it stays open.
+	last atomic.Int64
 	// dnsOnly holds while every packet has gone to port 53. Such a cone idles out after dnsIdle.
 	dnsOnly atomic.Bool
 	once    sync.Once
@@ -93,7 +97,7 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 	s.mu.Lock()
 	c := s.cones[device]
 	owner := s.ownerLocked(device.Addr())
-	full := len(s.cones) >= s.maxCones
+	full := s.conesOf[owner] >= s.maxCones
 	s.mu.Unlock()
 	if c != nil {
 		if c.owner != owner {
@@ -112,10 +116,10 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 	c.last.Store(time.Now().UnixNano())
 	c.dnsOnly.Store(true) // until handleUDP's sentTo sees a packet to another port, the first one included
 	s.mu.Lock()
-	if other := s.cones[device]; other != nil || s.ownerLocked(device.Addr()) != owner || len(s.cones) >= s.maxCones {
+	if other := s.cones[device]; other != nil || s.ownerLocked(device.Addr()) != owner || s.conesOf[owner] >= s.maxCones {
 		// Another packet from the same port made one first, SetPeers changed the devices since
-		// the owner was read, or other ports reached the cap meanwhile. Only handleUDP makes cones, on one goroutine per device, so this is a
-		// guard, not a path.
+		// the owner was read, or the owner's other ports reached the cap meanwhile. Only
+		// handleUDP makes cones, on one goroutine per device, so this is a guard, not a path.
 		s.mu.Unlock()
 		conn.Close()
 		if other != nil && other.owner == owner {
@@ -124,6 +128,7 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 		return nil // the packet belonged to an owner that's gone, so it goes too
 	}
 	s.cones[device] = c
+	s.conesOf[owner]++
 	untrack := s.trackLocked(owner, c)
 	s.mu.Unlock()
 	s.conesRunning.Add(2)
@@ -137,6 +142,7 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 		if s.cones[device] == c {
 			delete(s.cones, device)
 		}
+		release(s.conesOf, owner)
 		s.mu.Unlock()
 	}()
 	return c
@@ -158,8 +164,8 @@ func (s *Server) send(c *cone) {
 	}
 }
 
-// receive hands replies from anyone to the device, until the cone's idle time passes with nothing
-// either way.
+// receive hands replies from anyone to the device, until the cone's idle time passes without the
+// device sending.
 func (s *Server) receive(c *cone) {
 	buf := make([]byte, 65535)
 	for {
@@ -171,7 +177,6 @@ func (s *Server) receive(c *cone) {
 			}
 			return
 		}
-		c.last.Store(time.Now().UnixNano())
 		src := s.fromNet(netip.AddrPortFrom(from.Addr().Unmap(), from.Port()))
 		if !src.Addr().Is4() {
 			continue

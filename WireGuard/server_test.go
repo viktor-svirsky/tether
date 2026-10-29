@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -104,6 +105,24 @@ func setupWithMTU(t *testing.T, mtu int) (*Server, *client) {
 		t.Fatal(err)
 	}
 	return s, newClientWithMTU(t, s, sPub, cPriv, addr, mtu)
+}
+
+// setupTwo starts a server with two devices, a at 10.7.0.2 and b at 10.7.0.3.
+func setupTwo(t *testing.T) (s *Server, a, b *client) {
+	sPriv, sPub := keyPair(t)
+	aPriv, aPub := keyPair(t)
+	bPriv, bPub := keyPair(t)
+	s, err := Start(loopback, 0, sPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	viaLoopback(s)
+	aAddr, bAddr := netip.MustParseAddr("10.7.0.2"), netip.MustParseAddr("10.7.0.3")
+	if err := s.SetPeers([]Peer{{PublicKey: aPub, Address: aAddr}, {PublicKey: bPub, Address: bAddr}}); err != nil {
+		t.Fatal(err)
+	}
+	return s, newClient(t, s, sPub, aPriv, aAddr), newClient(t, s, sPub, bPriv, bAddr)
 }
 
 // fetchAndShake makes one connection, so the device has done its handshake, then reads the
@@ -1179,5 +1198,190 @@ func TestARemovedDevicesAddressDoesntFallToTheRouter(t *testing.T) {
 		if v, ok := strings.CutPrefix(line, "allowed_ip="); ok && netip.MustParsePrefix(v).Contains(device.Address) {
 			t.Fatalf("the router's %s still covers the removed device's address", v)
 		}
+	}
+}
+
+// silent is a host that never answers, so a dial to it waits for its timeout.
+const silent = "198.51.100.99"
+
+// A device dialing hosts that never answer, like a port scan, fills only its own share of the
+// connections being made.
+func TestADeviceAtItsDialCapLeavesOthersDialing(t *testing.T) {
+	s, a, b := setupTwo(t)
+	var started atomic.Int32
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	s.mu.Lock()
+	s.maxDials = 2
+	normal := s.dial
+	s.dial = func(network, address string) (net.Conn, error) {
+		if strings.HasPrefix(address, silent+":") {
+			started.Add(1)
+			<-release
+			return nil, fmt.Errorf("no answer")
+		}
+		return normal(network, address)
+	}
+	s.mu.Unlock()
+	dialSilent := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_, err := a.net.DialContext(ctx, "tcp", net.JoinHostPort(silent, "9"))
+		return err
+	}
+	for range 2 {
+		go dialSilent()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for started.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if started.Load() != 2 {
+		t.Fatalf("%d dials started, want 2", started.Load())
+	}
+	begin := time.Now()
+	if err := dialSilent(); err == nil || time.Since(begin) > 2*time.Second {
+		t.Fatalf("a dial past the cap wasn't refused at once: %v after %v", err, time.Since(begin))
+	}
+	if n := started.Load(); n != 2 {
+		t.Fatalf("%d dials started past a cap of 2", n)
+	}
+	if _, err := fetch(t, b, tcpServer(t, 10)); err != nil {
+		t.Fatalf("the other device couldn't connect: %v", err)
+	}
+}
+
+// holdServer answers each connection with "hi" and keeps it open until the device closes it.
+func holdServer(t *testing.T) string {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				c.Write([]byte("hi"))
+				io.Copy(io.Discard, c)
+			}()
+		}
+	}()
+	return viaRemote(l.Addr().String())
+}
+
+// openHeld connects to a holdServer and reads its greeting.
+func openHeld(c *client, addr string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, err := c.net.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadFull(conn, make([]byte, 2)); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// A device with many open connections, like a torrent client, fills only its own share, and gets
+// its room back as they close.
+func TestADeviceAtItsConnectionCapLeavesOthersConnecting(t *testing.T) {
+	s, a, b := setupTwo(t)
+	s.mu.Lock()
+	s.maxConns = 2
+	s.mu.Unlock()
+	hold := holdServer(t)
+	var open []net.Conn
+	for i := range 2 {
+		conn, err := openHeld(a, hold)
+		if err != nil {
+			t.Fatalf("connection %d under the cap: %v", i, err)
+		}
+		defer conn.Close()
+		open = append(open, conn)
+	}
+	if conn, err := openHeld(a, hold); err == nil {
+		conn.Close()
+		t.Fatal("a third connection was made past a cap of 2")
+	}
+	if _, err := fetch(t, b, tcpServer(t, 10)); err != nil {
+		t.Fatalf("the other device couldn't connect: %v", err)
+	}
+	open[0].Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		conn, err := openHeld(a, hold)
+		if err == nil {
+			conn.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no room after a connection closed: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// One device sending from many ports, a cone each, leaves the others theirs, DNS included.
+func TestADeviceAtItsConeCapLeavesOthersTheirs(t *testing.T) {
+	s, _, _ := setupTwo(t)
+	s.mu.Lock()
+	s.maxCones = 2
+	s.mu.Unlock()
+	for port := uint16(5000); port < 5002; port++ {
+		if s.cone(netip.AddrPortFrom(netip.MustParseAddr("10.7.0.2"), port)) == nil {
+			t.Fatalf("cone %d refused under the cap", port)
+		}
+	}
+	if s.cone(netip.MustParseAddrPort("10.7.0.2:5002")) != nil {
+		t.Fatal("a third cone was made past a cap of 2")
+	}
+	if s.cone(netip.MustParseAddrPort("10.7.0.3:5000")) == nil {
+		t.Fatal("the other device got no cone")
+	}
+}
+
+// Only the device's own packets keep a cone open. A host that keeps sending to the port can't hold
+// one of the device's cones forever.
+func TestRepliesAloneDontKeepAConeOpen(t *testing.T) {
+	s := &Server{fromNet: func(a netip.AddrPort) netip.AddrPort { return a }, tun: newStackTun()}
+	defer s.tun.Close()
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &cone{device: netip.MustParseAddrPort("10.7.0.2:5000"), owner: netip.MustParseAddr("10.7.0.2"), conn: conn, done: make(chan struct{}), lock: &s.mu}
+	defer c.Close()
+	c.last.Store(time.Now().Add(-udpIdle + 300*time.Millisecond).UnixNano())
+	sender, err := net.DialUDP("udp4", nil, conn.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			sender.Write([]byte("spam"))
+			select {
+			case <-stop:
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}()
+	done := make(chan struct{})
+	go func() { s.receive(c); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a host that kept sending held the cone open")
 	}
 }
