@@ -92,6 +92,12 @@ final class AccessibilityTests: TetherUITestCase {
         try audit()
     }
 
+    func testQRCodeProblemPassesTheStructuralAudit() throws {
+        launch(.qrCodeUnsaved)
+        reveal(element("add.problem"))
+        try audit(types: structuralAudit)
+    }
+
     func testDeviceScreenPassesTheAccessibilityAudit() throws {
         launch(.sharing)
         openDevice("iPad")

@@ -4,6 +4,7 @@ import XCTest
 final class DeviceViewTests: TetherUITestCase {
     private let lockedText = "Its keys can't be read yet. Unlock this iPhone once."
     private let resetText = "Its saved keys can't be read. Start over with new keys to use it."
+    private let unsavedText = "Its new keys can't be saved: Keychain error -34018."
 
     // MARK: one device
 
@@ -80,6 +81,16 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertTrue(sectionHeader("WIREGUARD ISN'T RUNNING").exists)
         assertNowhere(element("wireguard.reset"), message: "a locked Keychain gets better by unlocking, not by starting over")
         assertNowhere(element("add.qr"), element("add.share"))
+    }
+
+    /// A code for keys that aren't saved could never connect, since the next launch makes new ones.
+    func testNewKeysThatCantBeSavedSaySoAndShowNoQRCode() {
+        launch(.wireGuardUnsaved)
+        let banner = staticText("wireguard.problem")
+        XCTAssertTrue(reveal(banner).exists)
+        XCTAssertEqual(banner.label, unsavedText)
+        XCTAssertEqual(label(of: "status.title"), "Tether can't share yet")
+        assertNowhere(element("add.qr"), element("add.share"), element("add.problem"), element("wireguard.reset"))
     }
 
     func testUnreadableKeysOfferToStartOver() {

@@ -20,6 +20,10 @@ enum DemoScenario: String, CaseIterable {
     case wireGuardLocked
     /// Like `sharing`, but the saved WireGuard keys can't be decoded, so only starting over gets past it.
     case wireGuardNeedsReset
+    /// Hotspot on, a first launch whose new WireGuard keys can't be saved: no QR code, and WireGuard isn't running.
+    case wireGuardUnsaved
+    /// Like `sharing`, but the QR code for the next device can't be saved, so there's none. The devices still connect.
+    case qrCodeUnsaved
     /// Like `sharing`, with two days left before this build stops opening.
     case expiring
 
@@ -46,6 +50,14 @@ final class LockedSecrets: SecretStore {
     func save(_ data: Data) throws { throw Locked() }
 }
 
+/// A Keychain that reads but refuses every save, the way a build without its Keychain entitlement does.
+final class UnsavableSecrets: SecretStore {
+    private let data: Data?
+    init(_ data: Data?) { self.data = data }
+    func load() -> Data? { data }
+    func save(_ data: Data) throws { throw KeychainSecrets.Failure(status: -34018) }
+}
+
 struct DemoState {
     let scenario: DemoScenario
     private(set) var running = true
@@ -62,7 +74,7 @@ struct DemoState {
             running = false
             return
         }
-        if scenario == .noDevices { return }
+        if [.noDevices, .wireGuardUnsaved].contains(scenario) { return }
         downSpeed = 3_200_000
         upSpeed = 400_000
     }
@@ -71,16 +83,20 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring:
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved:
             var setup = WireGuardSetup.new()
             _ = setup.addPeer(name: "iPad")
             _ = setup.addPeer(name: "MacBook")
-            secrets.data = try? JSONEncoder().encode(setup)
+            secrets.data = try? JSONEncoder().encode(setup) // no ready device yet: loading makes and saves one
         case .wireGuardNeedsReset:
             secrets.data = Data("not a WireGuard setup".utf8) // undecodable, like a setup from a newer version
         default: break
         }
-        return scenario == .wireGuardLocked ? LockedSecrets() : secrets
+        switch scenario {
+        case .wireGuardLocked: return LockedSecrets()
+        case .wireGuardUnsaved, .qrCodeUnsaved: return UnsavableSecrets(secrets.data)
+        default: return secrets
+        }
     }
 
     @MainActor
@@ -89,7 +105,7 @@ struct DemoState {
         model.downSpeed = downSpeed
         model.upSpeed = upSpeed
         // The iPad's tunnel is up, the MacBook's isn't, so the list shows both states.
-        model.wireGuardConnected = [.sharing, .expiring].contains(scenario) ? ["10.7.0.2"] : []
+        model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved].contains(scenario) ? ["10.7.0.2"] : []
         model.expires = scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil
     }
 }

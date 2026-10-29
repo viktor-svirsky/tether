@@ -3,6 +3,7 @@ import SwiftUI
 
 /// The QR code for the next device, always on the main screen. It's the ready device's config: the
 /// first time something connects with it, that device is listed and a new code takes its place.
+/// When the next code couldn't be saved, it says so instead.
 struct AddDeviceSection: View {
     @ObservedObject var model: Model
     let first: Bool
@@ -29,13 +30,22 @@ struct AddDeviceSection: View {
                     .accessibilityIdentifier("add.share")
                 }
             } header: {
-                Text(first ? "Add a device" : "Add another device")
+                header
             } footer: {
                 Text("Install WireGuard on it, tap + > Create from QR code and scan this. Then edit the tunnel and turn On-Demand on for this iPhone's hotspot only. A travel router imports the file and turns its VPN on.")
                     .accessibilityIdentifier("add.steps")
             }
+        } else if let problem = model.wireGuardReadyProblem {
+            Section {
+                Label(problem, systemImage: "exclamationmark.triangle")
+                    .accessibilityIdentifier("add.problem")
+            } header: {
+                header
+            }
         }
     }
+
+    private var header: Text { Text(first ? "Add a device" : "Add another device") }
 }
 
 /// Why WireGuard isn't running, with the way out when the saved keys can't be read.
