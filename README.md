@@ -32,7 +32,7 @@ You need an iPhone with Personal Hotspot. Install a ready-made build with a sign
 
 ### With SideStore, AltStore or your own certificate
 
-Each [release](https://github.com/viktor-svirsky/tether/releases) has an unsigned `Tether.ipa`. Your signing app signs it for your iPhone.
+Each [release](https://github.com/viktor-svirsky/tether/releases) has an unsigned `Tether.ipa`. Your signing app signs it for your iPhone. GitHub Actions builds it from the release's commit and signs a record of that, so `gh attestation verify Tether.ipa -R viktor-svirsky/tether` shows the download is the one built here.
 
 - **SideStore or AltStore:** add this source once, then install Tether from it and get updates there:
 

@@ -28,6 +28,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write # create the release and its tag
+      id-token: write # sign the attestation
+      attestations: write # store it
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,6 +54,11 @@ jobs:
         run: scripts/make_source.py "$RUNNER_TEMP/out/Tether.ipa" "v$VERSION" > "$RUNNER_TEMP/out/source.json"
         env:
           VERSION: ${{ steps.version.outputs.version }}
+      # GitHub signs a record that this Tether.ipa was built from this commit by this workflow.
+      - name: Attest Tether.ipa
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/out/Tether.ipa
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,6 +74,8 @@ jobs:
               git log --no-merges --format='- %s' "${PREVIOUS:+$PREVIOUS..}HEAD"
               echo
               echo "SHA-256 of Tether.ipa: \`$(shasum -a 256 "$out/Tether.ipa" | cut -d' ' -f1)\`"
+              echo
+              echo "Check it was built here, from this release's commit: \`gh attestation verify Tether.ipa -R $GITHUB_REPOSITORY\`"
           } > "$out/notes.md"
           gh release create "v$VERSION" "$out/Tether.ipa" "$out/source.json" "$out/LICENSES.txt" \
             -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Tether $VERSION" --notes-file "$out/notes.md"
