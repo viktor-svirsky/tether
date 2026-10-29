@@ -8,6 +8,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -138,10 +139,15 @@ type Server struct {
 	tun   *stackTun
 	// dial makes the iPhone-side TCP connection. toNet and fromNet translate UDP addresses on
 	// the way out and back. Tests swap all three to reach listeners on loopback.
-	dial    func(network, address string) (net.Conn, error)
+	dial    func(ctx context.Context, network, address string) (net.Conn, error)
 	toNet   func(netip.AddrPort) netip.AddrPort
 	fromNet func(netip.AddrPort) netip.AddrPort
-	ipID    atomic.Uint32 // IPv4 identification for the UDP replies udp.go builds
+	// ctx ends with Close, and the dials still being made end with it.
+	ctx    context.Context
+	cancel context.CancelFunc
+	// heard sees each line wireguard-go logs. Tests set it to look at the server mid-change.
+	heard atomic.Pointer[func(string)]
+	ipID  atomic.Uint32 // IPv4 identification for the UDP replies udp.go builds
 	// up and down are the byte totals. Atomic, since every read and write of every connection
 	// adds to them, and a lock there would make them all take turns.
 	up, down atomic.Uint64
@@ -161,6 +167,7 @@ type Server struct {
 
 	mu     sync.Mutex
 	peers  map[[32]byte]netip.Addr // public key -> tunnel address
+	keys   map[netip.Addr][32]byte // tunnel address -> public key
 	names  map[string]netip.Addr   // wireguard-go's name for a peer -> tunnel address, see peerName
 	router netip.Addr              // the router's tunnel address, invalid without one
 	// routed says a flow from one of the router's clients has started since it got the role. The
@@ -188,11 +195,16 @@ type Server struct {
 	conns     map[netip.Addr]int
 	// The caps, see the constants. Tests lower them.
 	maxCones, maxDials, maxConns int
+	// closed is set by Close. From then on handleTCP, track and cone let nothing new in.
+	closed bool
+	// forwarding counts the forwardTCP goroutines handleTCP let in, for Close to wait for.
+	forwarding sync.WaitGroup
 }
 
 // arrival is a TCP connection a device asked for, from its SYN until its dial ends.
 type arrival struct {
 	owner  netip.Addr // whose connection it is, read when the SYN came in
+	key    [32]byte   // the owner's key then, see track
 	refuse bool       // nobody owns it, or its owner is at a cap. It isn't counted
 	taken  bool       // a forwardTCP is making it
 }
@@ -201,6 +213,7 @@ type arrival struct {
 func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	s := &Server{
 		peers:    map[[32]byte]netip.Addr{},
+		keys:     map[netip.Addr][32]byte{},
 		names:    map[string]netip.Addr{},
 		shaken:   map[netip.Addr]time.Time{},
 		now:      time.Now,
@@ -218,13 +231,14 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		// and waits for the remote, so a remote that silently went away would hold it forever.
 		dial: (&net.Dialer{Timeout: dialTimeout, KeepAliveConfig: net.KeepAliveConfig{
 			Enable: true, Idle: 10 * time.Minute, Interval: 30 * time.Second, Count: 4,
-		}}).Dial,
+		}}).DialContext,
 		toNet:   func(a netip.AddrPort) netip.AddrPort { return a },
 		fromNet: func(a netip.AddrPort) netip.AddrPort { return a },
 		stop:    make(chan struct{}),
 		found:   make(chan struct{}, 1),
 		shake:   make(chan struct{}, 1),
 	}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.stack = stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol},
@@ -241,6 +255,7 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &moderate)
 	s.tun = newStackTun()
 	if err := s.stack.CreateNIC(1, s.tun.ep); err != nil {
+		s.cancel()
 		return nil, fmt.Errorf("create NIC: %v", err)
 	}
 	// Take packets for any address and answer as that address: a transparent proxy.
@@ -258,11 +273,13 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	if err := s.dev.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\n", hex.EncodeToString(privateKey[:]), port)); err != nil {
 		s.dev.Close()
 		s.stack.Close()
+		s.cancel()
 		return nil, err
 	}
 	if err := s.dev.Up(); err != nil {
 		s.dev.Close()
 		s.stack.Close()
+		s.cancel()
 		return nil, err
 	}
 	s.stopped.Add(1)
@@ -270,23 +287,42 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	return s, nil
 }
 
-// Close stops the server. TCP connections end as the stack closes under them, UDP sockets are
-// closed here, since they live outside the stack.
+// Close stops the server. Once it returns, no connection or UDP socket of a device's is left open
+// on the iPhone's side: the open ones are closed here, the ones being made are refused and waited
+// for, and their dials end at once.
 func (s *Server) Close() {
 	close(s.stop)
 	s.stopped.Wait()
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+	s.cancel()
 	s.dev.Close() // closes the tun too
 	s.stack.Close()
-	s.mu.Lock()
-	var cones []*cone
-	for _, c := range s.cones {
-		cones = append(cones, c)
+	// The open connections and cones close, and the connections being made stop waiting for their
+	// device. The closed stack doesn't end a handshake that starts after a pass, so the passes go
+	// on until every forwardTCP is done.
+	done := make(chan struct{})
+	go func() { s.forwarding.Wait(); close(done) }()
+	for {
+		s.mu.Lock()
+		var open []io.Closer
+		for _, set := range s.flows {
+			for c := range set {
+				open = append(open, c)
+			}
+		}
+		s.mu.Unlock()
+		for _, c := range open {
+			c.Close()
+		}
+		select {
+		case <-done:
+			s.conesRunning.Wait() // closing the socket ends them at once
+			return
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-	s.mu.Unlock()
-	for _, c := range cones {
-		c.Close()
-	}
-	s.conesRunning.Wait() // closing the socket ends them at once
 }
 
 // SetPeers makes the allowed devices exactly these. Only the ones that changed are touched, so a
@@ -346,6 +382,9 @@ func (s *Server) makeRouter(addr netip.Addr) {
 // notice is wireguard-go's verbose logger. Two of the things it says matter here, see
 // noticeHandshake and noticeRouter. The rest is dropped.
 func (s *Server) notice(format string, args ...any) {
+	if heard := s.heard.Load(); heard != nil {
+		(*heard)(fmt.Sprintf(format, args...))
+	}
 	s.noticeHandshake(format)
 	s.noticeRouter(format, args...)
 }
@@ -395,8 +434,10 @@ func (s *Server) noticeRouter(format string, args ...any) {
 // setPeersLocked sets the peers and their names in wireguard-go's log together. Runs with s.mu held.
 func (s *Server) setPeersLocked(peers map[[32]byte]netip.Addr) {
 	s.peers = peers
+	s.keys = make(map[netip.Addr][32]byte, len(peers))
 	s.names = make(map[string]netip.Addr, len(peers))
 	for key, addr := range peers {
+		s.keys[addr] = key
 		s.names[peerName(key)] = addr
 	}
 }
@@ -430,15 +471,22 @@ func (s *Server) apply(want map[[32]byte]netip.Addr, router netip.Addr) error {
 			}
 		}
 	}
-	// The new devices go in, and the flows of the ones that changed close, before wireguard-go
-	// routes differently. Otherwise a reply on such a flow could go to whichever device takes over
-	// its address, the router's ranges included. Packets from a device that is going no longer
-	// get through from here, since owner no longer knows it.
+	// The flows of the devices that change close before wireguard-go routes differently.
+	// Otherwise a reply on such a flow could go to whichever device takes over its address, the
+	// router's ranges included. Until wireguard-go has the change, only the devices that keep
+	// their address are known: wireguard-go still lets a removed key's packets in until IpcSet
+	// removes it, which waits for the ones it has queued. So an address changing hands has no
+	// owner meanwhile, or the old key's packets would start flows as the new key's.
+	kept := map[[32]byte]netip.Addr{}
+	for key, addr := range want {
+		if old, ok := have[key]; ok && old == addr {
+			kept[key] = addr
+		}
+	}
 	s.mu.Lock()
-	s.setPeersLocked(want)
-	s.router = router
+	s.setPeersLocked(kept)
 	if router != wasRouter {
-		s.routed = false
+		s.router, s.routed = netip.Addr{}, false
 	}
 	var closing []io.Closer
 	for key, addr := range have {
@@ -464,6 +512,10 @@ func (s *Server) apply(want map[[32]byte]netip.Addr, router netip.Addr) error {
 			return err
 		}
 	}
+	s.mu.Lock()
+	s.setPeersLocked(want)
+	s.router = router
+	s.mu.Unlock()
 	s.readHandshakes()
 	return nil
 }
@@ -580,13 +632,15 @@ func (s *Server) ownerLocked(src netip.Addr) netip.Addr {
 	return netip.Addr{}
 }
 
-// track keeps a connection's sockets so SetPeers can close them. The returned func forgets them.
-// ok is false when src no longer belongs to device: SetPeers changed the devices while the
-// connection was being made, after it closed the ones it knew about.
-func (s *Server) track(src, device netip.Addr, conns ...io.Closer) (untrack func(), ok bool) {
+// track keeps a connection's sockets so SetPeers and Close can close them. The returned func
+// forgets them. ok is false when the server is closing, or src no longer belongs to device under
+// the key that asked for the connection: SetPeers changed the devices while it was being made,
+// after it closed the ones it knew about. The key matters when an address changes hands, since the
+// address alone would let the old key's connection open as the new key's.
+func (s *Server) track(src, device netip.Addr, key [32]byte, conns ...io.Closer) (untrack func(), ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.ownerLocked(src) != device {
+	if s.closed || s.keys[device] != key || s.ownerLocked(src) != device {
 		return nil, false
 	}
 	return s.trackLocked(device, conns...), true
@@ -627,7 +681,9 @@ func addrPort(a tcpip.Address, port uint16) netip.AddrPort {
 // handleTCP takes the TCP packets no open connection wanted, inline on wireguard-go's receive
 // goroutine like handleUDP. A new connection's SYN is counted against its device's caps here,
 // before gVisor's forwarder starts a goroutine for it, and its arrival is kept until forwardTCP's
-// dial ends. A SYN sent again meanwhile finds it and isn't counted twice.
+// dial ends. A SYN sent again meanwhile finds it and isn't counted twice. The owner is read here
+// too, not on forwardTCP's goroutine, which may start after SetPeers gave the address to another
+// key. Here the key that sent the SYN is still the address's, see apply.
 func (s *Server) handleTCP(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
 	h := header.TCP(pkt.TransportHeader().Slice())
 	if len(h) < header.TCPMinimumSize || h.Flags()&(header.TCPFlagSyn|header.TCPFlagAck) != header.TCPFlagSyn {
@@ -636,18 +692,19 @@ func (s *Server) handleTCP(id stack.TransportEndpointID, pkt *stack.PacketBuffer
 	s.mu.Lock()
 	a, again := s.arriving[id]
 	if !again {
-		if len(s.arriving) >= maxInFlight {
+		if s.closed || len(s.arriving) >= maxInFlight {
 			s.mu.Unlock()
 			return true // dropped, and the device sends it again
 		}
 		owner := s.ownerLocked(addrPort(id.RemoteAddress, 0).Addr())
-		a = &arrival{owner: owner}
+		a = &arrival{owner: owner, key: s.keys[owner]}
 		a.refuse = !owner.IsValid() || s.dials[owner] >= s.maxDials || s.conns[owner] >= s.maxConns
 		if !a.refuse {
 			s.dials[owner]++
 			s.conns[owner]++
 		}
 		s.arriving[id] = a
+		s.forwarding.Add(1)
 	}
 	s.mu.Unlock()
 	if !s.forwarder.HandlePacket(id, pkt) {
@@ -656,6 +713,7 @@ func (s *Server) handleTCP(id stack.TransportEndpointID, pkt *stack.PacketBuffer
 			s.mu.Lock()
 			s.dialed(id, a, false)
 			s.mu.Unlock()
+			s.forwarding.Done()
 		}
 		return false
 	}
@@ -700,6 +758,7 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 		r.Complete(true)
 		return
 	}
+	defer s.forwarding.Done()
 	// The arrival goes after Complete, so a SYN sent again in between still finds it.
 	refuse := func() {
 		r.Complete(true) // a reset, which is what the device would see from a refused port
@@ -713,12 +772,22 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 		refuse()
 		return
 	}
-	out, err := s.dial("tcp", dst.String())
+	out, err := s.dial(s.ctx, "tcp", dst.String())
 	if err != nil {
 		refuse()
 		return
 	}
+	// out is tracked from here, so SetPeers or Close can close it while the device's side is
+	// made, and end that too. It waits for the device's ACK, which never comes when the device's
+	// key just went or the stack is closed.
 	var wq waiter.Queue
+	untrackOut, ok := s.track(src, a.owner, a.key, out, wake{&wq})
+	if !ok {
+		out.Close()
+		refuse()
+		return
+	}
+	defer untrackOut()
 	ep, terr := r.CreateEndpoint(&wq)
 	if terr != nil {
 		out.Close()
@@ -734,7 +803,6 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 		release(s.conns, a.owner)
 		s.mu.Unlock()
 	}()
-	device := a.owner
 	// A device that leaves the hotspot never closes its connections. Keepalive finds them.
 	ep.SocketOptions().SetKeepAlive(true)
 	idle, interval := tcpip.KeepaliveIdleOption(60*time.Second), tcpip.KeepaliveIntervalOption(15*time.Second)
@@ -743,12 +811,12 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	ep.SetSockOptInt(tcpip.KeepaliveCountOption, 4)
 	in := gonet.NewTCPConn(&wq, ep)
 	closeBoth := func() { in.Close(); out.Close() }
-	untrack, ok := s.track(src, device, in, out)
+	untrackIn, ok := s.track(src, a.owner, a.key, in)
 	if !ok {
 		closeBoth()
 		return
 	}
-	defer untrack()
+	defer untrackIn()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	// A clean end of one direction passes on as a half close. Anything else, a reset or keepalive
@@ -771,6 +839,15 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	}()
 	wg.Wait()
 	closeBoth()
+}
+
+// wake ends the handshake CreateEndpoint waits on: gVisor waits for the queue's next event, then
+// gives up unless the connection is made. On a connection already made it's a spurious wakeup.
+type wake struct{ q *waiter.Queue }
+
+func (w wake) Close() error {
+	w.q.Notify(waiter.WritableEvents)
+	return nil
 }
 
 // copyBufs hold one direction of a TCP connection between a read and its write, each for as long as

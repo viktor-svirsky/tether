@@ -138,9 +138,9 @@ func fetchAndShake(t *testing.T, s *Server, c *client, addr string) {
 // the tests dial remote:port and the server's dialer sends it to the test listener on loopback.
 const remote = "198.51.100.7"
 
-func toLoopback(network, address string) (net.Conn, error) {
+func toLoopback(ctx context.Context, network, address string) (net.Conn, error) {
 	_, port, _ := net.SplitHostPort(address)
-	return net.DialTimeout(network, net.JoinHostPort("127.0.0.1", port), 5*time.Second)
+	return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
 }
 
 // viaLoopback points the server's TCP dials and UDP sends for remote at loopback, and labels
@@ -1209,18 +1209,16 @@ const silent = "198.51.100.99"
 func TestADeviceAtItsDialCapLeavesOthersDialing(t *testing.T) {
 	s, a, b := setupTwo(t)
 	var started atomic.Int32
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
 	s.mu.Lock()
 	s.maxDials = 2
 	normal := s.dial
-	s.dial = func(network, address string) (net.Conn, error) {
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
 		if strings.HasPrefix(address, silent+":") {
 			started.Add(1)
-			<-release
-			return nil, fmt.Errorf("no answer")
+			<-ctx.Done() // Close ends it
+			return nil, ctx.Err()
 		}
-		return normal(network, address)
+		return normal(ctx, network, address)
 	}
 	s.mu.Unlock()
 	dialSilent := func() error {
@@ -1383,5 +1381,193 @@ func TestRepliesAloneDontKeepAConeOpen(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("a host that kept sending held the cone open")
+	}
+}
+
+// startUnclosed is setup without Close in cleanup, for a test that closes the server itself.
+func startUnclosed(t *testing.T) (*Server, *client) {
+	sPriv, sPub := keyPair(t)
+	cPriv, cPub := keyPair(t)
+	s, err := Start(loopback, 0, sPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viaLoopback(s)
+	addr := netip.MustParseAddr("10.7.0.2")
+	if err := s.SetPeers([]Peer{{PublicKey: cPub, Address: addr}}); err != nil {
+		t.Fatal(err)
+	}
+	return s, newClient(t, s, sPub, cPriv, addr)
+}
+
+// acceptOne listens for one iPhone-side connection, and hands it over once it's made.
+func acceptOne(t *testing.T) (addr string, accepted <-chan net.Conn) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	ch := make(chan net.Conn, 1)
+	go func() {
+		c, err := l.Accept()
+		if err == nil {
+			t.Cleanup(func() { c.Close() })
+			ch <- c
+		}
+	}()
+	return viaRemote(l.Addr().String()), ch
+}
+
+// closedSoon says whether the far end closes conn within a few seconds.
+func closedSoon(conn net.Conn) bool {
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, err := conn.Read(make([]byte, 1))
+	return err == io.EOF
+}
+
+// A dial that ends after Close mustn't leave an iPhone-side connection that nothing closes, so
+// Close waits for it, and it isn't kept.
+func TestCloseWaitsForADialInFlight(t *testing.T) {
+	s, c := startUnclosed(t)
+	target, accepted := acceptOne(t)
+	dialing, release := make(chan struct{}, 1), make(chan struct{})
+	free := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(free)
+	s.mu.Lock()
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialing <- struct{}{}
+		<-release // a dial that finishes whatever Close does
+		return toLoopback(context.Background(), network, address)
+	}
+	s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go c.net.DialContext(ctx, "tcp", target)
+	select {
+	case <-dialing:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no dial")
+	}
+	closed := make(chan struct{})
+	go func() { s.Close(); close(closed) }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while a dial was in flight")
+	case <-time.After(300 * time.Millisecond):
+	}
+	free()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close didn't return once the dial ended")
+	}
+	select {
+	case conn := <-accepted:
+		if !closedSoon(conn) {
+			t.Fatal("the connection dialed after Close is still open")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the dial never reached the listener")
+	}
+}
+
+// Close ends the dials still being made instead of waiting out their timeout.
+func TestCloseEndsDials(t *testing.T) {
+	s, c := startUnclosed(t)
+	dialing := make(chan struct{}, 1)
+	s.mu.Lock()
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialing <- struct{}{}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go c.net.DialContext(ctx, "tcp", net.JoinHostPort(silent, "9"))
+	select {
+	case <-dialing:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no dial")
+	}
+	closed := make(chan struct{})
+	go func() { s.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close waited for a dial instead of ending it")
+	}
+}
+
+// A connection the old key asked for, still being dialed when its address goes to a new key,
+// mustn't open: its replies would go to the new key's device.
+func TestADialInFlightDoesntOpenForTheNextKey(t *testing.T) {
+	s, c := setup(t)
+	addr := netip.MustParseAddr("10.7.0.2")
+	target, accepted := acceptOne(t)
+	dialing, release := make(chan struct{}, 1), make(chan struct{})
+	free := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(free)
+	s.mu.Lock()
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialing <- struct{}{}
+		<-release
+		return toLoopback(ctx, network, address)
+	}
+	s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go c.net.DialContext(ctx, "tcp", target)
+	select {
+	case <-dialing:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no dial")
+	}
+	_, next := keyPair(t)
+	if err := s.SetPeers([]Peer{{PublicKey: next, Address: addr}}); err != nil {
+		t.Fatal(err)
+	}
+	free()
+	select {
+	case conn := <-accepted:
+		if !closedSoon(conn) {
+			t.Fatal("the old key's connection opened under the new key")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the dial never reached the listener")
+	}
+	if n := s.tracked(addr); n != 0 {
+		t.Fatalf("%d sockets tracked for the new key", n)
+	}
+}
+
+// While wireguard-go still has a removed key, that key's packets can still come in, so its address
+// mustn't belong to anyone yet. Otherwise they would start flows as the next key's.
+func TestAnAddressHasNoOwnerWhileItsOldKeyGoes(t *testing.T) {
+	s, _ := setup(t)
+	addr := netip.MustParseAddr("10.7.0.2")
+	_, next := keyPair(t)
+	var mu sync.Mutex
+	var owners []netip.Addr
+	heard := func(line string) {
+		if strings.HasSuffix(line, "UAPI: Removing") {
+			mu.Lock()
+			owners = append(owners, s.owner(addr))
+			mu.Unlock()
+		}
+	}
+	s.heard.Store(&heard)
+	err := s.SetPeers([]Peer{{PublicKey: next, Address: addr}})
+	s.heard.Store(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(owners) != 1 || owners[0].IsValid() {
+		t.Fatalf("owners while the old key was removed: %v, want one, invalid", owners)
+	}
+	if s.owner(addr) != addr {
+		t.Fatal("the new key doesn't own the address once it's in")
 	}
 }
