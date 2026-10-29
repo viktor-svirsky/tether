@@ -71,6 +71,14 @@ class MakeSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "v1.3.0"):
             self.source(tag="v1.3.0")
 
+    # SideStore orders updates by the build number, so a release without one would never be offered.
+    def test_an_ipa_without_a_build_number_is_refused(self):
+        for build in ["", "1.0"]:
+            with self.subTest(build=build):
+                ipa = fake_ipa(self.dir.name, {**INFO, "CFBundleVersion": build})
+                with self.assertRaisesRegex(SystemExit, "build number"):
+                    make_source.source(ipa, "v1.2.0", "2026-10-29")
+
     def test_an_ipa_without_an_app_is_refused(self):
         bad = Path(self.dir.name) / "bad.ipa"
         with zipfile.ZipFile(bad, "w") as ipa:

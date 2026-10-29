@@ -42,9 +42,13 @@ targets:
         # Without it the two can run in parallel, and Xcode overwrites the number.
         inputFiles:
           - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        # PlistBuddy sets an empty number without complaint, so a failed count stops the build here.
         script: |
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git -C "$SRCROOT" rev-list --count HEAD)" \
-            "$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+          count=$(git -C "$SRCROOT" rev-list --count HEAD) || exit 1
+          case $count in
+            ''|*[!0-9]*) echo "error: the build number from git is '$count', not a commit count" >&2; exit 1 ;;
+          esac
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $count" "$TARGET_BUILD_DIR/$INFOPLIST_PATH"
     info:
       path: Sources/Info.plist
       properties:
