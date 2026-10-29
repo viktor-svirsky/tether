@@ -275,9 +275,18 @@ final class Model: ObservableObject {
         }
     }
 
+    /// The server lets in exactly the saved devices. If it refuses the new list, it starts again with
+    /// the saved setup, and a start that fails leaves it stopped: a removed device is never let in, the
+    /// problem shows, and the watcher tries again.
     private func wireGuardPeersChanged() {
+        wireGuardDevices.prepareReady() // a removal on a full subnet makes room for the QR code
         publishSetup()
-        do { try wireGuard.setPeers(wireGuardDevices.setup) } catch { append("WireGuard devices: \(error)") }
+        do {
+            try wireGuard.setPeers(wireGuardDevices.setup)
+        } catch {
+            append("WireGuard devices: \(error), restarting")
+            if running, let boundHost { startWireGuard(on: boundHost) }
+        }
     }
 
     /// Reads the server's counters, see `startSampler`: which devices are connected, and the speeds

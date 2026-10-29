@@ -147,6 +147,20 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertFalse(server.running, "the watcher in Model retries only a server that isn't running")
     }
 
+    /// What Model counts on when the server refuses a new list: it keeps running with the old one,
+    /// so Model starts it again with the saved setup.
+    func testARefusedListKeepsTheServerRunningAndAStartWithTheSavedSetupWorks() throws {
+        var saved = WireGuardSetup.new()
+        _ = saved.addPeer(name: "iPad")
+        try start(saved)
+        var refused = saved
+        refused.peers[0].publicKey = Data(count: 5)
+        XCTAssertThrowsError(try server.setPeers(refused))
+        XCTAssertTrue(server.running, "still running with the list it had")
+        try start(saved)
+        XCTAssertTrue(server.running)
+    }
+
     func testAShortDeviceKeyIsRefusedBeforeGo() throws {
         var setup = WireGuardSetup.new()
         var peer = setup.addPeer(name: "iPad")!
