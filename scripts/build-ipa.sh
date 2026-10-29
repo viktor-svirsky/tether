@@ -32,6 +32,9 @@ xcodebuild archive -project Tether.xcodeproj -scheme Tether -configuration Relea
 app=$work/Tether.xcarchive/Products/Applications/Tether.app
 [[ $(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Info.plist") == "$version" ]] \
     || { echo "the app's version isn't $version" >&2; exit 1; }
+build=$(git rev-list --count HEAD)
+[[ $(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$app/Info.plist") == "$build" ]] \
+    || { echo "the app's build number isn't $build, the commit count" >&2; exit 1; }
 [[ $(lipo -archs "$app/Tether") == arm64 ]] || { echo "the app isn't arm64 only" >&2; exit 1; }
 # Signing tools re-sign whatever they get, but an ad-hoc or development signature from a build machine
 # has no business in a release.

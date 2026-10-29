@@ -29,6 +29,9 @@ def source(ipa, tag, date):
     version = info["CFBundleShortVersionString"]
     if tag != f"v{version}":
         sys.exit(f"the tag {tag} doesn't match the app's version {version}")
+    build = info["CFBundleVersion"]
+    if not re.fullmatch(r"[0-9]+", build):
+        sys.exit(f"the app's build number is {build!r}, not a commit count")
     return {
         "name": "Tether",
         "subtitle": "Share your iPhone's internet without the hotspot speed cap.",
@@ -57,7 +60,7 @@ def source(ipa, tag, date):
                 "versions": [
                     {
                         "version": version,
-                        "buildVersion": info["CFBundleVersion"],
+                        "buildVersion": build,
                         "date": date,
                         "downloadURL": f"{REPO}/releases/download/{tag}/{Path(ipa).name}",
                         "size": Path(ipa).stat().st_size,
