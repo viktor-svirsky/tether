@@ -9,9 +9,11 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 work=$(mktemp -d)
 sim=
+# No shutdown first: delete shuts a booted simulator down itself, and a shutdown fails on one that
+# never booted, which stopped the cleanup before it deleted anything.
 cleanup() {
-    [[ -n $sim ]] && { xcrun simctl shutdown "$sim" 2>/dev/null; xcrun simctl delete "$sim"; }
     rm -rf "$work"
+    [[ -z $sim ]] || xcrun simctl delete "$sim"
 }
 trap cleanup EXIT
 
