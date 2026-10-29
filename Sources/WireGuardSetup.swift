@@ -184,14 +184,24 @@ final class KeychainSecrets: SecretStore {
 /// wrong leaves the saved setup alone: nothing is saved and devices can't be added, so neither a
 /// passing Keychain error nor a setup this version can't decode replaces the key every device was
 /// set up with. `load()` tries again, `reset()` gives up on a setup that doesn't decode.
+/// `setup.ready` is only ever a saved one: a device that scanned a code that wasn't saved could
+/// never connect, since the next launch would make a different one.
 final class WireGuardDevices {
     struct Unreadable: Error, CustomStringConvertible {
         var description: String { "the saved WireGuard setup can't be read" }
     }
 
+    /// New keys, from a first launch or `reset()`, that couldn't be saved. They aren't used.
+    struct Unsaved: Error, CustomStringConvertible {
+        let reason: Error
+        var description: String { "the new WireGuard keys can't be saved: \(reason)" }
+    }
+
     private(set) var setup = WireGuardSetup.new()
-    /// Why the saved setup couldn't be read, until it can.
+    /// Why the saved setup couldn't be read, or new keys saved, until it works.
     private(set) var loadError: Error?
+    /// Why the setup that loaded has no ready device: making one couldn't be saved. `prepareReady()` tries again.
+    private(set) var readyError: Error?
     private let secrets: SecretStore
 
     init(secrets: SecretStore) {
@@ -203,19 +213,13 @@ final class WireGuardDevices {
     func load() {
         do {
             guard let data = try secrets.load() else {
-                setup = .new()
-                setup.prepareReady()
-                try save()
-                loadError = nil
+                try startAfresh()
                 return
             }
-            guard var saved = try? JSONDecoder().decode(WireGuardSetup.self, from: data) else { throw Unreadable() }
-            if saved.ready == nil {
-                saved.prepareReady()
-                try? secrets.save(JSONEncoder().encode(saved)) // tried again on the next change if it fails
-            }
+            guard let saved = try? JSONDecoder().decode(WireGuardSetup.self, from: data) else { throw Unreadable() }
             setup = saved
             loadError = nil
+            prepareReady() // a setup saved before there were ready devices has none
         } catch {
             loadError = error
         }
@@ -227,9 +231,36 @@ final class WireGuardDevices {
 
     /// A new server key and no devices, replacing what's saved. Every device has to be added again.
     func reset() {
-        setup = .new()
-        setup.prepareReady()
-        do { try save(); loadError = nil } catch { loadError = error }
+        do { try startAfresh() } catch { loadError = error }
+    }
+
+    /// A new server key and a ready device, used only once they're saved.
+    private func startAfresh() throws {
+        var fresh = WireGuardSetup.new()
+        fresh.prepareReady()
+        do { try secrets.save(JSONEncoder().encode(fresh)) } catch { throw Unsaved(reason: error) }
+        setup = fresh
+        loadError = nil
+        readyError = nil
+    }
+
+    /// Makes the ready device when there is none, and keeps it only once it's saved. False when
+    /// there's one already, all addresses are taken, or it couldn't be saved (see `readyError`).
+    @discardableResult
+    func prepareReady() -> Bool {
+        guard loaded, setup.ready == nil else { return false }
+        var next = setup
+        next.prepareReady()
+        guard next.ready != nil else { return false }
+        do {
+            try secrets.save(JSONEncoder().encode(next))
+        } catch {
+            readyError = error
+            return false
+        }
+        setup = next
+        readyError = nil
+        return true
     }
 
     /// See `WireGuardSetup.claimReady`. False too when it couldn't be saved, and then nothing changes,

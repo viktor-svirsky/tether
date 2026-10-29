@@ -32,9 +32,11 @@ final class Model: ObservableObject {
     /// the 1 s sampler, so it appears on time even on a screen where nothing else changes.
     @Published private(set) var expiryWarning: String?
     /// The devices that have connected, in the order they first did. Their keys are in the Keychain.
-    @Published private(set) var wireGuardPeers: [WireGuardSetup.Peer]
-    /// Behind the QR code on the main screen, see `WireGuardSetup.ready`.
+    @Published private(set) var wireGuardPeers: [WireGuardSetup.Peer] = []
+    /// Behind the QR code on the main screen, see `WireGuardSetup.ready`. Only ever a saved one.
     @Published private(set) var wireGuardReady: WireGuardSetup.Peer?
+    /// Why there's no QR code while the devices that have one still connect: making the next one couldn't be saved.
+    @Published private(set) var wireGuardReadyProblem: String?
     /// Why WireGuard isn't running while the hotspot is on, shown on the WireGuard screen.
     @Published private(set) var wireGuardProblem: String?
     /// The hotspot is on and WireGuard runs. `running` alone is only the hotspot.
@@ -64,8 +66,7 @@ final class Model: ObservableObject {
         let secrets: SecretStore = KeychainSecrets()
         #endif
         self.wireGuardDevices = WireGuardDevices(secrets: secrets)
-        self.wireGuardPeers = wireGuardDevices.setup.peers
-        self.wireGuardReady = wireGuardDevices.setup.ready
+        publishSetup()
         #if DEBUG
         if let demo {
             self.demo = demo
@@ -81,6 +82,7 @@ final class Model: ObservableObject {
                 self?.syncWithHotspot()
                 // On screen the sampler does this every second.
                 if self?.sceneActive == false { self?.claimReadyInBackground() }
+                self?.retryReady()
                 // The slack lets iOS wake the app for this together with other timers.
                 let interval = KeepAlivePolicy.watchInterval(sceneActive: self?.sceneActive ?? false)
                 try? await Task.sleep(for: interval.every, tolerance: interval.tolerance)
@@ -164,9 +166,7 @@ final class Model: ObservableObject {
             publishSetup()
         }
         if let error = wireGuardDevices.loadError {
-            wireGuardFailed(wireGuardDevices.needsReset
-                ? "Its saved keys can't be read. Start over with new keys to use it."
-                : "Its keys can't be read yet. Unlock this iPhone once.", error)
+            wireGuardFailed(Self.setupProblem(error), error)
             return
         }
         do {
@@ -175,6 +175,15 @@ final class Model: ObservableObject {
             append("WireGuard on \(hotspot):\(WireGuardSetup.port), \(wireGuardPeers.count) devices")
         } catch {
             wireGuardFailed("It couldn't start: \(error)", error)
+        }
+    }
+
+    /// Why the saved setup can't be used, for `wireGuardProblem`.
+    private static func setupProblem(_ error: Error) -> String {
+        switch error {
+        case is WireGuardDevices.Unreadable: "Its saved keys can't be read. Start over with new keys to use it."
+        case let unsaved as WireGuardDevices.Unsaved: "Its new keys can't be saved: \(unsaved.reason)."
+        default: "Its keys can't be read yet. Unlock this iPhone once."
         }
     }
 
@@ -213,6 +222,10 @@ final class Model: ObservableObject {
     func resetWireGuard() {
         wireGuardDevices.reset()
         publishSetup()
+        if let error = wireGuardDevices.loadError {
+            wireGuardFailed(Self.setupProblem(error), error)
+            return
+        }
         wireGuardProblem = nil
         append("WireGuard keys started over")
         if running, let boundHost { startWireGuard(on: boundHost) }
@@ -236,6 +249,16 @@ final class Model: ObservableObject {
     private func publishSetup() {
         wireGuardPeers = wireGuardDevices.setup.peers
         wireGuardReady = wireGuardDevices.setup.ready
+        let readyProblem = wireGuardDevices.readyError.map { "The code for the next device can't be saved: \($0)." }
+        if readyProblem != wireGuardReadyProblem {
+            wireGuardReadyProblem = readyProblem
+            if let readyProblem { append("WireGuard: \(readyProblem)") }
+        }
+    }
+
+    /// A QR code that couldn't be saved is tried again on every watcher round, see `WireGuardDevices.prepareReady`.
+    private func retryReady() {
+        if wireGuardDevices.prepareReady() { wireGuardPeersChanged() }
     }
 
     private func wireGuardPeersChanged() {

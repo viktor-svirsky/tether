@@ -30,6 +30,16 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertTrue(reveal(element("add.steps")).exists)
     }
 
+    /// The devices it has still connect, so it's sharing. Only the next device has to wait.
+    func testAQRCodeThatCantBeSavedIsntShownAndSaysWhy() {
+        launch(.qrCodeUnsaved)
+        XCTAssertEqual(label(of: "status.title"), "Sharing")
+        XCTAssertEqual(reveal(staticText("add.problem")).label, "The code for the next device can't be saved: Keychain error -34018.")
+        XCTAssertTrue(sectionHeader("ADD ANOTHER DEVICE").exists)
+        XCTAssertTrue(reveal(element("device.iPad")).exists)
+        assertNowhere(element("add.qr"), element("add.share"), element("add.steps"), element("wireguard.problem"))
+    }
+
     func testNothingElseOffersToAddADevice() {
         launch(.sharing)
         assertNowhere(element("add.device"), element("add.failed"), element("devices.manage"), element("status.howToConnect"),

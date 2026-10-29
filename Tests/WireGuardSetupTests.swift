@@ -259,10 +259,70 @@ final class WireGuardSetupTests: XCTestCase {
         devices.reset()
         XCTAssertFalse(devices.loaded)
         XCTAssertFalse(devices.needsReset, "the failure is the Keychain's now, not the setup's")
+        XCTAssertTrue(devices.loadError is WireGuardDevices.Unsaved)
+        XCTAssertNil(devices.setup.ready, "no QR code for keys that aren't saved")
         XCTAssertNil(devices.connectReady())
         secrets.savesFail = false
         devices.reset()
         XCTAssertTrue(devices.loaded)
+        XCTAssertEqual(WireGuardDevices(secrets: secrets).setup.ready, devices.setup.ready)
+    }
+
+    /// A device that scanned a code that was never saved could never connect: the next launch makes another.
+    func testANewSetupThatCantBeSavedHasNoQRCode() throws {
+        let secrets = FlakySecrets()
+        secrets.savesFail = true
+        let devices = WireGuardDevices(secrets: secrets)
+        XCTAssertFalse(devices.loaded)
+        XCTAssertFalse(devices.needsReset)
+        XCTAssertTrue(devices.loadError is WireGuardDevices.Unsaved, "its own reason, not a Keychain that can't be read")
+        XCTAssertNil(devices.setup.ready)
+        secrets.savesFail = false
+        devices.load()
+        XCTAssertTrue(devices.loaded)
+        let ready = try XCTUnwrap(devices.setup.ready)
+        XCTAssertEqual(WireGuardDevices(secrets: secrets).setup.ready, ready, "saved")
+    }
+
+    func testAnUnsavedSetupSaysWhy() {
+        XCTAssertEqual("\(WireGuardDevices.Unsaved(reason: KeychainSecrets.Failure(status: -34018)))",
+                       "the new WireGuard keys can't be saved: Keychain error -34018")
+    }
+
+    func testAnOlderSetupWhoseReadyDeviceCantBeSavedKeepsItsDevicesButHasNoQRCode() throws {
+        let secrets = FlakySecrets()
+        var old = WireGuardSetup.new()
+        _ = old.addPeer(name: "UTR")
+        secrets.data = try JSONEncoder().encode(old) // no ready device
+        secrets.savesFail = true
+        let devices = WireGuardDevices(secrets: secrets)
+        XCTAssertTrue(devices.loaded, "the devices it has still connect")
+        XCTAssertEqual(devices.setup.peers.map(\.name), ["UTR"])
+        XCTAssertNil(devices.setup.ready)
+        XCTAssertNotNil(devices.readyError)
+        XCTAssertFalse(devices.prepareReady(), "still can't be saved")
+        XCTAssertNil(devices.setup.ready)
+        secrets.savesFail = false
+        XCTAssertTrue(devices.prepareReady())
+        let ready = try XCTUnwrap(devices.setup.ready)
+        XCTAssertNil(devices.readyError)
+        XCTAssertEqual(WireGuardDevices(secrets: secrets).setup.ready, ready, "saved")
+        XCTAssertFalse(devices.prepareReady(), "there's one already")
+    }
+
+    /// With all 253 addresses taken there's no ready device, and removing one makes room for it.
+    func testARemovalOnAFullSubnetMakesRoomForTheQRCode() throws {
+        let secrets = InMemorySecrets()
+        var full = WireGuardSetup.new()
+        for i in 0..<253 { _ = full.addPeer(name: "d\(i)") }
+        secrets.data = try JSONEncoder().encode(full)
+        let devices = WireGuardDevices(secrets: secrets)
+        XCTAssertNil(devices.setup.ready)
+        XCTAssertNil(devices.readyError, "full isn't a failure")
+        XCTAssertFalse(devices.prepareReady())
+        devices.remove(devices.setup.peers[0].id)
+        XCTAssertTrue(devices.prepareReady())
+        XCTAssertEqual(devices.setup.ready?.address, "10.7.0.2")
     }
 
     func testNothingIsRemovedBeforeTheSetupIsLoaded() {
