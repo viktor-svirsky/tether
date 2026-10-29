@@ -107,6 +107,7 @@ Sources/WireGuardServer.swift  runs the WireGuard server; WireGuardSetup.swift h
 WireGuard/                   the WireGuard server in Go: wireguard-go plus a gVisor TCP/IP stack
 scripts/build-wireguard.sh   builds WireGuard/ into TetherWG.xcframework (xcodegen runs it)
 scripts/build-ipa.sh         builds the unsigned Tether.ipa; make_source.py writes source.json for it
+scripts/next-version.sh      picks the next release version from the last tag
 Sources/Model.swift          finds the hotspot, starts the server, samples traffic, feeds the screens
 Sources/MainView.swift       the main screen; DevicesView.swift has the QR code and the device screen
 Sources/KeepAlive.swift      silent audio to stay alive in the background
@@ -121,7 +122,7 @@ The file map at the top of Model.swift lists every source file.
 
 Run the unit tests with `swift test` (after `scripts/build-wireguard.sh` or `xcodegen generate`, since they link the WireGuard server), and the WireGuard server's own with `go -C WireGuard test ./...`. They start the real server on your Mac and talk to it over loopback, so you don't need a device. [TESTING.md](TESTING.md) covers the simulator UI tests and the checks by hand.
 
-To release, tag a commit on main with its version and push the tag: `git tag v1.2.0 && git push origin v1.2.0`. The Release workflow builds `Tether.ipa` with `scripts/build-ipa.sh`, writes `source.json`, and publishes both as a GitHub release. `python3 scripts/test_make_source.py` tests the source.json part.
+To release, open Actions > Release > Run workflow on main and pick what goes up: patch, minor or major. `scripts/next-version.sh` works out the version from the last tag, `scripts/build-ipa.sh` builds `Tether.ipa`, `make_source.py` writes `source.json`, and the workflow publishes both as a GitHub release, which creates the tag. `python3 scripts/test_make_source.py` and `scripts/test-next-version.sh` test the scripts.
 
 ## License
 

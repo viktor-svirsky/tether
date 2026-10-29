@@ -1,12 +1,18 @@
-# Pushing a version tag (git tag v1.2.0 && git push origin v1.2.0) builds an unsigned Tether.ipa and
-# publishes it as a GitHub release, with source.json for AltStore and SideStore. People add
+# Actions > Release > Run workflow publishes the next version of Tether from main. It builds an
+# unsigned Tether.ipa and publishes it as a GitHub release with source.json for AltStore and
+# SideStore, and the release creates the version tag. People add
 # https://github.com/viktor-svirsky/tether/releases/latest/download/source.json once and get every
 # release after that. Runs on GitHub's macOS runner, like CI.
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "What goes up: patch 1.2.3 → 1.2.4, minor → 1.3.0, major → 2.0.0. The first release is 1.0.0."
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 concurrency:
   group: release
@@ -21,43 +27,46 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 30
     permissions:
-      contents: write # create the release
+      contents: write # create the release and its tag
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # the build number is the commit count
+          fetch-depth: 0 # the build number is the commit count, and the tags give the last version
       - uses: ./.github/actions/build-tools
-      - name: Check the tag
-        run: |
-          [[ $GITHUB_REF_NAME =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tags look like v1.2.0" >&2; exit 1; }
-          git merge-base --is-ancestor HEAD origin/main || { echo "tag a commit on main" >&2; exit 1; }
+      - name: Pick the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: scripts/next-version.sh "$BUMP" >> "$GITHUB_OUTPUT"
       - name: Unit tests
         run: |
           scripts/build-wireguard.sh
           swift test
           python3 scripts/test_make_source.py
+          scripts/test-next-version.sh
       - name: Build Tether.ipa
-        run: scripts/build-ipa.sh "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/out"
+        run: scripts/build-ipa.sh "$VERSION" "$RUNNER_TEMP/out"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
       - name: Write source.json
-        run: scripts/make_source.py "$RUNNER_TEMP/out/Tether.ipa" "$GITHUB_REF_NAME" > "$RUNNER_TEMP/out/source.json"
+        run: scripts/make_source.py "$RUNNER_TEMP/out/Tether.ipa" "v$VERSION" > "$RUNNER_TEMP/out/source.json"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
         # The notes list the commits since the last release. Changes land on main without pull requests,
         # so GitHub's generated notes would be empty.
         run: |
-          if previous=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null); then
-              range=$previous..HEAD
-          else
-              range=HEAD
-          fi
           out=$RUNNER_TEMP/out
           {
               echo "Unsigned. Sign it with SideStore, AltStore, Feather or your own certificate, see the [README](https://github.com/$GITHUB_REPOSITORY#install-tether-on-your-iphone)."
               echo
-              git log --no-merges --format='- %s' "$range"
+              git log --no-merges --format='- %s' "${PREVIOUS:+$PREVIOUS..}HEAD"
               echo
               echo "SHA-256 of Tether.ipa: \`$(shasum -a 256 "$out/Tether.ipa" | cut -d' ' -f1)\`"
           } > "$out/notes.md"
-          gh release create "$GITHUB_REF_NAME" "$out/Tether.ipa" "$out/source.json" "$out/LICENSES.txt" \
-            -R "$GITHUB_REPOSITORY" --verify-tag --title "Tether ${GITHUB_REF_NAME#v}" --notes-file "$out/notes.md"
+          gh release create "v$VERSION" "$out/Tether.ipa" "$out/source.json" "$out/LICENSES.txt" \
+            -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Tether $VERSION" --notes-file "$out/notes.md"

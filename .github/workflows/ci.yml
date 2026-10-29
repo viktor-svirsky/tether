@@ -33,7 +33,9 @@ jobs:
       - name: Unit tests
         run: swift test
       - name: Release script tests
-        run: python3 scripts/test_make_source.py
+        run: |
+          python3 scripts/test_make_source.py
+          scripts/test-next-version.sh
       - name: WireGuard server tests
         run: go -C WireGuard test -race ./...
       - name: Fuzz the UDP replies
