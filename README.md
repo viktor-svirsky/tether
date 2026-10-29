@@ -1,5 +1,10 @@
 # Tether
 
+[![CI](https://github.com/viktor-svirsky/tether/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/viktor-svirsky/tether/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/viktor-svirsky/tether)](https://github.com/viktor-svirsky/tether/releases/latest)
+![iOS 17+](https://img.shields.io/badge/iOS-17%2B-blue)
+[![License: MIT](https://img.shields.io/github/license/viktor-svirsky/tether)](LICENSE)
+
 Share your iPhone's internet with your iPad, Mac or travel router, even when your cellular plan blocks or slows down Personal Hotspot.
 
 **Each device needs a WireGuard client.** The free WireGuard app works on an iPad, iPhone or Mac, and most travel routers (GL.iNet, UniFi Travel Router) have one built in. A device without WireGuard can still join the hotspot, but its traffic goes straight out as hotspot traffic and Tether doesn't help it.
