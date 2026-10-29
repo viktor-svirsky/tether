@@ -13,7 +13,7 @@ They need no device and no internet. They cover:
 
 - WireGuard keys and configs: key pairs, address allocation, the client config text, and a Keychain error never replacing the saved server key.
 - WireGuardServer.swift through the C API into the real Go server (the xcframework's macOS slice): start and stop, a bad address or a port in use coming back as an error, short keys refused before Go reads them, and peers Go refuses.
-- The server's counters: devices merged by address, a tunnel that is up counting as connected, and counters that never go backwards across restarts.
+- The server's counters: no device counting as connected before its first handshake, and traffic totals that never go backwards across restarts.
 - The ready device (let in but not listed until it connects, then listed and replaced by a new one), the build expiry warning, when the keep-alive sound plays, how bytes and speeds read, and what the Shortcuts actions say.
 
 The WireGuard server has its own Go tests:
