@@ -21,4 +21,30 @@ enum KeepAlivePolicy {
     static func watchInterval(sceneActive: Bool) -> (every: Duration, tolerance: Duration) {
         sceneActive ? (.seconds(5), .seconds(1)) : (.seconds(15), .seconds(5))
     }
+
+    /// What the audio system tells `KeepAlive` that can leave the sound silent.
+    enum AudioEvent {
+        /// A phone call, Siri or an alarm is over. iOS does not resume the sound by itself.
+        case interruptionEnded
+        /// The media server restarted, after a crash or Reset Media Services in Settings. The old
+        /// player is dead but not nil, so playing it again fails quietly, and about 30 seconds
+        /// later iOS suspends Tether in the background.
+        case mediaServicesReset
+    }
+
+    enum AudioRestart {
+        /// Play the same player again.
+        case resume
+        /// Drop the player and set the session up again with a new one, as Apple asks after a reset.
+        case rebuild
+    }
+
+    /// Nil once `KeepAlive` is stopped, so an event never brings back a sound that was meant to stop.
+    static func restart(after event: AudioEvent, started: Bool) -> AudioRestart? {
+        guard started else { return nil }
+        switch event {
+        case .interruptionEnded: return .resume
+        case .mediaServicesReset: return .rebuild
+        }
+    }
 }

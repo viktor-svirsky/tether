@@ -2,12 +2,13 @@ import AVFoundation
 
 /// Plays a looping silent sound so iOS keeps the app (and its listener) running in the background.
 /// It mixes with other audio, so music keeps playing. A phone call, Siri or an alarm interrupts it,
-/// and iOS does not resume it, so it restarts itself when the interruption ends.
+/// and iOS does not resume it, so it restarts itself when the interruption ends. After a media
+/// services reset it sets itself up again from scratch.
 /// Fine for a personally installed app. App Store review would reject it.
 /// `KeepAlivePolicy` says when it plays.
 final class KeepAlive {
     private var player: AVAudioPlayer?
-    private var observer: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
 
     /// Started and not stopped, also while a call has paused it.
     var playing: Bool { player != nil }
@@ -28,22 +29,42 @@ final class KeepAlive {
             player?.volume = 0
         }
         player?.play()
-        if observer == nil {
-            observer = NotificationCenter.default.addObserver(
-                forName: AVAudioSession.interruptionNotification, object: session, queue: .main
-            ) { [weak self] note in
-                let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
-                if raw == AVAudioSession.InterruptionType.ended.rawValue { self?.start() }
-            }
+        if observers.isEmpty {
+            let center = NotificationCenter.default
+            observers = [
+                center.addObserver(
+                    forName: AVAudioSession.interruptionNotification, object: session, queue: .main
+                ) { [weak self] note in
+                    let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                    if raw == AVAudioSession.InterruptionType.ended.rawValue { self?.restart(after: .interruptionEnded) }
+                },
+                // Apple doesn't say which object posts it, so this listens to any. The observers
+                // themselves live through a reset.
+                center.addObserver(
+                    forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main
+                ) { [weak self] _ in
+                    self?.restart(after: .mediaServicesReset)
+                },
+            ]
         }
     }
 
     func stop() {
         player?.stop()
         player = nil
-        if let observer { NotificationCenter.default.removeObserver(observer) }
-        observer = nil
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers = []
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    private func restart(after event: KeepAlivePolicy.AudioEvent) {
+        switch KeepAlivePolicy.restart(after: event, started: playing) {
+        case .resume: start()
+        case .rebuild:
+            player = nil
+            start()
+        case nil: break
+        }
     }
 
     private static func silentWav(seconds: Int) -> Data {
