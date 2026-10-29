@@ -21,6 +21,19 @@ runs:
         go-version: "1.27"
         check-latest: true
         cache-dependency-path: WireGuard/go.sum
+    # One XcodeGen, checked against its SHA-256, so a new release can't change the generated project
+    # between a green CI run and a release. Dependabot doesn't see it. To bump it, pick a release on
+    # https://github.com/yonaskolb/XcodeGen/releases and copy its version and the sha256 digest that
+    # GitHub lists for xcodegen.zip.
     - name: Install XcodeGen
       shell: bash
-      run: brew install xcodegen
+      env:
+        VERSION: "2.46.0"
+        SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+      run: |
+        zip=$RUNNER_TEMP/xcodegen.zip
+        curl -fsSL --retry 3 --retry-all-errors -o "$zip" "https://github.com/yonaskolb/XcodeGen/releases/download/$VERSION/xcodegen.zip"
+        echo "$SHA256  $zip" | shasum -a 256 -c -
+        unzip -qo "$zip" -d "$RUNNER_TEMP"
+        "$RUNNER_TEMP/xcodegen/bin/xcodegen" --version
+        echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
