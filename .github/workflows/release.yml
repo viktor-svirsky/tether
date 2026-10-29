@@ -1,6 +1,6 @@
-# Actions > Release > Run workflow publishes the next version of Tether from main. It builds an
-# unsigned Tether.ipa and publishes it as a GitHub release with source.json for AltStore and
-# SideStore, and the release creates the version tag. People add
+# Actions > Release > Run workflow publishes the next version of Tether from main, once CI passed on
+# it. It builds an unsigned Tether.ipa and publishes it as a GitHub release with source.json for
+# AltStore and SideStore, and the release creates the version tag. People add
 # https://github.com/viktor-svirsky/tether/releases/latest/download/source.json once and get every
 # release after that. Runs on GitHub's macOS runner, like CI.
 name: Release
@@ -27,10 +27,25 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 30
     permissions:
+      actions: read # see whether CI passed on this commit
       contents: write # create the release and its tag
       id-token: write # sign the attestation
       attestations: write # store it
     steps:
+      # CI runs more than this job does (the Go race tests, fuzzing, govulncheck), so a release waits
+      # for a green CI run on this exact commit. Main runs CI on every push, so it has usually finished.
+      # Only push runs count: a pull request runs the workflow from a merge commit, not this one.
+      - name: CI passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&status=success" --jq .total_count)
+          if (( passed > 0 )); then
+              echo "CI passed on $GITHUB_SHA"
+          else
+              echo "::error::CI hasn't passed on $GITHUB_SHA: it failed, is still running, or never ran. Release once it's green."
+              exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the build number is the commit count, and the tags give the last version
