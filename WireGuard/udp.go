@@ -130,9 +130,12 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 	}
 	s.cones[device] = c
 	s.conesOf[owner]++
+	if device.Addr() != owner {
+		s.routed = true // a client's flow through the router
+	}
 	untrack := s.trackLocked(owner, c)
+	s.conesRunning.Add(2) // under s.mu, so it comes before Close's Wait or not at all
 	s.mu.Unlock()
-	s.conesRunning.Add(2)
 	go func() { defer s.conesRunning.Done(); s.send(c) }()
 	go func() {
 		defer s.conesRunning.Done()

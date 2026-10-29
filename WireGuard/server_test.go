@@ -1571,3 +1571,19 @@ func TestAnAddressHasNoOwnerWhileItsOldKeyGoes(t *testing.T) {
 		t.Fatal("the new key doesn't own the address once it's in")
 	}
 }
+
+// A client's flow that is refused, here at the cone cap, doesn't count as the router carrying it.
+func TestARefusedFlowDoesntMakeTheRouterInUse(t *testing.T) {
+	s, _ := setup(t)
+	s.mu.Lock()
+	s.router, s.routed, s.maxCones = netip.MustParseAddr("10.7.0.2"), false, 0
+	s.mu.Unlock()
+	if s.cone(netip.MustParseAddrPort("192.168.4.20:5000")) != nil {
+		t.Fatal("a cone past a cap of 0")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.routed {
+		t.Fatal("a refused flow marked the router as in use")
+	}
+}
