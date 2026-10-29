@@ -607,8 +607,7 @@ var tunnelNet = netip.MustParsePrefix("10.7.0.0/24")
 // router's for a device behind it. wireguard-go only takes routedNets sources from the router, so
 // no other device can send as one of its clients. Invalid when nobody may send from src: a device
 // just removed, or a tunnel address no device has, which the router's ranges cover too. A flow from
-// one would go to the device that gets that address later. Finding one of the router's clients
-// marks the router as in use, see routed.
+// one would go to the device that gets that address later.
 func (s *Server) owner(src netip.Addr) netip.Addr {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -624,7 +623,6 @@ func (s *Server) ownerLocked(src netip.Addr) netip.Addr {
 	if s.router.IsValid() && !tunnelNet.Contains(src) {
 		for _, n := range routedNets {
 			if n.Contains(src) {
-				s.routed = true
 				return s.router
 			}
 		}
@@ -642,6 +640,9 @@ func (s *Server) track(src, device netip.Addr, key [32]byte, conns ...io.Closer)
 	defer s.mu.Unlock()
 	if s.closed || s.keys[device] != key || s.ownerLocked(src) != device {
 		return nil, false
+	}
+	if src != device {
+		s.routed = true // a client's connection through the router
 	}
 	return s.trackLocked(device, conns...), true
 }
@@ -708,12 +709,18 @@ func (s *Server) handleTCP(id stack.TransportEndpointID, pkt *stack.PacketBuffer
 	}
 	s.mu.Unlock()
 	if !s.forwarder.HandlePacket(id, pkt) {
-		// A bad checksum. No goroutine was started for it.
+		// A bad checksum, so no goroutine was started for it. A forwardTCP gVisor started for an
+		// earlier SYN with the same id may have taken the arrival already, and then ends it.
 		if !again {
 			s.mu.Lock()
-			s.dialed(id, a, false)
+			mine := !a.taken
+			if mine {
+				s.dialed(id, a, false)
+			}
 			s.mu.Unlock()
-			s.forwarding.Done()
+			if mine {
+				s.forwarding.Done()
+			}
 		}
 		return false
 	}
@@ -723,9 +730,10 @@ func (s *Server) handleTCP(id stack.TransportEndpointID, pkt *stack.PacketBuffer
 // dialed ends an arrival: its dial is over, and its connection is open when open is true, or gone.
 // Runs with s.mu held.
 func (s *Server) dialed(id stack.TransportEndpointID, a *arrival, open bool) {
-	if s.arriving[id] == a {
-		delete(s.arriving, id)
+	if s.arriving[id] != a {
+		return // ended already
 	}
+	delete(s.arriving, id)
 	if a.refuse {
 		return
 	}
