@@ -113,7 +113,8 @@ WireGuard/                   the WireGuard server in Go: wireguard-go plus a gVi
 scripts/build-wireguard.sh   builds WireGuard/ into TetherWG.xcframework (xcodegen runs it)
 scripts/build-ipa.sh         builds the unsigned Tether.ipa; make_source.py writes source.json for it
 scripts/next-version.sh      picks the next release version from the last tag
-Sources/Model.swift          finds the hotspot, starts the server, samples traffic, feeds the screens
+Sources/HotspotSession.swift finds the hotspot, starts the server, samples traffic (tested on the Mac)
+Sources/Model.swift          runs the session on timers and feeds the screens
 Sources/MainView.swift       the main screen; DevicesView.swift has the QR code and the device screen
 Sources/KeepAlive.swift      silent audio to stay alive in the background
 Sources/Shortcuts.swift      the Start Tether and Is Tether Sharing? actions for Shortcuts and Siri

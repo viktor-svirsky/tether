@@ -24,7 +24,7 @@ final class WireGuardServer {
         do {
             try setPeers(setup)
         } catch {
-            // Not left half started: the watcher in Model retries a server that isn't running.
+            // Not left half started: HotspotSession's watcher round retries a server that isn't running.
             TetherWGStop()
             running = false
             throw error
