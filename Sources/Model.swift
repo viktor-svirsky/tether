@@ -45,7 +45,7 @@ final class Model: ObservableObject {
         set { session.wireGuardConnected = newValue }
     }
     var wireGuardPeers: [WireGuardSetup.Peer] { session.wireGuardPeers }
-    var wireGuardReady: WireGuardSetup.Peer? { session.wireGuardReady }
+    var wireGuardReady: WireGuardSetup.Ready? { session.wireGuardReady }
     var wireGuardReadyProblem: String? { session.wireGuardReadyProblem }
     var wireGuardProblem: String? { session.wireGuardProblem }
     var sharing: Bool { session.sharing }
@@ -151,8 +151,8 @@ final class Model: ObservableObject {
         session.removeWireGuardDevice(id)
     }
 
-    func wireGuardConfig(for peer: WireGuardSetup.Peer) -> String {
-        session.wireGuardConfig(for: peer)
+    func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String {
+        session.wireGuardConfig(for: ready)
     }
 
     /// The expiry warning and the session's sample, see `HotspotSession.sampleTraffic`.

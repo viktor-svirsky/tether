@@ -42,7 +42,7 @@ final class HotspotSession {
     /// The devices that have connected, in the order they first did.
     private(set) var wireGuardPeers: [WireGuardSetup.Peer] = [] { willSet { willChange() } }
     /// Behind the QR code on the main screen, see `WireGuardSetup.ready`. Only ever a saved one.
-    private(set) var wireGuardReady: WireGuardSetup.Peer? { willSet { willChange() } }
+    private(set) var wireGuardReady: WireGuardSetup.Ready? { willSet { willChange() } }
     /// Why there's no QR code while the devices that have one still connect: making the next one couldn't be saved.
     private(set) var wireGuardReadyProblem: String? { willSet { willChange() } }
     /// Why WireGuard isn't running, shown on the main screen: the saved setup's problem from launch on,
@@ -241,8 +241,8 @@ final class HotspotSession {
         wireGuardPeersChanged()
     }
 
-    func wireGuardConfig(for peer: WireGuardSetup.Peer) -> String {
-        devices.setup.clientConfig(for: peer)
+    func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String {
+        devices.setup.clientConfig(for: ready)
     }
 
     /// On a memory warning.
