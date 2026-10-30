@@ -19,15 +19,33 @@ struct WireGuardSetup: Codable, Equatable {
 
     /// A device as the server knows it. No private key: the device has its own copy, and the
     /// server only needs the public one. Older versions saved one here, and decoding drops it.
+    /// It's saved as an empty `privateKey` all the same, since older versions can't decode a
+    /// device without one, and an older release can be installed over this one.
     struct Peer: Codable, Hashable, Identifiable {
         var id = UUID()
         var name: String
         var publicKey: Data
         var address: String
+
+        private enum SavedKeys: String, CodingKey { case id, name, privateKey, publicKey, address }
+
+        func encode(to encoder: Encoder) throws {
+            try encode(to: encoder, privateKey: Data())
+        }
+
+        /// With the ready device's key, or an empty one for everyone else.
+        fileprivate func encode(to encoder: Encoder, privateKey: Data) throws {
+            var container = encoder.container(keyedBy: SavedKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(name, forKey: .name)
+            try container.encode(privateKey, forKey: .privateKey)
+            try container.encode(publicKey, forKey: .publicKey)
+            try container.encode(address, forKey: .address)
+        }
     }
 
     /// The device behind the QR code, the only one whose private key Tether keeps: the code is its
-    /// config. Saved flat, like a peer with a `privateKey`, the way older versions saved it.
+    /// config. Saved flat, like a peer with its `privateKey`, the way older versions saved it.
     @dynamicMemberLookup
     struct Ready: Codable, Hashable {
         var peer: Peer
@@ -51,9 +69,7 @@ struct WireGuardSetup: Codable, Equatable {
         }
 
         func encode(to encoder: Encoder) throws {
-            try peer.encode(to: encoder)
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(privateKey, forKey: .privateKey)
+            try peer.encode(to: encoder, privateKey: privateKey)
         }
     }
 
@@ -264,14 +280,14 @@ final class WireGuardDevices {
     /// Older versions saved every device's private key. Decoding left them out, and this saves
     /// that, so they leave the Keychain now rather than with the next change. A save that fails
     /// loses nothing: the old setup stays saved, the devices still connect, and the next save
-    /// drops the keys.
+    /// drops the keys. A dropped key is saved empty, so it isn't saved again on every launch.
     private func dropOldKeys(saved data: Data) {
         struct Old: Decodable {
             struct Device: Decodable { var privateKey: Data? }
             var peers: [Device]
         }
         guard let old = try? JSONDecoder().decode(Old.self, from: data),
-              old.peers.contains(where: { $0.privateKey != nil }) else { return }
+              old.peers.contains(where: { !($0.privateKey ?? Data()).isEmpty }) else { return }
         try? save()
     }
 
