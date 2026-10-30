@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add Tether</title>
+<meta name="description" content="Add Tether's source to SideStore or AltStore in one tap.">
+<style>
+  :root {
+    --bg: #f2f2f7;
+    --card: #ffffff;
+    --text: #1c1c1e;
+    --muted: #6c6c70;
+    --accent: #0073c7;
+    --on-accent: #ffffff;
+    --code: #e9e9ee;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --card: #1c1c1e;
+      --text: #f2f2f7;
+      --muted: #98989f;
+      --accent: #4db3ff;
+      --on-accent: #0b1a26;
+      --code: #2c2c2e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  }
+  main { max-width: 480px; margin: 0 auto; padding: 40px 16px; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  p { margin: 0 0 16px; color: var(--muted); }
+  .card { background: var(--card); border-radius: 14px; padding: 20px; margin: 24px 0; }
+  .button {
+    display: block;
+    text-align: center;
+    text-decoration: none;
+    font-weight: 600;
+    padding: 14px;
+    border-radius: 12px;
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .button + .button { margin-top: 12px; }
+  code {
+    display: block;
+    background: var(--code);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: 14px/1.4 ui-monospace, Menlo, monospace;
+    overflow-wrap: anywhere;
+    user-select: all;
+    -webkit-user-select: all;
+  }
+  a { color: var(--accent); }
+  .card p:last-child { margin-bottom: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Add Tether</h1>
+  <p>Open this page on your iPhone and tap the app you use. It opens and asks to add Tether's source. Then find Tether in Browse and install it.</p>
+
+  <div class="card">
+    <a class="button" href="sidestore://source?url=https%3A%2F%2Fgithub.com%2Fviktor-svirsky%2Ftether%2Freleases%2Flatest%2Fdownload%2Fsource.json">Add to SideStore</a>
+    <a class="button" href="altstore://source?url=https%3A%2F%2Fgithub.com%2Fviktor-svirsky%2Ftether%2Freleases%2Flatest%2Fdownload%2Fsource.json">Add to AltStore</a>
+  </div>
+
+  <div class="card">
+    <p>Nothing happens? Add the source by hand: open Sources, tap + and paste this.</p>
+    <code>https://github.com/viktor-svirsky/tether/releases/latest/download/source.json</code>
+  </div>
+
+  <p>Don't have SideStore or AltStore yet? Set it up first, see <a href="https://github.com/viktor-svirsky/tether#install-tether-on-your-iphone">how to install Tether</a>.</p>
+</main>
+</body>
+</html>
