@@ -1221,14 +1221,14 @@ func TestADeviceAtItsDialCapLeavesOthersDialing(t *testing.T) {
 		return normal(ctx, network, address)
 	}
 	s.mu.Unlock()
-	dialSilent := func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	dialSilent := func(wait time.Duration) error {
+		ctx, cancel := context.WithTimeout(context.Background(), wait)
 		defer cancel()
 		_, err := a.net.DialContext(ctx, "tcp", net.JoinHostPort(silent, "9"))
 		return err
 	}
 	for range 2 {
-		go dialSilent()
+		go dialSilent(3 * time.Second)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for started.Load() < 2 && time.Now().Before(deadline) {
@@ -1237,9 +1237,10 @@ func TestADeviceAtItsDialCapLeavesOthersDialing(t *testing.T) {
 	if started.Load() != 2 {
 		t.Fatalf("%d dials started, want 2", started.Load())
 	}
-	begin := time.Now()
-	if err := dialSilent(); err == nil || time.Since(begin) > 2*time.Second {
-		t.Fatalf("a dial past the cap wasn't refused at once: %v after %v", err, time.Since(begin))
+	// Refused means a reset came back, where a dial let through would hang until the deadline. How
+	// fast the reset comes depends on the machine: under -race on a CI runner it took 2 s.
+	if err := dialSilent(15 * time.Second); err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("a dial past the cap wasn't refused: %v", err)
 	}
 	if n := started.Load(); n != 2 {
 		t.Fatalf("%d dials started past a cap of 2", n)
