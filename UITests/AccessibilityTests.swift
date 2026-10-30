@@ -105,6 +105,20 @@ final class AccessibilityTests: TetherUITestCase {
         try audit()
     }
 
+    func testADeviceProblemPassesTheAccessibilityAudit() throws {
+        launch(.qrCodeUnsaved)
+        openDevice("iPad")
+        removeOpenDevice()
+        XCTAssertTrue(staticText("device.problem").waitForExistence(timeout: 5))
+        try audit()
+    }
+
+    /// Remove, and Remove again in the confirmation dialog.
+    private func removeOpenDevice() {
+        reveal(element("device.remove"), maxSwipes: 30).tap()
+        app.buttons["Remove"].firstMatch.tap()
+    }
+
     func testLargeTextGrowsTheDeviceRows() {
         launch(.sharing)
         let normal = reveal(element("device.iPad")).frame.height
@@ -128,6 +142,17 @@ final class AccessibilityTests: TetherUITestCase {
         XCTAssertTrue(reveal(banner, maxSwipes: 30).exists)
         XCTAssertGreaterThan(banner.frame.height, 40, "the banner wraps instead of shrinking")
         XCTAssertTrue(reveal(element("wireguard.reset"), maxSwipes: 30).isHittable)
+    }
+
+    func testLargeTextKeepsADeviceProblemReadable() {
+        launch(.qrCodeUnsaved, arguments: accessibilityXL)
+        reveal(element("device.MacBook"), maxSwipes: 30).tap()
+        XCTAssertTrue(app.navigationBars["MacBook"].waitForExistence(timeout: 5))
+        removeOpenDevice()
+        let problem = staticText("device.problem")
+        XCTAssertTrue(problem.waitForExistence(timeout: 5))
+        XCTAssertTrue(reveal(problem, maxSwipes: 30).exists)
+        XCTAssertGreaterThan(problem.frame.height, 40, "the message wraps instead of shrinking")
     }
 
     func testLargeTextKeepsTheDeviceScreenReachable() {

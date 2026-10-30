@@ -167,6 +167,34 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertNil(session.wireGuardProblem)
     }
 
+    func testARenameThatCantBeSavedSaysSoUntilAChangeSaves() throws {
+        makeSession()
+        let peer = try XCTUnwrap(devices.connectReady())
+        let other = try XCTUnwrap(devices.connectReady())
+        secrets.savesFail = true
+        session.renameWireGuardDevice(peer.id, to: "Kitchen iPad")
+        XCTAssertEqual(session.wireGuardPeers.first?.name, peer.name, "the old name stays")
+        XCTAssertEqual(session.wireGuardDeviceProblem,
+                       HotspotSession.DeviceProblem(device: peer.id, text: "The new name couldn't be saved."))
+        secrets.savesFail = false
+        XCTAssertTrue(session.removeWireGuardDevice(other.id))
+        XCTAssertNil(session.wireGuardDeviceProblem, "any change that saves clears it")
+    }
+
+    func testARemovalThatCantBeSavedSaysSoUntilAChangeSaves() throws {
+        makeSession()
+        let peer = try XCTUnwrap(devices.connectReady())
+        secrets.savesFail = true
+        XCTAssertFalse(session.removeWireGuardDevice(peer.id))
+        XCTAssertEqual(session.wireGuardPeers.map(\.id), [peer.id], "the device stays")
+        XCTAssertEqual(session.wireGuardDeviceProblem,
+                       HotspotSession.DeviceProblem(device: peer.id, text: "The device couldn't be removed."))
+        secrets.savesFail = false
+        session.renameWireGuardDevice(peer.id, to: "Kitchen iPad")
+        XCTAssertNil(session.wireGuardDeviceProblem)
+        XCTAssertEqual(session.wireGuardPeers.first?.name, "Kitchen iPad")
+    }
+
     func testABackgroundRoundClaimsTheReadyDevice() throws {
         makeSession(sceneActive: false)
         address = hotspot

@@ -30,17 +30,22 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertTrue(element("device.iPad").waitForExistence(timeout: 5))
     }
 
-    func testRenamingADeviceChangesItsRow() {
-        launch(.sharing)
-        openDevice("MacBook")
-        // Tapping the title opens a menu with Rename.
-        app.navigationBars["MacBook"].buttons["MacBook"].tap()
+    /// On the device's screen, through the title: tapping it opens a menu with Rename.
+    private func rename(_ name: String, to newName: String) {
+        app.navigationBars[name].buttons[name].tap()
         app.buttons["Rename"].firstMatch.tap()
         let field = app.textFields.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "MacBook".count) + "Work Mac\n")
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: name.count) + newName + "\n")
+    }
+
+    func testRenamingADeviceChangesItsRow() {
+        launch(.sharing)
+        openDevice("MacBook")
+        rename("MacBook", to: "Work Mac")
         XCTAssertTrue(app.navigationBars["Work Mac"].waitForExistence(timeout: 5))
+        assertNowhere(element("device.problem"))
         goBack(to: "Tether")
         XCTAssertTrue(reveal(element("device.Work Mac")).exists)
         assertNowhere(element("device.MacBook"))
@@ -72,6 +77,35 @@ final class DeviceViewTests: TetherUITestCase {
     }
 
     // MARK: problems
+
+    func testARenameThatCantBeSavedSaysSoAndKeepsTheName() {
+        launch(.qrCodeUnsaved)
+        openDevice("MacBook")
+        rename("MacBook", to: "Work Mac")
+        let problem = staticText("device.problem") // the warning icon carries the identifier too
+        XCTAssertTrue(problem.waitForExistence(timeout: 5))
+        XCTAssertEqual(problem.label, "The new name couldn't be saved.")
+        // The title shows the saved name. The bar's identifier keeps what was typed, so the test reads the title itself.
+        XCTAssertTrue(app.navigationBars.buttons["MacBook"].waitForExistence(timeout: 5), "the old name stays")
+        XCTAssertFalse(app.navigationBars.buttons["Work Mac"].exists)
+        goBack(to: "Tether")
+        XCTAssertTrue(reveal(element("device.MacBook")).exists)
+        openDevice("iPad")
+        assertNowhere(element("device.problem"), message: "it belongs to the MacBook")
+    }
+
+    func testARemovalThatCantBeSavedStaysOnTheDeviceAndSaysSo() {
+        launch(.qrCodeUnsaved)
+        openDevice("MacBook")
+        element("device.remove").tap()
+        app.buttons["Remove"].firstMatch.tap()
+        let problem = staticText("device.problem")
+        XCTAssertTrue(problem.waitForExistence(timeout: 5))
+        XCTAssertEqual(problem.label, "The device couldn't be removed.")
+        XCTAssertTrue(app.navigationBars["MacBook"].exists, "still on the device's screen")
+        goBack(to: "Tether")
+        XCTAssertTrue(reveal(element("device.MacBook")).exists)
+    }
 
     func testLockedKeysShowTheProblemAndNoQRCode() {
         launch(.wireGuardLocked)

@@ -24,7 +24,8 @@ enum DemoScenario: String, CaseIterable {
     case wireGuardNeedsReset
     /// Hotspot on, a first launch whose new WireGuard keys can't be saved: no QR code, and WireGuard isn't running.
     case wireGuardUnsaved
-    /// Like `sharing`, but the QR code for the next device can't be saved, so there's none. The devices still connect.
+    /// Like `sharing`, but nothing can be saved: there's no QR code for the next device, and renaming or
+    /// removing a device doesn't save. The devices still connect.
     case qrCodeUnsaved
     /// Like `sharing`, with two days left before this build stops opening.
     case expiring

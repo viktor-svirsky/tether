@@ -45,6 +45,8 @@ final class HotspotSession {
     private(set) var wireGuardReady: WireGuardSetup.Ready? { willSet { willChange() } }
     /// Why there's no QR code while the devices that have one still connect: making the next one couldn't be saved.
     private(set) var wireGuardReadyProblem: String? { willSet { willChange() } }
+    /// A rename or removal that couldn't be saved, shown on that device's screen until a change saves.
+    private(set) var wireGuardDeviceProblem: DeviceProblem? { willSet { willChange() } }
     /// Why WireGuard isn't running, shown on the main screen: the saved setup's problem from launch on,
     /// hotspot or not, or why the server didn't start on the hotspot.
     private(set) var wireGuardProblem: String? { willSet { willChange() } }
@@ -232,13 +234,31 @@ final class HotspotSession {
 
     /// Only the name Tether shows changes. The tunnel already imported keeps its own name.
     func renameWireGuardDevice(_ id: WireGuardSetup.Peer.ID, to name: String) {
-        if !devices.rename(id, to: name) { log("WireGuard: the new name couldn't be saved") }
+        let renamed = devices.rename(id, to: name)
+        if !renamed { log("WireGuard: the new name couldn't be saved") }
+        showDeviceProblem(renamed ? nil : DeviceProblem(device: id, text: "The new name couldn't be saved."))
         publishSetup()
     }
 
-    func removeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
-        if !devices.remove(id) { log("WireGuard: the removal couldn't be saved, the device stays") }
+    /// False when the removal couldn't be saved, and the device stays.
+    @discardableResult
+    func removeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) -> Bool {
+        let removed = devices.remove(id)
+        if !removed { log("WireGuard: the removal couldn't be saved, the device stays") }
+        showDeviceProblem(removed ? nil : DeviceProblem(device: id, text: "The device couldn't be removed."))
         wireGuardPeersChanged()
+        return removed
+    }
+
+    /// It names its device, so another device's screen doesn't show it.
+    struct DeviceProblem: Equatable {
+        let device: WireGuardSetup.Peer.ID
+        let text: String
+    }
+
+    /// The last rename or removal decides: one that saves clears it, one that doesn't names itself.
+    private func showDeviceProblem(_ problem: DeviceProblem?) {
+        if problem != wireGuardDeviceProblem { wireGuardDeviceProblem = problem }
     }
 
     func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String {

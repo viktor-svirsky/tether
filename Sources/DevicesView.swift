@@ -68,7 +68,8 @@ struct WireGuardProblemSection: View {
     }
 }
 
-/// One device: whether it's connected, and removing it. Tapping the title renames it.
+/// One device: whether it's connected, and removing it. Tapping the title renames it. A rename or
+/// removal that couldn't be saved says so at the top.
 struct DeviceView: View {
     @ObservedObject var model: Model
     let peer: WireGuardSetup.Peer
@@ -78,9 +79,18 @@ struct DeviceView: View {
     /// The saved device, so a new name shows at once.
     private var current: WireGuardSetup.Peer { model.wireGuardPeers.first { $0.id == peer.id } ?? peer }
     private var connected: Bool { model.wireGuardConnected.contains(peer.address) }
+    /// A rename or removal of this device that couldn't be saved.
+    private var problem: String? { model.wireGuardDeviceProblem.flatMap { $0.device == peer.id ? $0.text : nil } }
 
     var body: some View {
         List {
+            // On top, where a rename is made, and the screen a failed removal stays on.
+            if let problem {
+                Section {
+                    Label(problem, systemImage: "exclamationmark.triangle")
+                        .accessibilityIdentifier("device.problem")
+                }
+            }
             Section {
                 ConnectedLabel(connected: connected)
                     .accessibilityIdentifier("device.status")
@@ -97,8 +107,8 @@ struct DeviceView: View {
         .toolbarRole(.editor)
         .confirmationDialog("Remove \(current.name)?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
-                model.removeWireGuardDevice(peer.id)
-                dismiss()
+                // A removal that couldn't be saved stays here, and the screen says so.
+                if model.removeWireGuardDevice(peer.id) { dismiss() }
             }
         }
     }

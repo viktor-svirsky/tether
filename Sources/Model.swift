@@ -47,6 +47,7 @@ final class Model: ObservableObject {
     var wireGuardPeers: [WireGuardSetup.Peer] { session.wireGuardPeers }
     var wireGuardReady: WireGuardSetup.Ready? { session.wireGuardReady }
     var wireGuardReadyProblem: String? { session.wireGuardReadyProblem }
+    var wireGuardDeviceProblem: HotspotSession.DeviceProblem? { session.wireGuardDeviceProblem }
     var wireGuardProblem: String? { session.wireGuardProblem }
     var sharing: Bool { session.sharing }
     var wireGuardNeedsReset: Bool { session.wireGuardNeedsReset }
@@ -147,7 +148,9 @@ final class Model: ObservableObject {
         session.renameWireGuardDevice(id, to: name)
     }
 
-    func removeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
+    /// See `HotspotSession.removeWireGuardDevice`.
+    @discardableResult
+    func removeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) -> Bool {
         session.removeWireGuardDevice(id)
     }
 
