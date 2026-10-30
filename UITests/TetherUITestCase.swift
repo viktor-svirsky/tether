@@ -234,26 +234,42 @@ class TetherUITestCase: XCTestCase {
     func audit(types: XCUIAccessibilityAuditType = XCUIAccessibilityAuditType.all.subtracting([.dynamicType, .textClipped]),
                underSheet: Bool = false, only prefix: String? = nil, file: StaticString = #filePath, line: UInt = #line) throws {
         var allowed: [String] = []
-        try app.performAccessibilityAudit(for: types) { issue in
-            let element = issue.element
-            if let prefix, !(element?.identifier.hasPrefix(prefix) ?? false) { return true }
-            let systemText = element?.elementType == .staticText && element?.identifier.isEmpty == true
-            let systemStyled = Self.systemStyled.contains(element?.identifier ?? "")
-                || (element?.elementType == .button && Self.systemButtons.contains(element?.label ?? ""))
-            let known = (issue.compactDescription == "Contrast nearly passed" && (systemText || systemStyled))
-                || (underSheet && issue.compactDescription == "Potentially inaccessible text" && element == nil)
-            if known {
-                allowed.append("\(issue.compactDescription): \(element?.label ?? "(no element)")")
-            } else {
-                // The failure itself names no element, so the log does.
-                print("Audit issue: \(issue.compactDescription), id \(element?.identifier ?? "-"), label \(element?.label ?? "(no element)")")
+        try retryOnceOnAuditTimeout {
+            allowed = []
+            try app.performAccessibilityAudit(for: types) { issue in
+                let element = issue.element
+                if let prefix, !(element?.identifier.hasPrefix(prefix) ?? false) { return true }
+                let systemText = element?.elementType == .staticText && element?.identifier.isEmpty == true
+                let systemStyled = Self.systemStyled.contains(element?.identifier ?? "")
+                    || (element?.elementType == .button && Self.systemButtons.contains(element?.label ?? ""))
+                let known = (issue.compactDescription == "Contrast nearly passed" && (systemText || systemStyled))
+                    || (underSheet && issue.compactDescription == "Potentially inaccessible text" && element == nil)
+                if known {
+                    allowed.append("\(issue.compactDescription): \(element?.label ?? "(no element)")")
+                } else {
+                    // The failure itself names no element, so the log does.
+                    print("Audit issue: \(issue.compactDescription), id \(element?.identifier ?? "-"), label \(element?.label ?? "(no element)")")
+                }
+                return known
             }
-            return known
         }
         let note = XCTAttachment(string: allowed.isEmpty ? "nothing let through" : allowed.joined(separator: "\n"))
         note.name = "Audit issues let through"
         note.lifetime = .keepAlways
         add(note)
+    }
+
+    /// Runs an audit, and once more if it ran out of time. The audit has a fixed time limit that a slow machine
+    /// (GitHub's macOS runners) sometimes misses, and a timeout says nothing about the screen. A second timeout,
+    /// or any other error, still fails the test. Findings never come through here: the audit records them as
+    /// test failures, it doesn't throw them.
+    private func retryOnceOnAuditTimeout(_ attempt: () throws -> Void) throws {
+        do {
+            try attempt()
+        } catch let error as NSError where error.domain == "com.apple.xcode.xctest.accessibilityAudit" && error.code == -56 {
+            print("Audit timed out, trying once more: \(error.localizedDescription)")
+            try attempt()
+        }
     }
 
     /// Toolbar buttons, drawn by the system in its own tint.
