@@ -13,6 +13,14 @@ Share your iPhone's internet with your iPad, Mac or travel router, even when you
 
 <img src="docs/sharing.png" width="260" alt="Tether sharing with an iPad, with the speed and the list of devices"> <img src="docs/add-device.png" width="260" alt="Tether with the hotspot on and a QR code for the first device">
 
+## Quick start
+
+1. [Install Tether on your iPhone](#install-tether-on-your-iphone) with SideStore or AltStore, or build it on a Mac.
+2. Turn on Personal Hotspot and open Tether. It shows a QR code.
+3. On the iPad or Mac, install the free WireGuard app and [add the tunnel](#connect-a-device-with-wireguard) from that code. Join the hotspot and turn the tunnel on.
+
+That's it. The device shows up in Tether as connected, and its traffic leaves as the iPhone's own.
+
 ## Why this works
 
 Carriers can tell when traffic comes from a device that's connected to your hotspot, and some plans block it or slow it to a crawl. Traffic that comes from the phone itself is fine.
@@ -28,20 +36,40 @@ Under the hood Tether runs a WireGuard server on UDP port 51820, on the hotspot 
 
 ## Install Tether on your iPhone
 
-You need an iPhone with Personal Hotspot. Install a ready-made build with a signing app, or build Tether yourself on a Mac.
+You need an iPhone with iOS 17 or later and a plan with Personal Hotspot. Tether isn't in the App Store, so you install it yourself: with a signing app like SideStore or AltStore (easiest), or by building it on a Mac.
 
-### With SideStore, AltStore or your own certificate
+### With SideStore or AltStore
 
-Each [release](https://github.com/viktor-svirsky/tether/releases) has an unsigned `Tether.ipa`. Your signing app signs it for your iPhone. GitHub Actions builds it from the release's commit and signs a record of that, so `gh attestation verify Tether.ipa -R viktor-svirsky/tether` shows the download is the one built here.
+SideStore and AltStore install apps on your iPhone signed with your own Apple ID. A free Apple ID is enough.
 
-- **SideStore or AltStore:** add this source once, then install Tether from it and get updates there:
+1. Install SideStore or AltStore with their own guide: [SideStore](https://docs.sidestore.io), [AltStore](https://faq.altstore.io). It needs a computer for the setup.
+2. On iOS 16 or later, turn on Developer Mode: Settings > Privacy & Security > Developer Mode. The iPhone restarts and asks you to confirm. Apps signed with your own Apple ID don't open without it.
+3. In SideStore or AltStore, open Sources, tap + and add Tether's source:
 
-  ```
-  https://github.com/viktor-svirsky/tether/releases/latest/download/source.json
-  ```
+   ```
+   https://github.com/viktor-svirsky/tether/releases/latest/download/source.json
+   ```
 
-  Or download `Tether.ipa` from the latest release and open it in the app.
-- **Feather, a paid certificate, or anything else that signs an `.ipa`:** download `Tether.ipa` from the latest release and sign it the way you sign other apps.
+4. Find Tether in Browse and install it. New releases show up there as updates, and an update keeps your devices.
+5. Open Tether, then [connect a device](#connect-a-device-with-wireguard).
+
+A free Apple ID has limits: 3 sideloaded apps at a time (SideStore or AltStore counts as one), and each app has to be refreshed every 7 days. SideStore and AltStore do that refresh for you, see their docs for what they need.
+
+You can also skip the source: download `Tether.ipa` from the [latest release](https://github.com/viktor-svirsky/tether/releases/latest) and open it in SideStore or AltStore.
+
+### With Feather, a paid certificate, or another signer
+
+Download `Tether.ipa` from the [latest release](https://github.com/viktor-svirsky/tether/releases/latest) and sign it the way you sign other apps. A paid Apple Developer account has no 3-app limit, and its builds last a year instead of 7 days.
+
+### Check the download
+
+Each [release](https://github.com/viktor-svirsky/tether/releases) has an unsigned `Tether.ipa`, built by GitHub Actions from the release's commit. GitHub signs a record of that build, so with the [GitHub CLI](https://cli.github.com) this shows the file you downloaded is the one built here:
+
+```sh
+gh attestation verify Tether.ipa -R viktor-svirsky/tether
+```
+
+The release notes also list its SHA-256.
 
 A signing app usually changes the bundle ID, so a Tether installed this way is a separate app from one you built with Xcode, with its own keys. Add your devices to it again.
 
@@ -97,7 +125,7 @@ iOS has no automation for "Personal Hotspot turned on", so let one shortcut turn
 ## Good to know
 
 - **It stops opening after 7 days** when signed with a free Apple ID. Tether says on its main screen when it has three days or less left. Refresh it in SideStore or AltStore, or build and install it again (step 3 above), before then. A paid certificate lasts longer. Your devices and settings stay.
-- **Keep it running.** Tether plays silent audio so iOS doesn't suspend it in the background. It mixes with other audio, so your music keeps playing, and it picks up again after a call or Siri. With no device on the hotspot for 10 minutes it stops, to save battery, and iOS suspends Tether. Open it again, or run Start Tether, before you turn the hotspot back on, and after a restart.
+- **Keep it running.** Tether plays silent audio so iOS doesn't suspend it in the background. It mixes with other audio, so your music keeps playing, and it picks up again after a call, Siri, or an audio reset. With no device on the hotspot for 10 minutes it stops, to save battery, and iOS suspends Tether. Open it again, or run Start Tether, before you turn the hotspot back on, and after a restart.
 - **It only listens on the hotspot**, never on other Wi-Fi networks. WireGuard only lets in devices you added.
 - **Devices reach what the iPhone reaches**, private networks included. With a VPN on the iPhone, your devices use it too, so its networks are open to them and to everyone behind a travel router you added.
 - **The main screen** shows whether Tether is sharing, the QR code for the next device, your devices with Connected or Not connected, and the current download and upload speed. To stop sharing, turn off Personal Hotspot.
