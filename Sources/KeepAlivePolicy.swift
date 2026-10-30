@@ -26,15 +26,20 @@ enum KeepAlivePolicy {
     enum AudioEvent {
         /// A phone call, Siri or an alarm is over. iOS does not resume the sound by itself.
         case interruptionEnded
-        /// The media server restarted, after a crash or Reset Media Services in Settings. The old
-        /// player is dead but not nil, so playing it again fails quietly, and about 30 seconds
-        /// later iOS suspends Tether in the background.
+        /// The media server died, after a crash or Reset Media Services in Settings. Without a sound
+        /// iOS suspends Tether in the background within seconds, and `mediaServicesReset` only
+        /// comes once the app uses audio again, so waiting for it never ends. Seen on iOS 27.2.
+        case mediaServicesLost
+        /// The media server is back. It only says so once the app uses audio again. The old player
+        /// is dead but not nil, so playing it again fails quietly.
         case mediaServicesReset
     }
 
     enum AudioRestart {
         /// Play the same player again.
         case resume
+        /// Ask iOS for background time, and keep starting a new player in it until one plays.
+        case holdOn
         /// Drop the player and set the session up again with a new one, as Apple asks after a reset.
         case rebuild
     }
@@ -44,6 +49,7 @@ enum KeepAlivePolicy {
         guard started else { return nil }
         switch event {
         case .interruptionEnded: return .resume
+        case .mediaServicesLost: return .holdOn
         case .mediaServicesReset: return .rebuild
         }
     }

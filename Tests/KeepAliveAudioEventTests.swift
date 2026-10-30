@@ -10,8 +10,13 @@ final class KeepAliveAudioEventTests: XCTestCase {
         XCTAssertEqual(KeepAlivePolicy.restart(after: .mediaServicesReset, started: true), .rebuild)
     }
 
+    func testHoldsOnWhileTheMediaServicesAreGone() {
+        XCTAssertEqual(KeepAlivePolicy.restart(after: .mediaServicesLost, started: true), .holdOn)
+    }
+
     func testAStoppedKeepAliveStaysStopped() {
         XCTAssertNil(KeepAlivePolicy.restart(after: .interruptionEnded, started: false))
+        XCTAssertNil(KeepAlivePolicy.restart(after: .mediaServicesLost, started: false))
         XCTAssertNil(KeepAlivePolicy.restart(after: .mediaServicesReset, started: false))
     }
 }

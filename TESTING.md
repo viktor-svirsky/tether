@@ -61,6 +61,7 @@ These need another person or a game account, so they aren't scripted.
 | iPhone locked | Repeat one call with the iPhone screen locked | Same as unlocked |
 | Music on the iPhone | Play music on the iPhone, then browse from the iPad | Music keeps playing and the iPad stays online |
 | Call on the iPhone | Take a phone call on the iPhone, hang up, browse from the iPad | The iPad is still online after the call |
+| Media services reset | Connect the iPad, send Tether to the background, then Settings > Developer > Reset Media Services > Reset All Media Services. Browse from the iPad for 10 minutes | The iPad stays online the whole time |
 | WireGuard | Scan the QR code on Tether's main screen with WireGuard on the iPad, turn the tunnel on, browse and call | Pages and calls work, the iPad is listed as Connected, and the QR code changes to a new one |
 | Travel router | Share the file from Tether's main screen, import it in the router's WireGuard client, connect the router to the iPhone, join a laptop to the router's Wi-Fi and browse | The router is listed as Connected in Tether and pages load. Tether finds the router by itself, with nothing to set |
 | Connected check | Keep Tether's main screen open while you scan the QR code on an iPad and turn the tunnel on | The iPad shows up in the Devices list as Connected within a few seconds, and the code is replaced |
@@ -74,3 +75,4 @@ These need another person or a game account, so they aren't scripted.
 ## Things we learned the hard way
 
 - **A test build replaces the installed Tether.** Build it with the same bundle ID as the installed copy, or it installs next to it with new WireGuard keys, and every device has to be added again.
+- **A media services reset is only reported to an app that uses audio again.** When the media server dies, the silent sound stops, and an app in the background without sound is suspended within seconds. `mediaServicesWereReset` comes only after the app touches audio, so waiting for it waits forever. `KeepAlive` asks for background time as soon as the services are lost, and starts a new player every second until one plays. Killing `audiomxd` alone (`pymobiledevice3 developer dvt kill`) is not the same test: Tether survives that even without the fix, so use the Settings button.

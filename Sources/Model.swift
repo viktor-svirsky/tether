@@ -74,7 +74,7 @@ final class Model: ObservableObject {
         let secrets: SecretStore = KeychainSecrets()
         #endif
         session = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(),
-                                 keepAlive: KeepAlive(),
+                                 keepAlive: KeepAlive(log: Self.append),
                                  sceneActive: UIApplication.shared.applicationState != .background,
                                  hotspotAddress: Interfaces.hotspotAddress, log: Self.append)
         session.willChange = { [weak self] in self?.objectWillChange.send() }
