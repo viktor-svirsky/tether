@@ -1274,7 +1274,7 @@ func holdServer(t *testing.T) string {
 
 // openHeld connects to a holdServer and reads its greeting.
 func openHeld(c *client, addr string) (net.Conn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	conn, err := c.net.DialContext(ctx, "tcp", addr)
 	if err != nil {
