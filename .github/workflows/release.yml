@@ -86,6 +86,8 @@ jobs:
           {
               echo "Unsigned. Sign it with SideStore, AltStore, Feather or your own certificate, see the [README](https://github.com/$GITHUB_REPOSITORY#install-tether-on-your-iphone)."
               echo
+              echo "Using SideStore or AltStore? [Add the source in one tap](https://$GITHUB_REPOSITORY_OWNER.github.io/${GITHUB_REPOSITORY#*/}/add/) and get every update there."
+              echo
               git log --no-merges --format='- %s' "${PREVIOUS:+$PREVIOUS..}HEAD"
               echo
               echo "SHA-256 of Tether.ipa: \`$(shasum -a 256 "$out/Tether.ipa" | cut -d' ' -f1)\`"

@@ -15,7 +15,7 @@ Share your iPhone's internet with your iPad, Mac or travel router, even when you
 
 ## Quick start
 
-1. [Install Tether on your iPhone](#install-tether-on-your-iphone) with SideStore or AltStore, or build it on a Mac.
+1. [Install Tether on your iPhone](#install-tether-on-your-iphone) with SideStore or AltStore, or build it on a Mac. Already have SideStore or AltStore? [Add Tether in one tap](https://viktor-svirsky.github.io/tether/add/) from your iPhone.
 2. Turn on Personal Hotspot and open Tether. It shows a QR code.
 3. On the iPad or Mac, install the free WireGuard app and [add the tunnel](#connect-a-device-with-wireguard) from that code. Join the hotspot and turn the tunnel on.
 
@@ -151,6 +151,7 @@ Tests/                       unit tests, run on the Mac
 UITests/                     UI tests for every screen, run on the iOS Simulator
 scripts/make-icon.swift      draws the app icon
 scripts/screenshots.sh       makes the two screenshots above, on an iPhone simulator
+docs/add/index.html          the one-tap "Add to SideStore/AltStore" page, served by GitHub Pages from docs/
 ```
 
 The file map at the top of Model.swift lists every source file.
