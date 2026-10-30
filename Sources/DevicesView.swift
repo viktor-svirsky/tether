@@ -127,13 +127,13 @@ struct ConnectedLabel: View {
 enum ReadyCode {
     private static var made: (id: WireGuardSetup.Peer.ID, qr: UIImage?, file: URL?)?
 
-    static func `for`(_ peer: WireGuardSetup.Peer, config: () -> String) -> (qr: UIImage?, file: URL?) {
+    static func `for`(_ ready: WireGuardSetup.Ready, config: () -> String) -> (qr: UIImage?, file: URL?) {
         // The system may clear the temporary directory, so a missing file is written again.
-        if let made, made.id == peer.id, made.file.map({ FileManager.default.fileExists(atPath: $0.path) }) ?? false {
+        if let made, made.id == ready.id, made.file.map({ FileManager.default.fileExists(atPath: $0.path) }) ?? false {
             return (made.qr, made.file)
         }
         let text = config()
-        let code = (id: peer.id, qr: QRCode.image(text), file: ConfigFile.write(text, named: "Tether"))
+        let code = (id: ready.id, qr: QRCode.image(text), file: ConfigFile.write(text, named: "Tether"))
         made = code
         return (code.qr, code.file)
     }

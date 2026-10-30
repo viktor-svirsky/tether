@@ -17,25 +17,57 @@ struct WireGuardSetup: Codable, Equatable {
     static let dns = "1.1.1.1"
     private static let subnet = "10.7.0."
 
+    /// A device as the server knows it. No private key: the device has its own copy, and the
+    /// server only needs the public one. Older versions saved one here, and decoding drops it.
     struct Peer: Codable, Hashable, Identifiable {
         var id = UUID()
         var name: String
-        /// Kept so the device's QR code can be shown again. It's only ever used inside the tunnel.
-        var privateKey: Data
         var publicKey: Data
         var address: String
+    }
+
+    /// The device behind the QR code, the only one whose private key Tether keeps: the code is its
+    /// config. Saved flat, like a peer with a `privateKey`, the way older versions saved it.
+    @dynamicMemberLookup
+    struct Ready: Codable, Hashable {
+        var peer: Peer
+        var privateKey: Data
+
+        subscript<T>(dynamicMember path: WritableKeyPath<Peer, T>) -> T {
+            get { peer[keyPath: path] }
+            set { peer[keyPath: path] = newValue }
+        }
+
+        init(peer: Peer, privateKey: Data) {
+            self.peer = peer
+            self.privateKey = privateKey
+        }
+
+        private enum CodingKeys: String, CodingKey { case privateKey }
+
+        init(from decoder: Decoder) throws {
+            peer = try Peer(from: decoder)
+            privateKey = try decoder.container(keyedBy: CodingKeys.self).decode(Data.self, forKey: .privateKey)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            try peer.encode(to: encoder)
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(privateKey, forKey: .privateKey)
+        }
     }
 
     var serverPrivateKey: Data
     /// The devices someone has used, in the order they first connected.
     var peers: [Peer]
     /// The device behind the QR code on the main screen: a key nobody has used yet. The server lets
-    /// it in, and the first time it connects it joins `peers` and a new one takes its place. Nil
-    /// only in a setup saved before there was one, or with all 253 addresses taken.
-    var ready: Peer?
+    /// it in, and the first time it connects it joins `peers`, without its private key, and a new
+    /// one takes its place. Nil only in a setup saved before there was one, or with all 253
+    /// addresses taken.
+    var ready: Ready?
 
     /// Everyone the server lets in: the devices, and whoever scans the QR code next.
-    var serverPeers: [Peer] { peers + (ready.map { [$0] } ?? []) }
+    var serverPeers: [Peer] { peers + (ready.map { [$0.peer] } ?? []) }
 
     var serverPublicKey: Data { Self.publicKey(of: serverPrivateKey) }
 
@@ -47,9 +79,10 @@ struct WireGuardSetup: Codable, Equatable {
         (try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: privateKey))?.publicKey.rawRepresentation ?? Data()
     }
 
-    /// Adds a device with a new key and the lowest free address, or nil when all 253 are taken.
+    /// Lists a device with a new key and the lowest free address, as if it had used the QR code, so
+    /// its private key isn't kept. Nil when all 253 addresses are taken. For demos and tests.
     mutating func addPeer(name: String) -> Peer? {
-        guard var peer = newPeer() else { return nil }
+        guard var peer = newReady()?.peer else { return nil }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         peer.name = trimmed.isEmpty ? freeName("Device") : trimmed
         peers.append(peer)
@@ -58,13 +91,14 @@ struct WireGuardSetup: Codable, Equatable {
 
     /// Makes the ready device when there is none. It keeps its key until someone uses it.
     mutating func prepareReady() {
-        if ready == nil { ready = newPeer() }
+        if ready == nil { ready = newReady() }
     }
 
-    /// The ready device connected for the first time from `address`: it's listed from now on, and
-    /// a new one is ready for the next device. False when `address` isn't the ready device's.
+    /// The ready device connected for the first time from `address`: it's listed from now on,
+    /// without its private key, and a new one is ready for the next device. False when `address`
+    /// isn't the ready device's.
     mutating func claimReady(address: String) -> Bool {
-        guard var peer = ready, peer.address == address else { return false }
+        guard var peer = ready?.peer, peer.address == address else { return false }
         peer.name = freeName("Device")
         peers.append(peer)
         ready = nil
@@ -73,12 +107,12 @@ struct WireGuardSetup: Codable, Equatable {
     }
 
     /// A new key at the lowest address nobody has, the ready device included. Unnamed.
-    private func newPeer() -> Peer? {
+    private func newReady() -> Ready? {
         let used = Set(serverPeers.map(\.address))
         guard let host = (2...254).first(where: { !used.contains(Self.subnet + String($0)) }) else { return nil }
         let key = Curve25519.KeyAgreement.PrivateKey()
-        return Peer(name: "", privateKey: key.rawRepresentation, publicKey: key.publicKey.rawRepresentation,
-                    address: Self.subnet + String(host))
+        return Ready(peer: Peer(name: "", publicKey: key.publicKey.rawRepresentation, address: Self.subnet + String(host)),
+                     privateKey: key.rawRepresentation)
     }
 
     mutating func removePeer(_ id: Peer.ID) {
@@ -100,13 +134,14 @@ struct WireGuardSetup: Codable, Equatable {
         peers[i].name = trimmed
     }
 
-    /// What the device imports, as a QR code or a .conf file. All traffic goes into the tunnel,
-    /// IPv6 too, so nothing slips past Tether onto the hotspot directly.
-    func clientConfig(for peer: Peer) -> String {
+    /// What the next device imports, as a QR code or a .conf file. Only the ready device has one,
+    /// since only its private key is kept. All traffic goes into the tunnel, IPv6 too, so nothing
+    /// slips past Tether onto the hotspot directly.
+    func clientConfig(for ready: Ready) -> String {
         """
         [Interface]
-        PrivateKey = \(peer.privateKey.base64EncodedString())
-        Address = \(peer.address)/32
+        PrivateKey = \(ready.privateKey.base64EncodedString())
+        Address = \(ready.address)/32
         DNS = \(Self.dns)
         MTU = \(Self.mtu)
 
@@ -219,10 +254,25 @@ final class WireGuardDevices {
             guard let saved = try? JSONDecoder().decode(WireGuardSetup.self, from: data) else { throw Unreadable() }
             setup = saved
             loadError = nil
+            dropOldKeys(saved: data)
             prepareReady() // a setup saved before there were ready devices has none
         } catch {
             loadError = error
         }
+    }
+
+    /// Older versions saved every device's private key. Decoding left them out, and this saves
+    /// that, so they leave the Keychain now rather than with the next change. A save that fails
+    /// loses nothing: the old setup stays saved, the devices still connect, and the next save
+    /// drops the keys.
+    private func dropOldKeys(saved data: Data) {
+        struct Old: Decodable {
+            struct Device: Decodable { var privateKey: Data? }
+            var peers: [Device]
+        }
+        guard let old = try? JSONDecoder().decode(Old.self, from: data),
+              old.peers.contains(where: { $0.privateKey != nil }) else { return }
+        try? save()
     }
 
     var loaded: Bool { loadError == nil }

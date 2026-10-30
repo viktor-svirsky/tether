@@ -41,13 +41,15 @@ final class WireGuardSetupTests: XCTestCase {
         XCTAssertEqual(setup.addPeer(name: "")?.name, "Device 2")
     }
 
-    func testTheClientConfig() throws {
+    func testTheReadyDevicesConfig() throws {
         var setup = WireGuardSetup.new()
-        let peer = try XCTUnwrap(setup.addPeer(name: "iPad"))
-        let config = setup.clientConfig(for: peer)
+        setup.prepareReady()
+        let ready = try XCTUnwrap(setup.ready)
+        XCTAssertEqual(WireGuardSetup.publicKey(of: ready.privateKey), ready.publicKey)
+        let config = setup.clientConfig(for: ready)
         XCTAssertEqual(config, """
             [Interface]
-            PrivateKey = \(peer.privateKey.base64EncodedString())
+            PrivateKey = \(ready.privateKey.base64EncodedString())
             Address = 10.7.0.2/32
             DNS = 1.1.1.1
             MTU = 1420
@@ -164,6 +166,83 @@ final class WireGuardSetupTests: XCTestCase {
         XCTAssertTrue(devices.setup.peers.isEmpty)
     }
 
+    // MARK: private keys: only the ready device keeps one, for its QR code
+
+    func testAClaimedDeviceKeepsNoPrivateKey() throws {
+        var setup = WireGuardSetup.new()
+        setup.prepareReady()
+        let ready = try XCTUnwrap(setup.ready)
+        XCTAssertTrue(setup.claimReady(address: ready.address))
+        let saved = try savedJSON(JSONEncoder().encode(setup))
+        XCTAssertNil(saved.peers[0]["privateKey"], "the device has its own copy, and the server only needs the public key")
+        XCTAssertEqual(setup.peers[0].publicKey, ready.publicKey)
+        XCTAssertEqual(setup.peers[0].address, ready.address)
+        XCTAssertNotNil(saved.ready?["privateKey"], "the next QR code needs one")
+    }
+
+    func testAnAddedDeviceKeepsNoPrivateKey() throws {
+        var setup = WireGuardSetup.new()
+        _ = setup.addPeer(name: "iPad")
+        XCTAssertNil(try savedJSON(JSONEncoder().encode(setup)).peers[0]["privateKey"])
+    }
+
+    /// Versions before this one kept every device's private key. Loading drops them and saves that.
+    func testAnOlderSetupLosesItsDevicesPrivateKeysOnLoad() throws {
+        let secrets = InMemorySecrets()
+        let old = try oldSetup()
+        secrets.data = old.data
+        let devices = WireGuardDevices(secrets: secrets)
+        XCTAssertTrue(devices.loaded)
+        XCTAssertEqual(devices.setup.peers.map(\.name), ["iPad", "Mac"])
+        XCTAssertEqual(devices.setup.serverPeers.map(\.publicKey), old.serverPeerKeys, "the server lets in the same devices")
+        XCTAssertEqual(devices.setup.ready?.privateKey, old.readyKey, "the same QR code")
+        let saved = try savedJSON(XCTUnwrap(secrets.data))
+        XCTAssertEqual(saved.peers.count, 2)
+        XCTAssertTrue(saved.peers.allSatisfy { $0["privateKey"] == nil }, "saved without them")
+        XCTAssertEqual(saved.ready?["privateKey"] as? String, old.readyKey.base64EncodedString())
+        XCTAssertEqual(WireGuardDevices(secrets: secrets).setup, devices.setup, "the migrated setup loads again")
+    }
+
+    /// The old setup stays in the Keychain until a save works, and nothing is lost meanwhile.
+    func testAnOlderSetupThatCantBeSavedLosesNothing() throws {
+        let secrets = FlakySecrets()
+        let old = try oldSetup()
+        secrets.data = old.data
+        secrets.savesFail = true
+        let devices = WireGuardDevices(secrets: secrets)
+        XCTAssertTrue(devices.loaded, "the devices still connect")
+        XCTAssertEqual(secrets.data, old.data, "the old setup stays")
+        XCTAssertEqual(devices.setup.serverPeers.map(\.publicKey), old.serverPeerKeys)
+        XCTAssertEqual(devices.setup.ready?.privateKey, old.readyKey)
+        secrets.savesFail = false
+        XCTAssertTrue(devices.rename(devices.setup.peers[0].id, to: "Kitchen iPad"))
+        let saved = try savedJSON(XCTUnwrap(secrets.data))
+        XCTAssertTrue(saved.peers.allSatisfy { $0["privateKey"] == nil }, "the next save drops them")
+        XCTAssertEqual(saved.ready?["privateKey"] as? String, old.readyKey.base64EncodedString())
+    }
+
+    /// A setup as versions before this one saved it: every device with its private key.
+    private func oldSetup() throws -> (data: Data, serverPeerKeys: [Data], readyKey: Data) {
+        let keys = (0..<3).map { _ in Curve25519.KeyAgreement.PrivateKey() }
+        func device(_ i: Int, _ name: String) -> [String: Any] {
+            ["id": UUID().uuidString, "name": name, "address": "10.7.0.\(i + 2)",
+             "privateKey": keys[i].rawRepresentation.base64EncodedString(),
+             "publicKey": keys[i].publicKey.rawRepresentation.base64EncodedString()]
+        }
+        let json: [String: Any] = [
+            "serverPrivateKey": Curve25519.KeyAgreement.PrivateKey().rawRepresentation.base64EncodedString(),
+            "peers": [device(0, "iPad"), device(1, "Mac")],
+            "ready": device(2, ""),
+        ]
+        return (try JSONSerialization.data(withJSONObject: json), keys.map(\.publicKey.rawRepresentation), keys[2].rawRepresentation)
+    }
+
+    /// The saved JSON of the listed devices and of the ready one.
+    private func savedJSON(_ data: Data) throws -> (peers: [[String: Any]], ready: [String: Any]?) {
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return (try XCTUnwrap(json["peers"] as? [[String: Any]]), json["ready"] as? [String: Any])
+    }
+
     func testAnUnreadableSetupHasAReasonToShow() {
         XCTAssertEqual("\(WireGuardDevices.Unreadable())", "the saved WireGuard setup can't be read")
     }
@@ -176,6 +255,7 @@ final class WireGuardSetupTests: XCTestCase {
     func testItSurvivesARoundTrip() throws {
         var setup = WireGuardSetup.new()
         _ = setup.addPeer(name: "iPad")
+        setup.prepareReady()
         let data = try JSONEncoder().encode(setup)
         XCTAssertEqual(try JSONDecoder().decode(WireGuardSetup.self, from: data), setup)
     }
