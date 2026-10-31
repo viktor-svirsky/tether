@@ -127,6 +127,7 @@ func download(c *client, addr string, seed uint64, n int) error {
 // Every device uploads and downloads at once, and the bytes arrive intact both ways. Each device
 // asks for its own pattern, so a connection crossed with another device's would show.
 func TestEveryDeviceUploadsAndDownloadsAtOnce(t *testing.T) {
+	fullSizeOnly(t)
 	devices, size := 6, 200<<10
 	if raceEnabled {
 		devices, size = 3, 32<<10

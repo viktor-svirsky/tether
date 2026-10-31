@@ -289,6 +289,7 @@ func TestLoadMemoryAtTheConnectionCap(t *testing.T) {
 // A travel router and devices that connect directly, all busy at once: the router's client and
 // each device get all their bytes and echoes, the router keeps its role, and no device takes it.
 func TestARouterAndDevicesAtOnce(t *testing.T) {
+	fullSizeOnly(t)
 	devices, count := 3, 3
 	if raceEnabled {
 		devices, count = 2, 1

@@ -202,6 +202,7 @@ func handshakeAgain() { time.Sleep(25 * time.Millisecond) }
 // port and peers. Devices carry on with the config they have, and the connections they had end
 // instead of hanging, so their apps reconnect.
 func TestDevicesResumeAfterTheHotspotGoesOffAndOn(t *testing.T) {
+	fullSizeOnly(t)
 	f := startFleet(t, 2)
 	target, echo := tcpServer(t, 1000), udpEcho(t)
 	var clients []*client
@@ -651,6 +652,7 @@ func TestNothingIsLeftBehind(t *testing.T) {
 // Taking one device off the hotspot mid-download stops only its download. The others carry on and
 // get every byte.
 func TestRemovingADeviceMidDownloadLeavesTheOthersAlone(t *testing.T) {
+	fullSizeOnly(t)
 	const half = 16 << 10
 	f := startFleet(t, 3)
 	data := make([]byte, 2*half)
