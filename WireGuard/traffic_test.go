@@ -594,7 +594,6 @@ func deviceStack(c *client) *stack.Stack {
 // A device connects again from a port it used a moment ago, to the same host, and gets through.
 // Devices pick ports by chance, so many short connections to one host do this within minutes.
 func TestReusingAPortRightAfterTheHostClosedConnects(t *testing.T) {
-	t.Skip("#50: the server's side of the last connection waits out gVisor's 60 s TIME_WAIT and drops the new SYN")
 	_, c := setup(t)
 	target := netip.MustParseAddrPort(tcpServer(t, 10)) // it closes first, after its 10 bytes
 	from := tcpip.FullAddress{Addr: tcpip.AddrFrom4([4]byte{10, 7, 0, 2}), Port: 40000}

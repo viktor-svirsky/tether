@@ -74,6 +74,11 @@ const (
 	// maxInFlight caps the TCP connections being dialed for all devices together, like gVisor's
 	// own cap it replaces, see handleTCP.
 	maxInFlight = 4096
+	// timeWaitTimeout is how long the device's side of a connection the far end closed first stays
+	// in TIME_WAIT, where gVisor drops a new connection from the same device port. gVisor's 60 s is
+	// for the internet. This side is the tunnel, with a round trip of milliseconds, and it ends
+	// before the device sends its SYN again after a second.
+	timeWaitTimeout = 500 * time.Millisecond
 	// handshakeEvery is how often the devices' last handshakes are read back from wireguard-go.
 	// They come every 2 minutes, so more often only wakes the iPhone.
 	handshakeEvery = 10 * time.Second
@@ -253,6 +258,8 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &recv)
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &send)
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &moderate)
+	timeWait := tcpip.TCPTimeWaitTimeoutOption(timeWaitTimeout)
+	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &timeWait)
 	s.tun = newStackTun()
 	if err := s.stack.CreateNIC(1, s.tun.ep); err != nil {
 		s.cancel()
