@@ -149,7 +149,6 @@ Sources/Shortcuts.swift      the Start Tether and Is Tether Sharing? actions for
 Sources/DemoMode.swift       fake app states for the UI tests (Debug builds only)
 Tests/                       unit tests, run on the Mac
 UITests/                     UI tests for every screen, run on the iOS Simulator
-scripts/make-icon.swift      draws the app icon
 scripts/screenshots.sh       makes the two screenshots above, on an iPhone simulator
 docs/add/index.html          the one-tap "Add to SideStore/AltStore" page, served by GitHub Pages from docs/
 ```
