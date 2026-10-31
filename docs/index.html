@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tether</title>
+<meta name="description" content="Use your iPhone's data on any device: Windows, Mac, Linux, Android, iPad or a travel router. Free and open source, over WireGuard.">
+<meta property="og:title" content="Tether">
+<meta property="og:description" content="Use your iPhone's data on any device, as the iPhone's own traffic instead of hotspot traffic.">
+<meta property="og:image" content="https://viktor-svirsky.github.io/tether/icon.png">
+<meta property="og:url" content="https://viktor-svirsky.github.io/tether/">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<style>
+  :root {
+    --bg: #f2f2f7;
+    --card: #ffffff;
+    --text: #1c1c1e;
+    --muted: #6c6c70;
+    --accent: #006cbd;
+    --on-accent: #ffffff;
+    --line: #d8d8de;
+    --hero-from: #1d4ed8;
+    --hero-to: #0f766e;
+    --footer: #1c1c1e;
+    --on-footer: #c7c7cc;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --card: #1c1c1e;
+      --text: #f2f2f7;
+      --muted: #98989f;
+      --accent: #4db3ff;
+      --on-accent: #0b1a26;
+      --line: #38383a;
+      --hero-from: #1e3a8a;
+      --hero-to: #115e59;
+      --footer: #111113;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+
+  nav { background: var(--card); border-bottom: 1px solid var(--line); }
+  nav .wrap { display: flex; align-items: center; gap: 24px; height: 56px; }
+  nav .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); text-decoration: none; margin-right: auto; }
+  nav .brand img { width: 30px; height: 30px; border-radius: 7px; }
+  nav a.link { color: var(--text); text-decoration: none; }
+
+  .hero {
+    background: linear-gradient(135deg, var(--hero-from), var(--hero-to));
+    color: #ffffff;
+    text-align: center;
+    padding: 64px 0 72px;
+  }
+  .hero img { width: 112px; height: 112px; border-radius: 25px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.25); }
+  .hero h1 { font-size: 48px; line-height: 1.1; margin: 24px 0 12px; }
+  .hero p { font-size: 21px; margin: 0 auto; max-width: 640px; }
+  .hero .devices { font-size: 17px; margin-top: 12px; opacity: 0.9; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 32px; }
+  .button {
+    display: inline-block;
+    text-decoration: none;
+    font-weight: 600;
+    padding: 13px 24px;
+    border-radius: 12px;
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .hero .button { background: #ffffff; color: #1c1c1e; }
+  .hero .button.ghost { background: transparent; color: #ffffff; box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.8); }
+
+  section { padding: 56px 0; }
+  h2 { font-size: 30px; margin: 0 0 8px; text-align: center; }
+  .lead { color: var(--muted); text-align: center; max-width: 640px; margin: 0 auto 32px; }
+
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .feature { background: var(--card); border-radius: 16px; padding: 22px; }
+  .feature h3 { font-size: 18px; margin: 0 0 6px; }
+  .feature p { margin: 0; color: var(--muted); }
+
+  .shots { display: flex; justify-content: center; gap: 32px; flex-wrap: wrap; }
+  .shots figure { margin: 0; text-align: center; max-width: 280px; }
+  .shots img { width: 100%; border-radius: 28px; box-shadow: 0 8px 28px rgb(0 0 0 / 0.18); }
+  .shots figcaption { color: var(--muted); margin-top: 12px; }
+
+  .flow { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+  .flow .box { background: var(--card); border-radius: 12px; padding: 12px 16px; font-weight: 600; text-align: center; }
+  .flow .box span { display: block; font-weight: 400; font-size: 14px; color: var(--muted); }
+  .flow .arrow { color: var(--muted); font-size: 14px; text-align: center; }
+  .flow .arrow::after { content: "\2192"; display: block; font-size: 22px; line-height: 1; }
+  .narrow { max-width: 680px; margin: 0 auto; }
+  .narrow p { color: var(--muted); }
+
+  ol.steps { list-style: none; padding: 0; margin: 0 auto; max-width: 680px; counter-reset: step; }
+  ol.steps li { counter-increment: step; background: var(--card); border-radius: 16px; padding: 20px 20px 20px 72px; margin-bottom: 12px; position: relative; }
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute; left: 20px; top: 18px;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--accent); color: var(--on-accent);
+    font-weight: 700; display: flex; align-items: center; justify-content: center;
+  }
+  ol.steps h3 { font-size: 18px; margin: 0 0 4px; }
+  ol.steps p { margin: 0; color: var(--muted); }
+  ol.steps .actions { justify-content: flex-start; margin-top: 14px; }
+  code { font: 15px ui-monospace, Menlo, Consolas, monospace; }
+
+  .note { max-width: 680px; margin: 0 auto; color: var(--muted); font-size: 15px; text-align: center; }
+
+  footer { background: var(--footer); color: var(--on-footer); padding: 32px 0; font-size: 15px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: center; }
+  footer a { color: #ffffff; }
+
+  @media (max-width: 760px) {
+    .hero { padding: 48px 0 56px; }
+    .hero h1 { font-size: 38px; }
+    .hero p { font-size: 19px; }
+    .features { grid-template-columns: 1fr; }
+    section { padding: 40px 0; }
+    h2 { font-size: 26px; }
+    .flow { flex-direction: column; }
+    .flow .arrow::after { content: "\2193"; }
+  }
+</style>
+</head>
+<body>
+<nav>
+  <div class="wrap">
+    <a class="brand" href="./"><img src="icon.png" alt="">Tether</a>
+    <a class="link" href="#start">Get started</a>
+    <a class="link" href="https://github.com/viktor-svirsky/tether">GitHub</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <img src="icon.png" alt="Tether icon">
+    <h1>Tether</h1>
+    <p>Use your iPhone's data on any device, as the iPhone's own traffic instead of hotspot traffic.</p>
+    <p class="devices">Windows, Mac, Linux, Android, iPad or a travel router</p>
+    <div class="actions">
+      <a class="button" href="#start">Get started</a>
+      <a class="button ghost" href="https://github.com/viktor-svirsky/tether">View on GitHub</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section>
+    <div class="wrap">
+      <h2>Why Tether</h2>
+      <p class="lead">Lots of plans give the iPhone itself plenty of data, then cap, slow down or block Personal Hotspot. Tether makes every connection again on the iPhone, so your laptop's traffic counts as the phone's own.</p>
+      <div class="features">
+        <div class="feature">
+          <h3>Any device</h3>
+          <p>If it runs WireGuard, it works. The free app is on Windows, macOS, Linux, Android, iPad and iPhone, and many travel routers have it built in.</p>
+        </div>
+        <div class="feature">
+          <h3>Set up in a minute</h3>
+          <p>A phone or tablet scans a QR code. A laptop opens a page on the hotspot and downloads its config, no camera needed.</p>
+        </div>
+        <div class="feature">
+          <h3>Calls and games too</h3>
+          <p>It's not only web pages. Video calls, games, streaming, downloads and SSH all go through.</p>
+        </div>
+        <div class="feature">
+          <h3>No account, nothing in the cloud</h3>
+          <p>Traffic goes from your devices to your iPhone and out. Tether talks to nothing else.</p>
+        </div>
+        <div class="feature">
+          <h3>One tap to start</h3>
+          <p>A shortcut turns on the hotspot and Tether together, from the Action button, a widget or Siri.</p>
+        </div>
+        <div class="feature">
+          <h3>Free and open source</h3>
+          <p>MIT licensed. Every release is built by GitHub Actions from its commit, and you can check the download.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="shots">
+        <figure>
+          <img src="sharing.png" alt="Tether sharing with an iPad and a Windows PC, with the speed and the list of devices">
+          <figcaption>Your devices and the speed, at a glance</figcaption>
+        </figure>
+        <figure>
+          <img src="add-device.png" alt="Tether with the hotspot on and a QR code for the first device">
+          <figcaption>A new device scans the code or opens the page</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>How it works</h2>
+      <p class="lead">Your device still joins the hotspot. Its WireGuard client hands the traffic to Tether, and Tether sends it out from the iPhone.</p>
+      <div class="flow">
+        <div class="box">Your device<span>WireGuard client</span></div>
+        <div class="arrow">hotspot</div>
+        <div class="box">Tether<span>on the iPhone</span></div>
+        <div class="arrow">cellular</div>
+        <div class="box">Internet</div>
+      </div>
+      <div class="narrow">
+        <p>Tether runs a WireGuard server on the hotspot address. WireGuard's own code decrypts the traffic, and a small TCP/IP stack inside Tether (<a href="https://gvisor.dev">gVisor</a>) makes each connection again from the iPhone. It only listens on the hotspot, and it only lets in devices you added.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="wrap">
+      <h2>Get started</h2>
+      <p class="lead">You need an iPhone with iOS 17 or later and a plan with Personal Hotspot.</p>
+      <ol class="steps">
+        <li>
+          <h3>Install Tether on your iPhone</h3>
+          <p>Tether isn't in the App Store. Install it with SideStore or AltStore, which you set up once from a Windows PC or a Mac. A free Apple ID is enough.</p>
+          <div class="actions">
+            <a class="button" href="add/">Add to SideStore or AltStore</a>
+            <a href="https://github.com/viktor-svirsky/tether#install-tether-on-your-iphone">Other ways to install</a>
+          </div>
+        </li>
+        <li>
+          <h3>Turn on Personal Hotspot and open Tether</h3>
+          <p>It shows a QR code for the first device.</p>
+        </li>
+        <li>
+          <h3>Connect a device</h3>
+          <p>Install the free <a href="https://www.wireguard.com/install/">WireGuard app</a> and join the hotspot. A laptop opens <code>http://172.20.10.1</code> and downloads its config. A phone or tablet scans the code. Then turn the tunnel on.</p>
+          <div class="actions">
+            <a href="https://github.com/viktor-svirsky/tether#connect-a-device-with-wireguard">Step by step for each device</a>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <p class="note wrap">Tether hides where the traffic comes from, not what it is, and a carrier that looks closely can still notice. Many carrier contracts don't allow tethering workarounds. Check yours. Using Tether is your call and your risk. <a href="https://github.com/viktor-svirsky/tether#good-to-know">Good to know</a></p>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a href="https://github.com/viktor-svirsky/tether">GitHub</a>
+    <a href="https://github.com/viktor-svirsky/tether/releases/latest">Latest release</a>
+    <a href="https://github.com/viktor-svirsky/tether/issues">Issues</a>
+    <a href="https://github.com/viktor-svirsky/tether/blob/main/LICENSE">MIT license</a>
+  </div>
+</footer>
+</body>
+</html>

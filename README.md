@@ -4,6 +4,7 @@
 [![Latest release](https://img.shields.io/github/v/release/viktor-svirsky/tether)](https://github.com/viktor-svirsky/tether/releases/latest)
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-blue)
 [![License: MIT](https://img.shields.io/github/license/viktor-svirsky/tether)](LICENSE)
+[![Website](https://img.shields.io/badge/website-viktor--svirsky.github.io%2Ftether-0069b8)](https://viktor-svirsky.github.io/tether/)
 
 <img src="Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png" width="96" alt="Tether icon">
 
@@ -162,6 +163,7 @@ Sources/DemoMode.swift       fake app states for the UI tests (Debug builds only
 Tests/                       unit tests, run on the Mac
 UITests/                     UI tests for every screen, run on the iOS Simulator
 scripts/screenshots.sh       makes the two screenshots above, on an iPhone simulator
+docs/index.html              the landing page at viktor-svirsky.github.io/tether, served by GitHub Pages from docs/
 docs/add/index.html          the one-tap "Add to SideStore/AltStore" page, served by GitHub Pages from docs/
 ```
 
