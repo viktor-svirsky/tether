@@ -273,3 +273,61 @@ func TestLoadMemoryAtTheConnectionCap(t *testing.T) {
 		devices, len(open), refused, before>>20, after>>20, (after-before)/uint64(len(open))>>10,
 		goroutines, runtime.NumGoroutine())
 }
+
+// A travel router and devices that connect directly, all busy at once: the router's client and
+// each device get all their bytes and echoes, the router keeps its role, and no device takes it.
+func TestARouterAndDevicesAtOnce(t *testing.T) {
+	const devices, count = 3, 3
+	sPriv, sPub := keyPair(t)
+	s, err := Start(loopback, 0, sPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	viaLoopback(s)
+	routerPriv, routerPub := keyPair(t)
+	routerAddr := netip.MustParseAddr("10.7.0.2")
+	peers := []Peer{{PublicKey: routerPub, Address: routerAddr}}
+	var privs [][32]byte
+	var addrs []netip.Addr
+	for i := range devices {
+		priv, pub := keyPair(t)
+		addr := netip.AddrFrom4([4]byte{10, 7, 0, byte(3 + i)})
+		peers = append(peers, Peer{PublicKey: pub, Address: addr})
+		privs = append(privs, priv)
+		addrs = append(addrs, addr)
+	}
+	if err := s.SetPeers(peers); err != nil {
+		t.Fatal(err)
+	}
+	// The router's client sends from its own address on the router's LAN.
+	clients := []*client{newClient(t, s, sPub, routerPriv, netip.MustParseAddr("192.168.4.20"))}
+	for i := range devices {
+		clients = append(clients, newClient(t, s, sPub, privs[i], addrs[i]))
+	}
+	// The router's first packet is the one that makes it the router, and it's dropped. Its first
+	// connection is sent again, so it's the router before the rest starts.
+	if _, err := fetch(t, clients[0], tcpServer(t, 10)); err != nil {
+		t.Fatal(err)
+	}
+	_, _, errs := downloadAndPing(t, clients, tcpServer(t, 8<<10), 8<<10, 2, 0, udpEcho(t))
+	for _, err := range errs {
+		t.Error(err)
+	}
+	echo := udpEcho(t)
+	var wg sync.WaitGroup
+	for i, c := range clients {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rtts, err := pings(c, echo, count, 10*time.Second)
+			if err != nil || len(rtts) != count {
+				t.Errorf("client %d got %d of %d echoes: %v", i, len(rtts), count, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if r := s.routerOf(); r != routerAddr {
+		t.Fatalf("router %v, want %v", r, routerAddr)
+	}
+}

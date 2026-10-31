@@ -255,6 +255,7 @@ func (t *stackTun) inject(p []byte) {
 	case <-t.done:
 		v.Release()
 	default:
+		t.dropped.Add(1)
 		v.Release()
 	}
 }
