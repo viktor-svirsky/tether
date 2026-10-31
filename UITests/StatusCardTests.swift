@@ -42,7 +42,7 @@ final class StatusCardTests: TetherUITestCase {
     }
 
     func testSharingCountsOnlyConnectedDevices() {
-        // The iPad's tunnel is up and the MacBook's is not, so this is one device, not two.
+        // The iPad's tunnel is up and the Windows PC's is not, so this is one device, not two.
         launch(.sharing)
         XCTAssertEqual(label(of: "status.title"), "Sharing")
         XCTAssertEqual(label(of: "status.headline"), "1 device connected")

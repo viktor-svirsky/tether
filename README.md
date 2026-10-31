@@ -5,34 +5,45 @@
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-blue)
 [![License: MIT](https://img.shields.io/github/license/viktor-svirsky/tether)](LICENSE)
 
-Share your iPhone's internet with your iPad, Mac or travel router, even when your cellular plan blocks or slows down Personal Hotspot.
-
-**Each device needs a WireGuard client.** The free WireGuard app works on an iPad, iPhone or Mac, and most travel routers (GL.iNet, UniFi Travel Router) have one built in. A device without WireGuard can still join the hotspot, but its traffic goes straight out as hotspot traffic and Tether doesn't help it.
-
 <img src="Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png" width="96" alt="Tether icon">
 
-<img src="docs/sharing.png" width="260" alt="Tether sharing with an iPad, with the speed and the list of devices"> <img src="docs/add-device.png" width="260" alt="Tether with the hotspot on and a QR code for the first device">
+**Use your iPhone's data on any device, as the iPhone's own traffic instead of hotspot traffic.**
+
+Lots of plans give the iPhone itself plenty of data, then cap, slow down or block Personal Hotspot. Tether makes every connection again on the iPhone itself, so your laptop's traffic counts as the phone's own. Windows, Mac, Linux, Android, iPad or a travel router: if it runs WireGuard, it works.
+
+<img src="docs/sharing.png" width="260" alt="Tether sharing with an iPad and a Windows PC, with the speed and the list of devices"> <img src="docs/add-device.png" width="260" alt="Tether with the hotspot on and a QR code for the first device">
+
+## What you get
+
+- The free WireGuard app runs on Windows, macOS, Linux, Android, iPad and iPhone, and many travel routers (GL.iNet, UniFi Travel Router) have it built in. Connect a router and every device behind it is covered.
+- Setup takes a minute. A phone or tablet scans a QR code, and a laptop opens a page on the hotspot and downloads its config, no camera needed.
+- It's not only web pages. Video calls, games, streaming, downloads and SSH all go through.
+- There's no account and nothing in the cloud. Traffic goes from your devices to your iPhone and out, and Tether talks to nothing else. It's free and open source (MIT).
+- One shortcut turns on the hotspot and Tether together, from the Action button, a widget or Siri.
+
+A device without WireGuard can still join the hotspot, but its traffic goes straight out as hotspot traffic and Tether doesn't help it. Tether isn't in the App Store, so you install it with SideStore or AltStore (a free Apple ID is enough). And a carrier that looks closely can still notice, see [Good to know](#good-to-know).
 
 ## Quick start
 
-1. [Install Tether on your iPhone](#install-tether-on-your-iphone) with SideStore or AltStore, or build it on a Mac. Already have SideStore or AltStore? [Add Tether in one tap](https://viktor-svirsky.github.io/tether/add/) from your iPhone.
+1. [Install Tether on your iPhone](#install-tether-on-your-iphone) with SideStore or AltStore, which you set up from a Windows PC or a Mac. Or build it yourself on a Mac. Already have SideStore or AltStore? [Add Tether in one tap](https://viktor-svirsky.github.io/tether/add/) from your iPhone.
 2. Turn on Personal Hotspot and open Tether. It shows a QR code.
-3. On the iPad or Mac, install the free WireGuard app and [add the tunnel](#connect-a-device-with-wireguard) from that code. Join the hotspot and turn the tunnel on.
+3. On the other device, install the free WireGuard app and join the hotspot. A Windows, Mac or Linux laptop downloads its config from `http://172.20.10.1`. An iPad or phone scans the code. Then turn the tunnel on ([details](#connect-a-device-with-wireguard)).
 
-That's it. The device shows up in Tether as connected, and its traffic leaves as the iPhone's own.
+That's it. The device shows up in Tether as connected.
 
 ## Why this works
 
-Carriers can tell when traffic comes from a device that's connected to your hotspot, and some plans block it or slow it to a crawl. Traffic that comes from the phone itself is fine.
+Carriers can tell when traffic comes from a device that's connected to your hotspot, and some plans block it or throttle it. Traffic that comes from the phone itself counts as phone traffic.
 
-Tether is a small app that runs on your iPhone. Your iPad, Mac or travel router still joins the hotspot, but instead of sending its traffic straight out, its WireGuard client hands it to Tether. Tether makes the connections itself, so they leave from the iPhone like its own traffic.
+Tether is a small app that runs on your iPhone. Your laptop, tablet, phone or travel router still joins the hotspot, but instead of sending its traffic straight out, its WireGuard client hands it to Tether. Tether makes the connections itself, so they leave from the iPhone like its own traffic.
 
 ```
-iPad, Mac or router  ──hotspot──▶  Tether on iPhone  ──cellular──▶  internet
+laptop, tablet, phone  ──hotspot──▶  Tether on iPhone  ──cellular──▶  internet
+or router
 (WireGuard client)
 ```
 
-Under the hood Tether runs a WireGuard server on UDP port 51820, on the hotspot address `172.20.10.1`. Each device connects with its WireGuard client, and everything goes through, calls and games included. WireGuard's own code decrypts the traffic and a small TCP/IP stack inside Tether ([gVisor](https://gvisor.dev)) makes each connection again from the iPhone. UDP behaves like a full-cone NAT, so calls and games can connect directly. No VPN entitlement or network extension is needed on the iPhone.
+Inside, Tether runs a WireGuard server on UDP port 51820, on the hotspot address `172.20.10.1`. Each device connects with its WireGuard client, and everything goes through, calls and games included. WireGuard's own code decrypts the traffic and a small TCP/IP stack inside Tether ([gVisor](https://gvisor.dev)) makes each connection again from the iPhone. UDP behaves like a full-cone NAT, so calls and games can connect directly. No VPN entitlement or network extension is needed on the iPhone.
 
 ## Install Tether on your iPhone
 
@@ -102,7 +113,7 @@ This works for an iPad, an iPhone, a Mac, a Windows or Linux laptop, an Android 
 Tether's main screen always shows a QR code for the next device, with a short step under it. There is no button to press. Tether has already made a key for that code. The first time a device connects with it, or downloads it from Tether's page, the device shows up in the Devices list by itself, as Device, Device 2 and so on, and the code changes to a new one for the next device. Tap a device to see if it is connected, remove it, or tap its name at the top to rename it.
 
 - **iPad or iPhone:** install the free [WireGuard](https://apps.apple.com/app/id1441195209) app, then + > Create from QR code and scan the code on Tether's screen. Edit the tunnel and turn On-Demand on for Wi-Fi, only for your iPhone's hotspot name, then join the hotspot. The tunnel turns itself on at the hotspot and off everywhere else.
-- **Mac, Windows, Linux or Android:** join the hotspot, keep Tether open on the iPhone, and open `http://172.20.10.1` in a browser. Type the `http://`, since some browsers try https first and fail. Download the config there and import it into WireGuard (Import Tunnel(s) from File on a Mac or Windows, `wg-quick up` on Linux). Each download gets a key of its own, so open the page on each device. The page hands out a config only while Tether is on screen, the same as the QR code. On a Mac, Share file under the code with AirDrop works too. Browser under the code shows the page's address.
+- **Windows, Mac, Linux or Android:** join the hotspot, keep Tether open on the iPhone, and open `http://172.20.10.1` in a browser. Type the `http://`, since some browsers try https first and fail. Download the config there and import it into WireGuard (Import Tunnel(s) from File on a Mac or Windows, `wg-quick up` on Linux). Each download gets a key of its own, so open the page on each device. The page hands out a config only while Tether is on screen, the same as the QR code. On a Mac, Share file under the code with AirDrop works too. Browser under the code shows the page's address.
 - **Travel router** (a UniFi Travel Router, a GL.iNet): add a WireGuard client in the router's VPN settings from the shared file, connect the router to the iPhone by USB or the hotspot, and turn its VPN on. Some routers send their clients' traffic from the clients' own addresses instead of their tunnel address. Tether notices that by itself and lets the router's clients through, and its traffic covers every device behind it. On other networks, turn the router's VPN off.
 
 Each device has its own key. Removing a device in Tether locks it out without touching the others.

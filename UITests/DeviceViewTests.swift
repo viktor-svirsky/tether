@@ -18,7 +18,7 @@ final class DeviceViewTests: TetherUITestCase {
 
     func testAnUnconnectedDeviceSaysNotConnected() {
         launch(.sharing)
-        openDevice("MacBook")
+        openDevice("Windows PC")
         XCTAssertEqual(staticText("device.status").label, "Not connected")
     }
 
@@ -42,13 +42,13 @@ final class DeviceViewTests: TetherUITestCase {
 
     func testRenamingADeviceChangesItsRow() {
         launch(.sharing)
-        openDevice("MacBook")
-        rename("MacBook", to: "Work Mac")
-        XCTAssertTrue(app.navigationBars["Work Mac"].waitForExistence(timeout: 5))
+        openDevice("Windows PC")
+        rename("Windows PC", to: "Work PC")
+        XCTAssertTrue(app.navigationBars["Work PC"].waitForExistence(timeout: 5))
         assertNowhere(element("device.problem"))
         goBack(to: "Tether")
-        XCTAssertTrue(reveal(element("device.Work Mac")).exists)
-        assertNowhere(element("device.MacBook"))
+        XCTAssertTrue(reveal(element("device.Work PC")).exists)
+        assertNowhere(element("device.Windows PC"))
     }
 
     func testCancellingTheRemoveDialogKeepsTheDevice() {
@@ -62,49 +62,49 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertTrue(app.navigationBars["iPad"].exists, "still on the device's screen")
         goBack(to: "Tether")
         XCTAssertTrue(reveal(element("device.iPad")).exists)
-        XCTAssertTrue(element("device.MacBook").exists)
+        XCTAssertTrue(element("device.Windows PC").exists)
     }
 
     func testRemovingADeviceTakesItOffTheListAndKeepsTheOther() {
         launch(.sharing)
-        openDevice("MacBook")
+        openDevice("Windows PC")
         element("device.remove").tap()
         app.buttons["Remove"].firstMatch.tap()
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5), "back on the main screen")
-        waitUntilGone(element("device.MacBook"))
+        waitUntilGone(element("device.Windows PC"))
         XCTAssertTrue(reveal(element("device.iPad")).exists)
-        assertNowhere(element("device.MacBook"))
+        assertNowhere(element("device.Windows PC"))
     }
 
     // MARK: problems
 
     func testARenameThatCantBeSavedSaysSoAndKeepsTheName() {
         launch(.qrCodeUnsaved)
-        openDevice("MacBook")
-        rename("MacBook", to: "Work Mac")
+        openDevice("Windows PC")
+        rename("Windows PC", to: "Work PC")
         let problem = staticText("device.problem") // the warning icon carries the identifier too
         XCTAssertTrue(problem.waitForExistence(timeout: 5))
         XCTAssertEqual(problem.label, "The new name couldn't be saved.")
         // The title shows the saved name. The bar's identifier keeps what was typed, so the test reads the title itself.
-        XCTAssertTrue(app.navigationBars.buttons["MacBook"].waitForExistence(timeout: 5), "the old name stays")
-        XCTAssertFalse(app.navigationBars.buttons["Work Mac"].exists)
+        XCTAssertTrue(app.navigationBars.buttons["Windows PC"].waitForExistence(timeout: 5), "the old name stays")
+        XCTAssertFalse(app.navigationBars.buttons["Work PC"].exists)
         goBack(to: "Tether")
-        XCTAssertTrue(reveal(element("device.MacBook")).exists)
+        XCTAssertTrue(reveal(element("device.Windows PC")).exists)
         openDevice("iPad")
-        assertNowhere(element("device.problem"), message: "it belongs to the MacBook")
+        assertNowhere(element("device.problem"), message: "it belongs to the Windows PC")
     }
 
     func testARemovalThatCantBeSavedStaysOnTheDeviceAndSaysSo() {
         launch(.qrCodeUnsaved)
-        openDevice("MacBook")
+        openDevice("Windows PC")
         element("device.remove").tap()
         app.buttons["Remove"].firstMatch.tap()
         let problem = staticText("device.problem")
         XCTAssertTrue(problem.waitForExistence(timeout: 5))
         XCTAssertEqual(problem.label, "The device couldn't be removed.")
-        XCTAssertTrue(app.navigationBars["MacBook"].exists, "still on the device's screen")
+        XCTAssertTrue(app.navigationBars["Windows PC"].exists, "still on the device's screen")
         goBack(to: "Tether")
-        XCTAssertTrue(reveal(element("device.MacBook")).exists)
+        XCTAssertTrue(reveal(element("device.Windows PC")).exists)
     }
 
     func testLockedKeysShowTheProblemAndNoQRCode() {

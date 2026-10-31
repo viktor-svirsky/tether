@@ -145,7 +145,7 @@ final class AccessibilityTests: TetherUITestCase {
     func testLargeTextKeepsTheQRSectionAndDeviceRowsReachable() {
         launch(.sharing, arguments: accessibilityXL)
         XCTAssertTrue(reveal(element("device.iPad"), maxSwipes: 30).isHittable)
-        XCTAssertTrue(reveal(element("device.MacBook"), maxSwipes: 30).isHittable)
+        XCTAssertTrue(reveal(element("device.Windows PC"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("add.qr"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("add.share"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("add.steps"), maxSwipes: 30).exists)
@@ -161,8 +161,8 @@ final class AccessibilityTests: TetherUITestCase {
 
     func testLargeTextKeepsADeviceProblemReadable() {
         launch(.qrCodeUnsaved, arguments: accessibilityXL)
-        reveal(element("device.MacBook"), maxSwipes: 30).tap()
-        XCTAssertTrue(app.navigationBars["MacBook"].waitForExistence(timeout: 5))
+        reveal(element("device.Windows PC"), maxSwipes: 30).tap()
+        XCTAssertTrue(app.navigationBars["Windows PC"].waitForExistence(timeout: 5))
         removeOpenDevice()
         let problem = staticText("device.problem")
         XCTAssertTrue(problem.waitForExistence(timeout: 5))

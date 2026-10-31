@@ -44,8 +44,8 @@ def source(ipa, tag, date):
                 "developerName": "Viktor Svirsky",
                 "subtitle": "Hotspot traffic that leaves as the iPhone's own.",
                 "localizedDescription": (
-                    "Tether runs a WireGuard server on your iPhone's Personal Hotspot. Your iPad, Mac or "
-                    "travel router connects to it with a WireGuard client, and Tether makes every connection "
+                    "Tether runs a WireGuard server on your iPhone's Personal Hotspot. Your laptop "
+                    "(Windows, Mac or Linux), Android phone, iPad or travel router connects to it with a WireGuard client, and Tether makes every connection "
                     "again from the iPhone, so the carrier sees phone traffic, not hotspot traffic. "
                     f"Setup and caveats: {REPO}#readme"
                 ),

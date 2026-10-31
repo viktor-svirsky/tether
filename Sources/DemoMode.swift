@@ -16,7 +16,7 @@ enum DemoScenario: String, CaseIterable {
     case wireGuardLockedWaiting
     /// Hotspot on, no device yet: only the QR code.
     case noDevices
-    /// Two devices, the iPad connected and the MacBook not, and a speed.
+    /// Two devices, the iPad connected and the Windows PC not, and a speed.
     case sharing
     /// Like `sharing`, but the Keychain is locked: WireGuard isn't running and there's no QR code.
     case wireGuardLocked
@@ -89,7 +89,7 @@ struct DemoState {
         case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved:
             var setup = WireGuardSetup.new()
             _ = setup.addPeer(name: "iPad")
-            _ = setup.addPeer(name: "MacBook")
+            _ = setup.addPeer(name: "Windows PC")
             secrets.data = try? JSONEncoder().encode(setup) // no ready device yet: loading makes and saves one
         case .wireGuardNeedsReset:
             secrets.data = Data("not a WireGuard setup".utf8) // undecodable, like a setup from a newer version
@@ -107,7 +107,7 @@ struct DemoState {
         model.running = running
         model.downSpeed = downSpeed
         model.upSpeed = upSpeed
-        // The iPad's tunnel is up, the MacBook's isn't, so the list shows both states.
+        // The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states.
         model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved].contains(scenario) ? ["10.7.0.2"] : []
         model.expires = scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil
         // The page runs with WireGuard. The section shows it only with a QR code.

@@ -5,11 +5,11 @@ final class DevicesTests: TetherUITestCase {
     func testDevicesAreListedByNameWithTheirState() {
         launch(.sharing)
         let ipad = reveal(element("device.iPad"))
-        let mac = element("device.MacBook")
-        XCTAssertTrue(mac.exists)
+        let pc = element("device.Windows PC")
+        XCTAssertTrue(pc.exists)
         XCTAssertTrue(ipad.label.contains("iPad") && ipad.label.contains("Connected"), ipad.label)
         XCTAssertFalse(ipad.label.contains("Not connected"), ipad.label)
-        XCTAssertTrue(mac.label.contains("MacBook") && mac.label.contains("Not connected"), mac.label)
+        XCTAssertTrue(pc.label.contains("Windows PC") && pc.label.contains("Not connected"), pc.label)
         XCTAssertTrue(sectionHeader("DEVICES").exists)
     }
 
