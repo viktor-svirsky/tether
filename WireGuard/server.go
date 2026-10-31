@@ -891,6 +891,9 @@ type stackTun struct {
 	incoming chan *buffer.View
 	done     chan struct{}
 	once     sync.Once
+	// dropped counts the packets for devices that found incoming full: TCP's from WriteNotify and
+	// UDP replies from inject. Tests read it to tell this loss from any other.
+	dropped atomic.Uint64
 }
 
 func newStackTun() *stackTun {
@@ -965,6 +968,7 @@ func (t *stackTun) WriteNotify() {
 	select {
 	case t.incoming <- v:
 	default:
+		t.dropped.Add(1)
 		v.Release()
 	}
 }

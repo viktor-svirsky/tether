@@ -1314,7 +1314,8 @@ func TestADeviceAtItsConnectionCapLeavesOthersConnecting(t *testing.T) {
 		t.Fatalf("the other device couldn't connect: %v", err)
 	}
 	open[0].Close()
-	deadline := time.Now().Add(5 * time.Second)
+	// The close has to reach the server first, which takes seconds under -race on CI.
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		conn, err := openHeld(a, hold)
 		if err == nil {
