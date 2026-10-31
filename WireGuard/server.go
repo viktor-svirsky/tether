@@ -810,7 +810,10 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	// made, and end that too. It waits for the device's ACK, which never comes when the device's
 	// key just went or the stack is closed.
 	var wq waiter.Queue
-	untrackOut, ok := s.track(src, a.owner, a.key, &closer{resetOut}, wake{&wq})
+	// ended is set when SetPeers or Close resets the connection's sides, so fail has nothing left
+	// to wait for.
+	var ended atomic.Bool
+	untrackOut, ok := s.track(src, a.owner, a.key, &closer{func() { ended.Store(true); resetOut() }}, wake{&wq})
 	if !ok {
 		out.Close() // nothing was exchanged, so a FIN is as honest as a reset
 		refuse()
@@ -844,7 +847,7 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 		in.Close()
 	}
 	closeBoth := func() { in.Close(); out.Close() }
-	untrackIn, ok := s.track(src, a.owner, a.key, &closer{resetIn})
+	untrackIn, ok := s.track(src, a.owner, a.key, &closer{func() { ended.Store(true); resetIn() }})
 	if !ok {
 		resetIn()
 		resetOut()
@@ -856,7 +859,7 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	// usually ends because of the first reset, so its end says nothing about what was delivered.
 	var failed atomic.Bool
 	fail := func(deviceFailed bool) {
-		if failed.Swap(true) {
+		if failed.Swap(true) || ended.Load() {
 			return
 		}
 		if deviceFailed {

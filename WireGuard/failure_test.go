@@ -316,6 +316,26 @@ func TestClosingWithConnectionsOpenDoesntWaitOutTheGrace(t *testing.T) {
 	}
 }
 
+// Removing a device resets both sides of its connections at once, so nothing waits out drainGrace
+// and its count is free straight away.
+func TestRemovingADeviceWithAConnectionOpenDoesntWaitOutTheGrace(t *testing.T) {
+	s, a, _ := setupTwo(t)
+	conn, err := openHeld(a, holdServer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	keep := Peer{PublicKey: s.keyOf(netip.MustParseAddr("10.7.0.3")), Address: netip.MustParseAddr("10.7.0.3")}
+	began := time.Now()
+	if err := s.SetPeers([]Peer{keep}); err != nil {
+		t.Fatal(err)
+	}
+	uncounted(t, s, netip.MustParseAddr("10.7.0.2"))
+	if took := time.Since(began); took > drainGrace/2 {
+		t.Fatalf("the removed device's count took %v to free", took)
+	}
+}
+
 // A device that closes its sending side once its request is out, as some HTTP and rsync clients
 // do, still gets the whole reply. The far end sees the half close and keeps sending.
 func TestTheDeviceClosingItsSendingSideStillGetsTheWholeReply(t *testing.T) {

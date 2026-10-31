@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1426,11 +1428,12 @@ func acceptOne(t *testing.T) (addr string, accepted <-chan net.Conn) {
 	return viaRemote(l.Addr().String()), ch
 }
 
-// closedSoon says whether the far end closes conn within a few seconds.
+// closedSoon says whether the far end closes conn within a few seconds, with a FIN or, for a
+// transfer cut off by a removal or Close, a reset.
 func closedSoon(conn net.Conn) bool {
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	_, err := conn.Read(make([]byte, 1))
-	return err == io.EOF
+	return err == io.EOF || errors.Is(err, syscall.ECONNRESET)
 }
 
 // A dial that ends after Close mustn't leave an iPhone-side connection that nothing closes, so
