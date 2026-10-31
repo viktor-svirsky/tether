@@ -12,6 +12,12 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
+	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
+	"gvisor.dev/gvisor/pkg/waiter"
 )
 
 // counted is how many of the device's TCP connections the server counts as being dialed and as
@@ -223,10 +229,11 @@ func TestAFarEndThatClosesGivesEveryByteThenEOF(t *testing.T) {
 	uncounted(t, s, netip.MustParseAddr("10.7.0.2"))
 }
 
-// A far end that resets mid-reply must end the device's connection with an error. A clean EOF
-// would let a download whose length isn't given, like an HTTP/1.0 body, look complete when it isn't.
+// A far end that resets must end the device's connection with an error. A clean EOF would let a
+// download whose length isn't given, like an HTTP/1.0 body, look complete when it isn't. What it
+// sent before the reset still arrives first: web servers that close with a request unread send
+// their whole reply and then a reset.
 func TestAFarEndThatResetsEndsTheDevicesConnectionWithAnError(t *testing.T) {
-	t.Skip("#48: the server closes the device's side with a FIN, so the device gets a clean EOF")
 	s, c := setup(t)
 	target := farEnd(t, func(conn *net.TCPConn) {
 		io.ReadFull(conn, make([]byte, 5))
@@ -241,7 +248,72 @@ func TestAFarEndThatResetsEndsTheDevicesConnectionWithAnError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("got %d bytes and a clean EOF, want an error after the far end's reset", n)
 	}
+	// The device side waits drainGrace by the clock, which -race slows a hundredfold.
+	if n != 64<<10 && !raceEnabled {
+		t.Fatalf("got %d of the %d bytes sent before the reset", n, 64<<10)
+	}
 	uncounted(t, s, netip.MustParseAddr("10.7.0.2"))
+}
+
+// A device that resets its connection, like an app that's killed mid-upload, makes the far end see
+// a reset too, not a clean end that would make a cut-off upload look complete.
+func TestADeviceThatResetsEndsTheFarEndsConnectionWithAnError(t *testing.T) {
+	s, c := setup(t)
+	got := make(chan error, 1)
+	target := farEnd(t, func(conn *net.TCPConn) {
+		_, err := io.Copy(io.Discard, conn)
+		got <- err
+	})
+	addr := netip.MustParseAddrPort(target)
+	var wq waiter.Queue
+	ep, terr := deviceStack(c).NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &wq)
+	if terr != nil {
+		t.Fatal(terr)
+	}
+	conn := gonet.NewTCPConn(&wq, ep)
+	connected, notify := waiter.NewChannelEntry(waiter.WritableEvents)
+	wq.EventRegister(&connected)
+	if err := ep.Connect(tcpip.FullAddress{Addr: tcpip.AddrFrom4(addr.Addr().As4()), Port: addr.Port()}); err != nil {
+		if _, ok := err.(*tcpip.ErrConnectStarted); !ok {
+			t.Fatal(err)
+		}
+		select {
+		case <-notify:
+		case <-time.After(15 * time.Second):
+			t.Fatal("no connection")
+		}
+	}
+	wq.EventUnregister(&connected)
+	if _, err := conn.Write(make([]byte, 16<<10)); err != nil {
+		t.Fatal(err)
+	}
+	ep.SocketOptions().SetLinger(tcpip.LingerOption{Enabled: true}) // so Close sends a reset
+	conn.Close()
+	select {
+	case err := <-got:
+		if err == nil {
+			t.Fatal("the far end got a clean end after the device's reset")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the far end hung after the device's reset")
+	}
+	uncounted(t, s, netip.MustParseAddr("10.7.0.2"))
+}
+
+// The hotspot going off closes every connection at once. Nothing is left to deliver, so Close
+// doesn't wait out drainGrace for each one.
+func TestClosingWithConnectionsOpenDoesntWaitOutTheGrace(t *testing.T) {
+	s, c := startUnclosed(t)
+	conn, err := openHeld(c, holdServer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	began := time.Now()
+	s.Close()
+	if took := time.Since(began); took > drainGrace/2 {
+		t.Fatalf("Close took %v with a connection open", took)
+	}
 }
 
 // A device that closes its sending side once its request is out, as some HTTP and rsync clients
@@ -583,4 +655,66 @@ func TestAnExpiredConeGetsAFreshMapping(t *testing.T) {
 	}
 	exchange("three")
 	t.Logf("old iPhone port %d, new %d", oldPort, fresh.conn.LocalAddr().(*net.UDPAddr).Port)
+}
+
+// The hotspot going off mid-upload resets the far end, so the cut-off upload doesn't look complete.
+func TestClosingTheServerMidUploadResetsTheFarEnd(t *testing.T) {
+	s, c := startUnclosed(t)
+	got := make(chan error, 1)
+	target := farEnd(t, func(conn *net.TCPConn) {
+		_, err := io.Copy(io.Discard, conn)
+		got <- err
+	})
+	conn := connect(t, c, target)
+	if _, err := conn.Write(make([]byte, 16<<10)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	s.Close()
+	select {
+	case err := <-got:
+		if err == nil {
+			t.Fatal("the far end got a clean end when the server closed mid-upload")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the far end hung after the server closed")
+	}
+}
+
+// A far end that replies and resets while the device is still sending, like a server refusing a
+// big upload with an error page, still gives the device its whole reply first.
+func TestAFarEndThatResetsWhileTheDeviceStillSendsGivesTheWholeReply(t *testing.T) {
+	s, c := setup(t)
+	target := farEnd(t, func(conn *net.TCPConn) {
+		io.ReadFull(conn, make([]byte, 5))
+		conn.Write(make([]byte, 64<<10))
+		conn.SetLinger(0)
+	})
+	conn := connect(t, c, target)
+	conn.Write([]byte("hello"))
+	// gVisor gives the reset's error to whichever call asks first, so the writer may take it.
+	wrote := make(chan error, 1)
+	go func() {
+		for {
+			if _, err := conn.Write(make([]byte, 1024)); err != nil {
+				wrote <- err
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	b, err := io.ReadAll(conn)
+	if err == nil {
+		select {
+		case err = <-wrote:
+		case <-time.After(5 * time.Second):
+		}
+	}
+	if err == nil {
+		t.Fatalf("got %d bytes and a clean EOF, want an error after the far end's reset", len(b))
+	}
+	if len(b) != 64<<10 && !raceEnabled { // see TestAFarEndThatResetsEndsTheDevicesConnectionWithAnError
+		t.Fatalf("got %d of the %d bytes sent before the reset: %v", len(b), 64<<10, err)
+	}
+	uncounted(t, s, netip.MustParseAddr("10.7.0.2"))
 }

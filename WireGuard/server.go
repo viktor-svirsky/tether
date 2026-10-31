@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.zx2c4.com/wireguard/device"
@@ -79,6 +80,12 @@ const (
 	// for the internet. This side is the tunnel, with a round trip of milliseconds, and it ends
 	// before the device sends its SYN again after a second.
 	timeWaitTimeout = 500 * time.Millisecond
+	// drainGrace is the longest a failed connection's other side keeps what's already on its way
+	// to it before it's reset too, the way a direct connection would have delivered it. The far
+	// end's side ends sooner, once the kernel says its queue is empty, see sendQueue. gVisor
+	// doesn't say that for the device's side, which waits all of it. Its buffer is at most 2 MB,
+	// about a second at hotspot speeds.
+	drainGrace = 2 * time.Second
 	// handshakeEvery is how often the devices' last handshakes are read back from wireguard-go.
 	// They come every 2 minutes, so more often only wakes the iPhone.
 	handshakeEvery = 10 * time.Second
@@ -792,20 +799,27 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 		refuse()
 		return
 	}
+	// A reset, unlike Close, tells a side the transfer didn't finish.
+	resetOut := func() {
+		if t, ok := out.(*net.TCPConn); ok {
+			t.SetLinger(0)
+		}
+		out.Close()
+	}
 	// out is tracked from here, so SetPeers or Close can close it while the device's side is
 	// made, and end that too. It waits for the device's ACK, which never comes when the device's
 	// key just went or the stack is closed.
 	var wq waiter.Queue
-	untrackOut, ok := s.track(src, a.owner, a.key, out, wake{&wq})
+	untrackOut, ok := s.track(src, a.owner, a.key, &closer{resetOut}, wake{&wq})
 	if !ok {
-		out.Close()
+		out.Close() // nothing was exchanged, so a FIN is as honest as a reset
 		refuse()
 		return
 	}
 	defer untrackOut()
 	ep, terr := r.CreateEndpoint(&wq)
 	if terr != nil {
-		out.Close()
+		resetOut()
 		refuse()
 		return
 	}
@@ -825,29 +839,57 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	ep.SetSockOpt(&interval)
 	ep.SetSockOptInt(tcpip.KeepaliveCountOption, 4)
 	in := gonet.NewTCPConn(&wq, ep)
+	resetIn := func() {
+		ep.SocketOptions().SetLinger(tcpip.LingerOption{Enabled: true})
+		in.Close()
+	}
 	closeBoth := func() { in.Close(); out.Close() }
-	untrackIn, ok := s.track(src, a.owner, a.key, in)
+	untrackIn, ok := s.track(src, a.owner, a.key, &closer{resetIn})
 	if !ok {
-		closeBoth()
+		resetIn()
+		resetOut()
 		return
 	}
 	defer untrackIn()
+	// fail ends both sides once one has failed. The failed side is reset at once. The other gets
+	// what's already on its way to it first, see drain, then is reset too. The other direction
+	// usually ends because of the first reset, so its end says nothing about what was delivered.
+	var failed atomic.Bool
+	fail := func(deviceFailed bool) {
+		if failed.Swap(true) {
+			return
+		}
+		if deviceFailed {
+			resetIn()
+			s.drain(func() int { return sendQueue(out) })
+			resetOut()
+		} else {
+			resetOut()
+			s.drain(nil) // gVisor doesn't say what's left in its send queue
+			resetIn()
+		}
+	}
 	var wg sync.WaitGroup
 	wg.Add(2)
 	// A clean end of one direction passes on as a half close. Anything else, a reset or keepalive
-	// giving up, ends both, or the other direction could wait forever on a silent peer.
+	// giving up, ends both, or the other direction could wait forever on a silent peer. A FIN
+	// there would tell the other side its transfer was complete.
 	go func() {
 		defer wg.Done()
-		if err := s.copy(out, in, true); err != io.EOF {
-			closeBoth()
+		// gVisor gives a reset's error to the first call that asks, and a read after that sees a
+		// clean end, so the endpoint's state says whether the device reset.
+		if err, writing := s.copy(out, in, true); err != io.EOF {
+			fail(!writing)
+		} else if tcp.EndpointState(ep.State()) == tcp.StateError {
+			fail(true)
 		} else if c, ok := out.(interface{ CloseWrite() error }); ok {
 			c.CloseWrite()
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		if err := s.copy(in, out, false); err != io.EOF {
-			closeBoth()
+		if err, writing := s.copy(in, out, false); err != io.EOF {
+			fail(writing)
 		} else {
 			in.CloseWrite()
 		}
@@ -872,8 +914,8 @@ func (w wake) Close() error {
 var copyBufs = sync.Pool{New: func() any { return new([16 << 10]byte) }}
 
 // copy moves one direction of a TCP connection and counts it, until an error. A clean end
-// returns io.EOF.
-func (s *Server) copy(dst io.Writer, src io.Reader, up bool) error {
+// returns io.EOF. writing says the error was dst's, not src's.
+func (s *Server) copy(dst io.Writer, src io.Reader, up bool) (err error, writing bool) {
 	b := copyBufs.Get().(*[16 << 10]byte)
 	defer copyBufs.Put(b)
 	buf := b[:]
@@ -882,11 +924,11 @@ func (s *Server) copy(dst io.Writer, src io.Reader, up bool) error {
 		if n > 0 {
 			s.count(up, n)
 			if _, werr := dst.Write(buf[:n]); werr != nil {
-				return werr
+				return werr, true
 			}
 		}
 		if err != nil {
-			return err
+			return err, false
 		}
 	}
 }
@@ -978,4 +1020,55 @@ func (t *stackTun) WriteNotify() {
 		t.dropped.Add(1)
 		v.Release()
 	}
+}
+
+// closer is a func run as an io.Closer, so track can reset a side rather than close it.
+type closer struct{ f func() }
+
+func (c *closer) Close() error { c.f(); return nil }
+
+// drain waits for what is queued to a side to reach it: until queued says nothing is left, or
+// drainGrace passes, or the server closes. A nil queued means the side can't say, so it waits
+// out the grace.
+func (s *Server) drain(queued func() int) {
+	grace := time.NewTimer(drainGrace)
+	defer grace.Stop()
+	var tick <-chan time.Time // nil, so never, when there's nothing to ask
+	if queued != nil {
+		t := time.NewTicker(10 * time.Millisecond)
+		defer t.Stop()
+		tick = t.C
+	}
+	for {
+		select {
+		case <-grace.C:
+			return
+		case <-s.ctx.Done():
+			return
+		case <-tick:
+			if queued() == 0 {
+				return
+			}
+		}
+	}
+}
+
+// sendQueue is how many bytes the kernel still has to send on c, unacked ones included, or -1
+// when it can't say. SO_NWRITE is Darwin's, which is all Tether builds for.
+func sendQueue(c net.Conn) int {
+	t, ok := c.(*net.TCPConn)
+	if !ok {
+		return -1
+	}
+	rc, err := t.SyscallConn()
+	if err != nil {
+		return -1
+	}
+	n := -1
+	rc.Control(func(fd uintptr) {
+		if v, err := syscall.GetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_NWRITE); err == nil {
+			n = v
+		}
+	})
+	return n
 }
