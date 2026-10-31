@@ -18,9 +18,10 @@ They need no device and no internet. They cover:
 - The config page: what it reads from a request (only the request line, the path without the query), the headers on every answer (no caching, no sniffing, no scripts, closed after it), the config handed out only while Tether is on screen, a download listing the device and making a new key for the next one, and a download that couldn't be saved handing out nothing. The real listener runs on loopback: one answer per connection, a request in pieces, a head over 8 KB, a connection that sends nothing, a port in use, and a restart on the same port.
 - The ready device (let in but not listed until it connects, then listed and replaced by a new one), the build expiry warning, when the keep-alive sound plays, how bytes and speeds read, and what the Shortcuts actions say.
 
-The WireGuard server has its own Go tests:
+The WireGuard server has its own Go tests. CI runs them at full size, then again under the race detector:
 
 ```sh
+go -C WireGuard test ./...
 go -C WireGuard test -race ./...
 ```
 
@@ -42,11 +43,7 @@ Scenario tests run many devices at once, the way people use Tether:
 - `failure_test.go`: far ends that refuse, never answer, close or reset mid-transfer, half-closes both ways, a network that comes up late, and a device sending as another.
 - `lifecycle_test.go`: the hotspot going off and on, a device roaming to a new port, sleep and wake, the same config on two devices, devices added and removed while others stream, nothing left behind, and 253 devices configured.
 
-Under `-race` gVisor runs about a hundred times slower, so the busiest tests do less then (`raceEnabled`, see `race_test.go`). A normal run does the full sizes:
-
-```sh
-go -C WireGuard test ./...
-```
+Under `-race` gVisor runs about a hundred times slower, so the busiest tests do less then (`raceEnabled`, see `race_test.go`), and the scenarios whose goroutines meet the way other tests' already do don't run at all (`fullSizeOnly`). The run without `-race` does every test at full size.
 
 Measurements that depend on this computer's speed, or wait on real WireGuard retries, run only with `LOAD=1` and without `-race`:
 

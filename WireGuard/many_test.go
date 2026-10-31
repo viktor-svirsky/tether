@@ -154,6 +154,15 @@ func TestManyDevicesAtOnce(t *testing.T) {
 	}
 }
 
+// fullSizeOnly skips a scenario test under -race. CI runs every test without -race at full size,
+// and under -race only the scenarios whose goroutines meet in ways no other test covers, which
+// keeps that run quick.
+func fullSizeOnly(t *testing.T) {
+	if raceEnabled {
+		t.Skip("runs without -race, see fullSizeOnly")
+	}
+}
+
 func envInt(name string, def int) int {
 	if v, err := strconv.Atoi(os.Getenv(name)); err == nil {
 		return v

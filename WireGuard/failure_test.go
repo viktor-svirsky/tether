@@ -440,6 +440,7 @@ func TestDialsWorkAgainOnceTheNetworkIsUp(t *testing.T) {
 // A device whose connections all fail, like an app retrying a dead server, gets its share of the
 // caps back each time. It never keeps another device from connecting, nor later itself.
 func TestADeviceWhoseDialsFailLeavesOthersConnecting(t *testing.T) {
+	fullSizeOnly(t)
 	s, a, b := setupTwo(t)
 	s.mu.Lock()
 	s.maxDials, s.maxConns = 2, 2
@@ -503,6 +504,7 @@ func TestADeviceWhoseDialsFailLeavesOthersConnecting(t *testing.T) {
 // its open flow and new connections, and the role holds no claim until a client's flow goes
 // through it, see TestARouterThatCarriedNothingGivesTheRoleUp.
 func TestADeviceSendingAsAnotherGetsNothingThrough(t *testing.T) {
+	fullSizeOnly(t)
 	sPriv, sPub := keyPair(t)
 	aPriv, aPub := keyPair(t)
 	bPriv, bPub := keyPair(t)

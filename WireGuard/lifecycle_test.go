@@ -295,6 +295,7 @@ func TestLoadADeviceThatKeepsItsSessionResumesAfterTheHotspotGoesOffAndOn(t *tes
 // WireGuard follows it to its new address. Its tunnel switched off and on with the same key makes a
 // new session instead. Either way, its open connection and UDP flow carry on.
 func TestADeviceKeepsItsConnectionsWhenItRoams(t *testing.T) {
+	fullSizeOnly(t)
 	s, c := setup(t)
 	addr := netip.MustParseAddr("10.7.0.2")
 	device, far := connectPair(t, c)
@@ -343,6 +344,7 @@ func TestADeviceKeepsItsConnectionsWhenItRoams(t *testing.T) {
 // A device asleep longer than onlineWithin drops off the connected list, and its UDP flows expire.
 // When it wakes, its next handshake lists it again and new traffic works.
 func TestASleepingDeviceComesBackWhenItWakes(t *testing.T) {
+	fullSizeOnly(t)
 	s, c := setup(t)
 	addr := netip.MustParseAddr("10.7.0.2")
 	udp, err := c.net.Dial("udp", udpEcho(t))
@@ -391,6 +393,7 @@ func TestASleepingDeviceComesBackWhenItWakes(t *testing.T) {
 // Two devices set up from one QR code share a key. WireGuard keeps one session per key, so only the
 // one that sent or handshook last works, never both, and the server holds nothing for the other.
 func TestTwoDevicesWithTheSameKeyDontBothWork(t *testing.T) {
+	fullSizeOnly(t)
 	f := startFleet(t, 1)
 	addr := f.peers[0].Address
 	a, b := f.device(t, 0), f.device(t, 0)
@@ -464,7 +467,7 @@ func TestLoadTheOtherDeviceWithTheSameKeyTakesOverWhenOneStops(t *testing.T) {
 func TestChurnLeavesStreamingDevicesAlone(t *testing.T) {
 	streamers, rounds, connectEvery := 3, 20, 5
 	if raceEnabled {
-		streamers, rounds = 2, 6
+		streamers, rounds = 2, 3
 	}
 	f := startFleet(t, streamers)
 	echo, hold := udpEcho(t), holdServer(t)
@@ -605,6 +608,7 @@ func TestChurnLeavesStreamingDevicesAlone(t *testing.T) {
 // counts against their caps, no goroutines. So the hotspot going off and on all day doesn't grow
 // the app.
 func TestNothingIsLeftBehind(t *testing.T) {
+	fullSizeOnly(t)
 	target, echo, hold := tcpServer(t, 10_000), udpEcho(t), holdServer(t)
 	before := runtime.NumGoroutine()
 	f := startFleet(t, 2)
@@ -689,6 +693,7 @@ func TestRemovingADeviceMidDownloadLeavesTheOthersAlone(t *testing.T) {
 // A /24 tunnel holds 253 devices, 10.7.0.2 to 10.7.0.254. All of them can be configured at once, and
 // the last address works like the first.
 func TestAFullHouseOf253Devices(t *testing.T) {
+	fullSizeOnly(t)
 	f := startFleet(t, 253)
 	if last := f.peers[252].Address; last != netip.MustParseAddr("10.7.0.254") {
 		t.Fatalf("the last device is at %v", last)

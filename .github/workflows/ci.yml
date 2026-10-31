@@ -36,7 +36,10 @@ jobs:
         run: |
           python3 scripts/test_make_source.py
           scripts/test-next-version.sh
+      # Every test at full size, then the race detector on the ones that fit its speed.
       - name: WireGuard server tests
+        run: go -C WireGuard test ./...
+      - name: WireGuard server tests under the race detector
         run: go -C WireGuard test -race ./...
       - name: Fuzz the UDP replies
         run: go -C WireGuard test -run '^$' -fuzz FuzzReplyPackets -fuzztime 30s ./...

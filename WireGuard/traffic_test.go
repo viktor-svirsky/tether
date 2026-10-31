@@ -161,6 +161,7 @@ func TestEveryDeviceUploadsAndDownloadsAtOnce(t *testing.T) {
 // together. Each one works, and the counts the caps go by drop back to zero after, or a day of
 // browsing would fill them.
 func TestAPageLoadBurstFromSeveralDevicesLeavesNoCountBehind(t *testing.T) {
+	fullSizeOnly(t)
 	const devices, each, size = 3, 100, 2 << 10
 	s, clients, addrs := setupMany(t, devices)
 	// download, not fetch: under -race on a busy machine the last of a burst can take longer than
@@ -210,6 +211,7 @@ func TestAPageLoadBurstFromSeveralDevicesLeavesNoCountBehind(t *testing.T) {
 // answered, and once they've been quiet for dnsIdle the lookups' cones go, while a port that sent
 // elsewhere keeps its minute.
 func TestADNSStormIsAnsweredAndItsConesGoAfterDNSIdle(t *testing.T) {
+	fullSizeOnly(t)
 	devices, lookups := 4, 50
 	if raceEnabled {
 		devices, lookups = 2, 20
@@ -347,6 +349,7 @@ func answered(conn net.Conn, msg string) error {
 // A call sends small numbered packets both ways while another device downloads as fast as it can.
 // Some may be lost, but only where the queue to wireguard-go was full, never in the NAT.
 func TestACallNextToADownloadLosesOnlyToTheQueue(t *testing.T) {
+	fullSizeOnly(t)
 	packets, every, streams := 100, 10*time.Millisecond, 4
 	if raceEnabled {
 		packets, streams = 30, 2
