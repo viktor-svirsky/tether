@@ -117,12 +117,15 @@ func downloadAndPing(t *testing.T, clients []*client, tcp string, size, download
 }
 
 // Many devices download at the same time, then ping at the same time. Each gets all its bytes and
-// its echoes, and is listed as connected. Small, since CI runs it under the race detector, which
-// slows gVisor down a hundredfold. TestLoadManyDevices is the big version.
+// its echoes, and is listed as connected. Small, and smaller under -race, see raceEnabled.
+// TestLoadManyDevices is the big version.
 func TestManyDevicesAtOnce(t *testing.T) {
-	const devices, count = 8, 3
+	devices, downloads, count := 8, 2, 3
+	if raceEnabled {
+		devices, downloads, count = 4, 1, 1
+	}
 	s, clients, addrs := setupMany(t, devices)
-	_, _, errs := downloadAndPing(t, clients, tcpServer(t, 8<<10), 8<<10, 2, 0, udpEcho(t))
+	_, _, errs := downloadAndPing(t, clients, tcpServer(t, 8<<10), 8<<10, downloads, 0, udpEcho(t))
 	for _, err := range errs {
 		t.Error(err)
 	}
@@ -277,7 +280,10 @@ func TestLoadMemoryAtTheConnectionCap(t *testing.T) {
 // A travel router and devices that connect directly, all busy at once: the router's client and
 // each device get all their bytes and echoes, the router keeps its role, and no device takes it.
 func TestARouterAndDevicesAtOnce(t *testing.T) {
-	const devices, count = 3, 3
+	devices, count := 3, 3
+	if raceEnabled {
+		devices, count = 2, 1
+	}
 	sPriv, sPub := keyPair(t)
 	s, err := Start(loopback, 0, sPriv)
 	if err != nil {

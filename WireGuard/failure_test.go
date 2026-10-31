@@ -390,8 +390,17 @@ func TestADeviceWhoseDialsFailLeavesOthersConnecting(t *testing.T) {
 		t.Fatalf("only %d failed connections, want 6", n)
 	}
 	uncounted(t, s, netip.MustParseAddr("10.7.0.2"))
-	if _, err := fetch(t, a, live); err != nil {
-		t.Fatalf("the device couldn't connect once its server was back: %v", err)
+	// A refusal can still be on its way back under -race on CI, so it gets a few tries.
+	deadline = time.Now().Add(30 * time.Second)
+	for {
+		_, err := fetch(t, a, live)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the device couldn't connect once its server was back: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	uncounted(t, s, netip.MustParseAddr("10.7.0.3"))
 }

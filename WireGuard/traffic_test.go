@@ -127,7 +127,10 @@ func download(c *client, addr string, seed uint64, n int) error {
 // Every device uploads and downloads at once, and the bytes arrive intact both ways. Each device
 // asks for its own pattern, so a connection crossed with another device's would show.
 func TestEveryDeviceUploadsAndDownloadsAtOnce(t *testing.T) {
-	const devices, size = 6, 200 << 10
+	devices, size := 6, 200<<10
+	if raceEnabled {
+		devices, size = 3, 32<<10
+	}
 	s, clients, _ := setupMany(t, devices)
 	up, down := uploadServer(t), patternServer(t, size)
 	var wg sync.WaitGroup
@@ -148,8 +151,9 @@ func TestEveryDeviceUploadsAndDownloadsAtOnce(t *testing.T) {
 	}
 	wg.Wait()
 	// Up is each upload and each download's seed, down each download and each upload's hash.
-	if st := s.Stats(); st.Up != devices*(size+8) || st.Down != devices*(size+sha256.Size) {
-		t.Errorf("counted up %d down %d, want %d and %d", st.Up, st.Down, devices*(size+8), devices*(size+sha256.Size))
+	wantUp, wantDown := uint64(devices*(size+8)), uint64(devices*(size+sha256.Size))
+	if st := s.Stats(); st.Up != wantUp || st.Down != wantDown {
+		t.Errorf("counted up %d down %d, want %d and %d", st.Up, st.Down, wantUp, wantDown)
 	}
 }
 
@@ -206,7 +210,10 @@ func TestAPageLoadBurstFromSeveralDevicesLeavesNoCountBehind(t *testing.T) {
 // answered, and once they've been quiet for dnsIdle the lookups' cones go, while a port that sent
 // elsewhere keeps its minute.
 func TestADNSStormIsAnsweredAndItsConesGoAfterDNSIdle(t *testing.T) {
-	const devices, lookups = 4, 50
+	devices, lookups := 4, 50
+	if raceEnabled {
+		devices, lookups = 2, 20
+	}
 	s, clients, addrs := setupMany(t, devices)
 	// A packet to port 53 is a lookup, see sentTo. Nothing listens on 53 here, so remote:53 goes to
 	// an echo server, and its replies come back as from remote:53.
@@ -340,7 +347,10 @@ func answered(conn net.Conn, msg string) error {
 // A call sends small numbered packets both ways while another device downloads as fast as it can.
 // Some may be lost, but only where the queue to wireguard-go was full, never in the NAT.
 func TestACallNextToADownloadLosesOnlyToTheQueue(t *testing.T) {
-	const packets, every, streams = 100, 10 * time.Millisecond, 4
+	packets, every, streams := 100, 10*time.Millisecond, 4
+	if raceEnabled {
+		packets, streams = 30, 2
+	}
 	s, clients, addrs := setupMany(t, 2)
 	caller, downloader := clients[0], clients[1]
 	// Both devices finish their handshake first, so no packet waits in wireguard-go for one.
@@ -357,7 +367,7 @@ func TestACallNextToADownloadLosesOnlyToTheQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer peer.Close()
-	var heard [packets]atomic.Bool
+	heard := make([]atomic.Bool, packets)
 	var heardCount atomic.Int32
 	peerDone := make(chan struct{})
 	go func() {
@@ -422,7 +432,7 @@ func TestACallNextToADownloadLosesOnlyToTheQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	var got [packets]bool
+	got := make([]bool, packets)
 	gotCount := 0
 	read := make(chan struct{})
 	go func() {
@@ -453,7 +463,7 @@ func TestACallNextToADownloadLosesOnlyToTheQueue(t *testing.T) {
 	}
 	<-read
 	deadline := time.Now().Add(5 * time.Second)
-	for heardCount.Load() < packets && time.Now().Before(deadline) {
+	for int(heardCount.Load()) < packets && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	dropped := s.tun.dropped.Load() - before
