@@ -35,6 +35,28 @@ The fuzz test sends any payload from the internet through `replyPackets` and che
 
 They run a real WireGuard client (wireguard-go with its own netstack) against the server over loopback: TCP and UDP through the tunnel, an unknown key getting nothing, sharing off, a removed device locked out and its connections closed, a router's clients sending from their own private addresses (and a plain device or a public address refused), Close during UDP traffic (a deadlock once), full-cone UDP (a reply from an address the device never contacted gets through, the way a call connects), and replies bigger than the tunnel MTU arriving in IPv4 fragments. The client's netstack refuses to send to 127.0.0.1, so the tests dial a documentation address (198.51.100.7) and swap the server's dialer to reach the local test listeners.
 
+Scenario tests run many devices at once, the way people use Tether:
+
+- `many_test.go`: eight devices downloading and pinging together, and a travel router next to direct devices.
+- `traffic_test.go`: uploads and downloads both ways with checksums, a page-load burst, a DNS storm, a call next to a big download, the biggest unfragmented UDP, and a reconnect from the same port right after the host closed.
+- `failure_test.go`: far ends that refuse, never answer, close or reset mid-transfer, half-closes both ways, a network that comes up late, and a device sending as another.
+- `lifecycle_test.go`: the hotspot going off and on, a device roaming to a new port, sleep and wake, the same config on two devices, devices added and removed while others stream, nothing left behind, and 253 devices configured.
+
+Under `-race` gVisor runs about a hundred times slower, so the busiest tests do less then (`raceEnabled`, see `race_test.go`). A normal run does the full sizes:
+
+```sh
+go -C WireGuard test ./...
+```
+
+Measurements that depend on this computer's speed, or wait on real WireGuard retries, run only with `LOAD=1` and without `-race`:
+
+```sh
+LOAD=1 go -C WireGuard test -run TestLoad -v ./...
+LOAD=1 DEVICES=32 go -C WireGuard test -run TestLoadManyDevices -v ./...
+```
+
+They print throughput and fairness with `DEVICES` devices, ping times while another device downloads (`STREAMS`), memory with devices at their connection cap (`EACH`), a far end that never answers, and two cases that need 15 s of WireGuard retries. Both ends run on this computer, so they show the server's limits here, not the iPhone's.
+
 ## 2. UI tests on the simulator
 
 ```sh
