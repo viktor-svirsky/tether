@@ -1,9 +1,10 @@
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 
-/// The QR code for the next device, always on the main screen. It's the ready device's config: the
-/// first time something connects with it, that device is listed and a new code takes its place.
-/// When the next code couldn't be saved, it says so instead.
+/// The QR code for the next device, always on the main screen, and the address of the page that
+/// hands out the same config. It's the ready device's config: the first time something connects with
+/// it or downloads it, that device is listed and a new code takes its place. When the next code
+/// couldn't be saved, it says so instead.
 struct AddDeviceSection: View {
     @ObservedObject var model: Model
     let first: Bool
@@ -28,6 +29,15 @@ struct AddDeviceSection: View {
                         Label("Share as a file, for a Mac or a router", systemImage: "square.and.arrow.up")
                     }
                     .accessibilityIdentifier("add.share")
+                }
+                if let url = model.configPageURL {
+                    Label {
+                        Text("Or open \(Text(url).bold()) in a browser on the device")
+                    } icon: {
+                        Image(systemName: "globe")
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("add.page")
                 }
             } header: {
                 header

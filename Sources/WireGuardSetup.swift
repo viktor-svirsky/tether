@@ -110,9 +110,9 @@ struct WireGuardSetup: Codable, Equatable {
         if ready == nil { ready = newReady() }
     }
 
-    /// The ready device connected for the first time from `address`: it's listed from now on,
-    /// without its private key, and a new one is ready for the next device. False when `address`
-    /// isn't the ready device's.
+    /// The ready device connected for the first time from `address`, or its config was downloaded
+    /// from the page: it's listed from now on, without its private key, and a new one is ready for
+    /// the next device. False when `address` isn't the ready device's.
     mutating func claimReady(address: String) -> Bool {
         guard var peer = ready?.peer, peer.address == address else { return false }
         peer.name = freeName("Device")

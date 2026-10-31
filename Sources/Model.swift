@@ -6,6 +6,8 @@
 //   Format.swift        bytes and speeds as text
 //   MainView.swift      MainView (the main screen), StatusCard, and the speeds
 //   DevicesView.swift   the QR code for the next device, and a device's own screen
+//   ConfigPage.swift    the page on the hotspot that hands out the next device's config, Foundation only
+//   ConfigPageServer.swift  serves that page on the hotspot address
 //   AppExpiry.swift     when a sideloaded build stops opening, and the warning before it
 //   DemoMode.swift      fake app state for the UI tests, Debug builds only
 //   Shortcuts.swift     the Shortcuts actions; ShortcutReply.swift has what they say, Foundation only
@@ -44,6 +46,10 @@ final class Model: ObservableObject {
         get { session.wireGuardConnected }
         set { session.wireGuardConnected = newValue }
     }
+    var configPageURL: String? {
+        get { session.configPageURL }
+        set { session.configPageURL = newValue }
+    }
     var wireGuardPeers: [WireGuardSetup.Peer] { session.wireGuardPeers }
     var wireGuardReady: WireGuardSetup.Ready? { session.wireGuardReady }
     var wireGuardReadyProblem: String? { session.wireGuardReadyProblem }
@@ -74,7 +80,7 @@ final class Model: ObservableObject {
         let secrets: SecretStore = KeychainSecrets()
         #endif
         session = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(),
-                                 keepAlive: KeepAlive(log: Self.append),
+                                 keepAlive: KeepAlive(log: Self.append), page: ConfigPageServer(),
                                  sceneActive: UIApplication.shared.applicationState != .background,
                                  hotspotAddress: Interfaces.hotspotAddress, log: Self.append)
         session.willChange = { [weak self] in self?.objectWillChange.send() }

@@ -15,6 +15,22 @@ protocol WireGuardServing: AnyObject {
 
 extension WireGuardServer: WireGuardServing {}
 
+/// The config page as `HotspotSession` uses it. `ConfigPageServer` is the real one, the tests have a fake.
+@MainActor
+protocol ConfigPageServing: AnyObject {
+    var respond: @MainActor (ConfigPage.Request, _ client: String) -> ConfigPage.Response { get set }
+    var onChange: @MainActor () -> Void { get set }
+    var onFailure: @MainActor (Error) -> Void { get set }
+    /// Started, and not failed or stopped since.
+    var running: Bool { get }
+    /// Taking connections.
+    var listening: Bool { get }
+    func start(host: String, port: UInt16)
+    func stop()
+}
+
+extension ConfigPageServer: ConfigPageServing {}
+
 /// The silent sound that keeps Tether running, see `KeepAlive` and `KeepAlivePolicy`.
 @MainActor
 protocol KeepAliveSound: AnyObject {
@@ -27,8 +43,8 @@ protocol KeepAliveSound: AnyObject {
 }
 
 /// What Tether does with the hotspot, its saved devices and the WireGuard server: start the server
-/// when the hotspot appears, stop it when it goes, try again after a failure, say why it isn't
-/// running, keep the sound playing for a while, and count the speeds. `Model` runs it on a timer
+/// and the config page when the hotspot appears, stop them when it goes, try again after a failure,
+/// say why it isn't running, keep the sound playing for a while, and count the speeds. `Model` runs it on a timer
 /// and shows it. Foundation only, with everything it talks to passed in, so `swift test` covers it.
 @MainActor
 final class HotspotSession {
@@ -53,6 +69,8 @@ final class HotspotSession {
     /// The tunnel addresses of the WireGuard devices that are connected. Read with every sample
     /// while the app is on screen.
     var wireGuardConnected: Set<String> = [] { willSet { willChange() } }
+    /// The config page's address while it listens, shown under the QR code.
+    var configPageURL: String? { willSet { willChange() } }
     /// The hotspot is on and WireGuard runs. `running` alone is only the hotspot.
     var sharing: Bool { running && wireGuardProblem == nil }
     /// Only the on-screen sampler publishes connections and speeds, so it runs only while the app is on screen.
@@ -62,6 +80,7 @@ final class HotspotSession {
     private let devices: WireGuardDevices
     private let server: WireGuardServing
     private let keepAlive: KeepAliveSound
+    private let page: ConfigPageServing
     private let hotspotAddress: () -> String?
     private let now: () -> Date
     private let log: @MainActor (String) -> Void
@@ -76,19 +95,28 @@ final class HotspotSession {
     private var setupProblem: String?
     /// Why the server didn't start on the hotspot. It goes with the hotspot.
     private var startProblem: String?
+    /// Why the config page last failed, so a page that fails every round is logged once.
+    private var pageProblem: String?
+    /// The config last downloaded from the page. The same device asking again soon gets the same
+    /// one: a browser or download manager that fetches twice mustn't list a second device.
+    private var lastDownload: (client: String, at: Date, response: ConfigPage.Response)?
 
-    init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, sceneActive: Bool,
-         hotspotAddress: @escaping () -> String?, now: @escaping () -> Date = Date.init,
+    init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
+         sceneActive: Bool, hotspotAddress: @escaping () -> String?, now: @escaping () -> Date = Date.init,
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
         self.keepAlive = keepAlive
+        self.page = page
         self.sceneActive = sceneActive
         self.hotspotAddress = hotspotAddress
         self.now = now
         self.log = log
         publishSetup()
         showSetupProblem() // from launch, before any device joins the hotspot
+        page.respond = { [weak self] request, client in self?.pageResponse(request, from: client) ?? ConfigPage.notFound }
+        page.onChange = { [weak self] in self?.showConfigPage() }
+        page.onFailure = { [weak self] error in self?.pageFailed(error) }
     }
 
     /// One round of the watcher in `Model`.
@@ -106,12 +134,16 @@ final class HotspotSession {
         if running, hotspot != boundHost {
             log("hotspot address gone or changed, stopping")
             server.stop()
+            page.stop()
+            lastDownload = nil
             running = false
             startProblem = nil // the next hotspot gets a new try
             showProblem()
         }
         // A WireGuard start that failed (keys locked after a restart, say) is tried again here.
         if running, !server.running, let boundHost { startWireGuard(on: boundHost) }
+        // And a page that failed: the address may not have been ready for it yet.
+        if running, server.running, !page.running, let boundHost { page.start(host: boundHost, port: ConfigPage.port) }
         keepAliveWhileSharing(hotspot: hotspot != nil)
         guard !running, let hotspot else { return }
         log("binding to \(hotspot)")
@@ -162,6 +194,7 @@ final class HotspotSession {
         guard devices.loaded else { return } // the setup's problem shows already
         do {
             try server.start(host: hotspot, setup: devices.setup, port: WireGuardSetup.port)
+            page.start(host: hotspot, port: ConfigPage.port)
             startProblem = nil
             showProblem()
             log("WireGuard on \(hotspot):\(WireGuardSetup.port), \(wireGuardPeers.count) devices")
@@ -224,6 +257,7 @@ final class HotspotSession {
 
     /// Gives up on saved keys this version can't read: a new server key and no devices.
     func resetWireGuard() {
+        lastDownload = nil
         devices.reset()
         publishSetup()
         showSetupProblem()
@@ -244,6 +278,7 @@ final class HotspotSession {
     @discardableResult
     func removeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) -> Bool {
         let removed = devices.remove(id)
+        if removed { lastDownload = nil } // its config mustn't be handed out again
         if !removed { log("WireGuard: the removal couldn't be saved, the device stays") }
         showDeviceProblem(removed ? nil : DeviceProblem(device: id, text: "The device couldn't be removed."))
         wireGuardPeersChanged()
@@ -263,6 +298,55 @@ final class HotspotSession {
 
     func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String {
         devices.setup.clientConfig(for: ready)
+    }
+
+    private func showConfigPage() {
+        let url = running && page.listening ? boundHost.map { ConfigPage.url(host: $0) } : nil
+        if url != configPageURL { configPageURL = url }
+        if page.listening { pageProblem = nil }
+    }
+
+    private func pageFailed(_ error: Error) {
+        let problem = "\(error)"
+        guard problem != pageProblem else { return }
+        pageProblem = problem
+        log("config page: \(problem)")
+    }
+
+    /// The config page's answer. It hands out the config only while Tether is on screen, the same as
+    /// the QR code, and a download adds the device: it's listed, and the next device gets a new key,
+    /// so two devices that download never share one. A device that never connects shows as Not
+    /// connected, and can be removed like any other. A HEAD adds nothing.
+    func pageResponse(_ request: ConfigPage.Request, from client: String) -> ConfigPage.Response {
+        let state: ConfigPage.State = !sceneActive ? .openTether : wireGuardReady == nil ? .noConfig : .ready
+        let repeated = lastDownload.flatMap { $0.client == client && now().timeIntervalSince($0.at) < 60 ? $0.response : nil }
+        switch request {
+        case .page:
+            return ConfigPage.page(state)
+        case .pageHead:
+            return ConfigPage.page(state).forHead
+        case .configHead:
+            if let repeated { return repeated.forHead }
+            guard state == .ready, let ready = wireGuardReady else { return ConfigPage.page(state, status: .notFound).forHead }
+            return ConfigPage.config(devices.setup.clientConfig(for: ready), fileName: WireGuardSetup.fileName(for: "")).forHead
+        case .config:
+            if let repeated { return repeated }
+            guard state == .ready, let ready = wireGuardReady else { return ConfigPage.page(state, status: .notFound) }
+            let config = devices.setup.clientConfig(for: ready)
+            guard devices.claimReady(address: ready.address) else {
+                log("WireGuard: \(client) asked for the config, but the new device couldn't be saved")
+                return ConfigPage.page(.noConfig, status: .unavailable)
+            }
+            log("WireGuard: \(client) downloaded the config from the page")
+            wireGuardPeersChanged()
+            let name = devices.setup.peers.first { $0.id == ready.id }?.name ?? ""
+            let response = ConfigPage.config(config, fileName: WireGuardSetup.fileName(for: name))
+            lastDownload = (client, now(), response)
+            return response
+        case .notFound: return ConfigPage.notFound
+        case .notGet: return ConfigPage.notGet
+        case .malformed: return ConfigPage.malformed
+        }
     }
 
     /// On a memory warning.

@@ -110,6 +110,9 @@ struct DemoState {
         // The iPad's tunnel is up, the MacBook's isn't, so the list shows both states.
         model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved].contains(scenario) ? ["10.7.0.2"] : []
         model.expires = scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil
+        // The page runs with WireGuard. The section shows it only with a QR code.
+        model.configPageURL = running && ![.wireGuardLocked, .wireGuardNeedsReset, .wireGuardUnsaved].contains(scenario)
+            ? ConfigPage.url(host: Hotspot.host) : nil
     }
 }
 #endif

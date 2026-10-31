@@ -37,7 +37,19 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(reveal(staticText("add.problem")).label, "The code for the next device can't be saved: Keychain error -34018.")
         XCTAssertTrue(sectionHeader("ADD ANOTHER DEVICE").exists)
         XCTAssertTrue(reveal(element("device.iPad")).exists)
-        assertNowhere(element("add.qr"), element("add.share"), element("add.steps"), element("wireguard.problem"))
+        assertNowhere(element("add.qr"), element("add.share"), element("add.page"), element("add.steps"), element("wireguard.problem"))
+    }
+
+    func testWhileSharingThePageAddressIsUnderTheCode() {
+        launch(.sharing)
+        XCTAssertEqual(reveal(element("add.page")).label, "Or open http://172.20.10.1 in a browser on the device")
+    }
+
+    /// The page runs with WireGuard, on the hotspot.
+    func testWithTheHotspotOffThereIsNoPageAddress() {
+        launch(.waiting)
+        XCTAssertTrue(reveal(element("add.qr")).exists)
+        assertNowhere(element("add.page"))
     }
 
     func testNothingElseOffersToAddADevice() {

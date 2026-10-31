@@ -12,6 +12,7 @@ final class HotspotSessionTests: XCTestCase {
 
     private var server: FakeServer!
     private var sound: FakeSound!
+    private var page: FakePage!
     private var secrets: FlakySecrets!
     private var devices: WireGuardDevices!
     private var address: String?
@@ -21,11 +22,12 @@ final class HotspotSessionTests: XCTestCase {
     private func makeSession(sceneActive: Bool = true, locked: Bool = false, log: @escaping @MainActor (String) -> Void = { _ in }) {
         server = FakeServer()
         sound = FakeSound()
+        page = FakePage()
         secrets = FlakySecrets()
         secrets.failing = locked
         devices = WireGuardDevices(secrets: secrets)
-        session = HotspotSession(devices: devices, server: server, keepAlive: sound, sceneActive: sceneActive,
-                                 hotspotAddress: { [unowned self] in address }, now: { [unowned self] in now }, log: log)
+        session = HotspotSession(devices: devices, server: server, keepAlive: sound, page: page,
+                                 sceneActive: sceneActive, hotspotAddress: { [unowned self] in address }, now: { [unowned self] in now }, log: log)
     }
 
     private func minutes(_ m: Double) -> Date { start.addingTimeInterval(m * 60) }
@@ -229,6 +231,191 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(session.shortcutState(), ShortcutReply.State(running: true, connected: 2, problem: nil))
     }
 
+    // MARK: The config page
+
+    func testThePageListensWhereTheServerDoes() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertEqual(page.starts, ["\(hotspot):80"])
+        XCTAssertNil(session.configPageURL, "not before it listens")
+        page.becomeReady()
+        XCTAssertEqual(session.configPageURL, "http://172.20.10.1")
+        session.syncWithHotspot()
+        XCTAssertEqual(page.starts.count, 1, "no restart while it runs")
+        address = "172.20.10.3"
+        session.syncWithHotspot()
+        XCTAssertEqual(page.starts, ["\(hotspot):80", "172.20.10.3:80"], "a new address, a new page")
+        XCTAssertNil(session.configPageURL)
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertFalse(page.running)
+        XCTAssertNil(session.configPageURL)
+    }
+
+    func testAPageThatFailsIsStartedAgainNextRound() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        page.becomeReady()
+        page.fail()
+        XCTAssertNil(session.configPageURL)
+        XCTAssertTrue(logged.contains("config page: address in use"), "\(logged)")
+        XCTAssertTrue(server.running, "WireGuard goes on without it")
+        XCTAssertNil(session.wireGuardProblem)
+        session.syncWithHotspot()
+        XCTAssertEqual(page.starts.count, 2)
+    }
+
+    func testNoPageWithoutTheServer() {
+        makeSession(locked: true)
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertTrue(page.starts.isEmpty, "the keys are locked")
+        secrets.failing = false
+        server.startError = FakeServer.Failure()
+        session.syncWithHotspot()
+        XCTAssertTrue(page.starts.isEmpty, "the server didn't start")
+        server.startError = nil
+        session.syncWithHotspot()
+        XCTAssertEqual(page.starts, ["\(hotspot):80"])
+    }
+
+    private func body(_ response: ConfigPage.Response) -> String { String(decoding: response.body, as: UTF8.self) }
+
+    /// A download is a device added: it's listed, and the next one gets a new key, so two devices never share one.
+    func testOnScreenADownloadAddsTheDevice() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertTrue(body(page.ask(.page)).contains("href=\"/Tether.conf\""))
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        let first = page.ask(.config)
+        XCTAssertEqual(first.status, .ok)
+        XCTAssertEqual(body(first), session.wireGuardConfig(for: ready))
+        XCTAssertTrue(first.extraHeaders.contains("Content-Disposition: attachment; filename=\"Tether-Device.conf\""))
+        XCTAssertEqual(session.wireGuardPeers.map(\.address), [ready.address])
+        XCTAssertEqual(session.wireGuardPeers.map(\.name), ["Device"])
+        let next = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertNotEqual(next.address, ready.address, "a new key for the next device")
+        XCTAssertEqual(server.lastSetup?.serverPeers.map(\.address), [ready.address, next.address], "both let in")
+        let second = page.ask(.config, from: "172.20.10.3")
+        XCTAssertEqual(body(second), session.wireGuardConfig(for: next))
+        XCTAssertNotEqual(body(second), body(first))
+        XCTAssertTrue(second.extraHeaders.contains("Content-Disposition: attachment; filename=\"Tether-Device-2.conf\""))
+    }
+
+    func testTheDownloadedDeviceConnectingAddsNothingMore() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        _ = page.ask(.config)
+        let next = session.wireGuardReady
+        server.connected = [ready.address]
+        session.sampleTraffic()
+        XCTAssertEqual(session.wireGuardPeers.count, 1)
+        XCTAssertEqual(session.wireGuardReady, next)
+        XCTAssertEqual(session.wireGuardConnected, [ready.address])
+    }
+
+    /// The same as the QR code, which can only be seen while Tether is on screen.
+    func testOffScreenThePageGivesNothing() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.leftScreen()
+        let ready = session.wireGuardReady
+        XCTAssertTrue(body(page.ask(.page)).contains("Open Tether on the iPhone"))
+        let config = page.ask(.config)
+        XCTAssertEqual(config.status, .notFound)
+        XCTAssertFalse(body(config).contains("PrivateKey"))
+        XCTAssertTrue(session.wireGuardPeers.isEmpty)
+        XCTAssertEqual(session.wireGuardReady, ready)
+        session.cameOnScreen()
+        XCTAssertEqual(page.ask(.config).status, .ok)
+    }
+
+    func testADownloadThatCantBeSavedGivesNothing() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        let ready = session.wireGuardReady
+        secrets.savesFail = true
+        let config = page.ask(.config)
+        XCTAssertEqual(config.status, .unavailable)
+        XCTAssertFalse(body(config).contains("PrivateKey"), "a key that isn't saved could never connect")
+        XCTAssertTrue(session.wireGuardPeers.isEmpty)
+        XCTAssertEqual(session.wireGuardReady, ready)
+        XCTAssertTrue(logged.contains("WireGuard: 172.20.10.2 asked for the config, but the new device couldn't be saved"), "\(logged)")
+    }
+
+    /// A browser or download manager that fetches twice gets the same config, and only one device is listed.
+    func testTheSameDeviceAskingAgainSoonGetsTheSameConfig() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        let first = page.ask(.config, from: "172.20.10.2")
+        now = now.addingTimeInterval(59)
+        XCTAssertEqual(page.ask(.configHead, from: "172.20.10.2"), first.forHead)
+        XCTAssertEqual(page.ask(.config, from: "172.20.10.2"), first)
+        XCTAssertEqual(session.wireGuardPeers.count, 1)
+        let other = page.ask(.config, from: "172.20.10.3")
+        XCTAssertNotEqual(other.body, first.body, "another device gets its own")
+        now = now.addingTimeInterval(61)
+        XCTAssertNotEqual(page.ask(.config, from: "172.20.10.3").body, other.body, "a minute later it's a new device")
+        XCTAssertEqual(session.wireGuardPeers.count, 3)
+    }
+
+    func testARemovedDevicesConfigIsntHandedOutAgain() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        let first = page.ask(.config)
+        session.removeWireGuardDevice(try XCTUnwrap(session.wireGuardPeers.first).id)
+        XCTAssertNotEqual(page.ask(.config).body, first.body)
+    }
+
+    func testAHeadAddsNoDevice() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        let ready = session.wireGuardReady
+        let head = page.ask(.configHead)
+        XCTAssertEqual(head.status, .ok)
+        XCTAssertTrue(head.headOnly)
+        XCTAssertEqual(page.ask(.pageHead), ConfigPage.page(.ready).forHead)
+        XCTAssertTrue(session.wireGuardPeers.isEmpty)
+        XCTAssertEqual(session.wireGuardReady, ready)
+        session.leftScreen()
+        XCTAssertEqual(page.ask(.configHead).status, .notFound)
+    }
+
+    func testAPageThatFailsEveryRoundIsLoggedOnce() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        for _ in 0..<3 {
+            page.fail()
+            session.syncWithHotspot()
+        }
+        XCTAssertEqual(logged.filter { $0.hasPrefix("config page:") }, ["config page: address in use"])
+        XCTAssertEqual(page.starts.count, 4, "still tried each round")
+    }
+
+    func testOtherRequestsGetTheirErrors() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertEqual(page.ask(.notFound), ConfigPage.notFound)
+        XCTAssertEqual(page.ask(.notGet), ConfigPage.notGet)
+        XCTAssertEqual(page.ask(.malformed), ConfigPage.malformed)
+        XCTAssertTrue(session.wireGuardPeers.isEmpty)
+    }
+
     // MARK: The keep-alive sound
 
     /// One watcher round at `minute`: on screen or not, the hotspot, and whether the sound plays after it.
@@ -336,6 +523,7 @@ final class HotspotSessionTests: XCTestCase {
             ("downSpeed", { self.session.downSpeed = 1 }),
             ("upSpeed", { self.session.upSpeed = 1 }),
             ("wireGuardConnected", { self.session.wireGuardConnected = ["10.7.0.2"] }),
+            ("configPageURL", { self.page.becomeReady() }),
         ]
         for (name, change) in changes {
             announced = []
@@ -449,6 +637,52 @@ final class FakeServer: WireGuardServing {
     }
 
     func freeMemory() {}
+}
+
+@MainActor
+final class FakePage: ConfigPageServing {
+    struct Failure: Error, CustomStringConvertible {
+        var description: String { "address in use" }
+    }
+
+    var respond: @MainActor (ConfigPage.Request, String) -> ConfigPage.Response = { _, _ in ConfigPage.notFound }
+    var onChange: @MainActor () -> Void = {}
+    var onFailure: @MainActor (Error) -> Void = { _ in }
+    private(set) var running = false
+    private(set) var listening = false
+    /// "host:port" for each start.
+    private(set) var starts: [String] = []
+
+    func start(host: String, port: UInt16) {
+        stop()
+        starts.append("\(host):\(port)")
+        running = true
+    }
+
+    func stop() {
+        running = false
+        setListening(false)
+    }
+
+    /// The listener is ready for connections.
+    func becomeReady() { setListening(true) }
+
+    /// The listener failed after it started, the way the real one stops itself.
+    func fail() {
+        stop()
+        onFailure(Failure())
+    }
+
+    /// A request from a device on the hotspot.
+    func ask(_ request: ConfigPage.Request, from client: String = "172.20.10.2") -> ConfigPage.Response {
+        respond(request, client)
+    }
+
+    private func setListening(_ value: Bool) {
+        guard value != listening else { return }
+        listening = value
+        onChange()
+    }
 }
 
 final class FakeSound: KeepAliveSound {
