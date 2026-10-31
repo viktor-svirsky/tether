@@ -16,11 +16,8 @@ final class DevicesTests: TetherUITestCase {
     func testDeviceRowsHaveNoAddressesOrByteLines() {
         launch(.sharing)
         reveal(element("device.iPad"))
-        // The config page's address under the QR code has 172.20.10.1, so the hotspot address is checked per row.
-        for row in [element("device.iPad"), element("device.MacBook")] {
-            XCTAssertFalse(row.label.contains("172.20.10"), row.label)
-        }
-        assertNowhere(text(containing: "10.7.0"), text(containing: "Downloaded"), app.staticTexts["Active"])
+        assertNowhere(text(containing: "172.20.10"), text(containing: "10.7.0"), text(containing: "Downloaded"),
+                      app.staticTexts["Active"])
     }
 
     func testNoDevicesMeansNoDevicesSection() {

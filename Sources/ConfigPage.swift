@@ -125,21 +125,22 @@ enum ConfigPage {
         let content = switch state {
         case .ready:
             """
-            <p>Download a config for this device. It has a key of its own, and the device shows up in Tether's list.</p>
             <p><a class="button" href="\(configPath)">Download the config</a></p>
-            <h2>Then import it into WireGuard</h2>
+            <p>Then import it in the WireGuard app.</p>
+            <details>
+            <summary>How, on Mac, Windows, Linux or a phone</summary>
             <ul>
             <li>Mac: get WireGuard from the App Store, then Import Tunnel(s) from File.</li>
             <li>Windows: get WireGuard from wireguard.com/install, then Import tunnel(s) from file.</li>
             <li>iPhone, iPad or Android: in the WireGuard app, tap + and import the file.</li>
             <li>Linux: <code>sudo wg-quick up</code> and the file's path.</li>
+            <li>Each config is for one device. For another device, open this page on it.</li>
             </ul>
-            <p>Turn the tunnel on, and Tether shows the device as Connected. Another device? Open this page on it. Each config is for one device only.</p>
+            </details>
             """
         case .openTether:
             """
             <p>Open Tether on the iPhone and keep it on screen, then reload this page.</p>
-            <p>Tether only hands out a config while it's open, the same as its QR code.</p>
             """
         case .noConfig:
             """
@@ -157,11 +158,11 @@ enum ConfigPage {
         :root { color-scheme: light dark; --bg: #f2f2f7; --card: #fff; --text: #1c1c1e; --muted: #6c6c70; --accent: #0073c7; --on-accent: #fff; }
         @media (prefers-color-scheme: dark) { :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --muted: #98989f; --accent: #4db3ff; --on-accent: #0b1a26; } }
         body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
-        main { max-width: 520px; margin: 0 auto; padding: 40px 16px; }
+        main { max-width: 520px; margin: 0 auto; padding: 24px 16px; }
         h1 { font-size: 28px; margin: 0 0 16px; }
-        h2 { font-size: 19px; margin: 24px 0 8px; }
-        p, li { color: var(--muted); }
-        ul { padding-left: 20px; }
+        p, li, summary { color: var(--muted); }
+        summary { cursor: pointer; }
+        ul { padding-left: 20px; margin: 8px 0 0; }
         code { font: 15px ui-monospace, Menlo, Consolas, monospace; }
         .button { display: block; text-align: center; text-decoration: none; font-weight: 600; padding: 14px; border-radius: 12px; background: var(--accent); color: var(--on-accent); }
         </style>

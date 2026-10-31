@@ -109,7 +109,12 @@ final class ConfigPageTests: XCTestCase {
         }
         let ready = try html(.ready)
         XCTAssertTrue(ready.contains("href=\"/Tether.conf\""))
-        XCTAssertTrue(ready.contains("WireGuard"))
+        XCTAssertTrue(ready.contains("Then import it in the WireGuard app."))
+        // Compact: the button comes first, and the steps for each system wait behind a tap.
+        let button = try XCTUnwrap(ready.range(of: "Download the config"))
+        let steps = try XCTUnwrap(ready.range(of: "<details>"))
+        XCTAssertLessThan(button.lowerBound, steps.lowerBound)
+        XCTAssertEqual(ready.components(separatedBy: "<p>").count - 1, 2, "the button and one line")
         let open = try html(.openTether)
         XCTAssertFalse(open.contains("Tether.conf"))
         XCTAssertTrue(open.contains("Open Tether on the iPhone"))

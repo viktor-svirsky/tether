@@ -1,13 +1,15 @@
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 
-/// The QR code for the next device, always on the main screen, and the address of the page that
-/// hands out the same config. It's the ready device's config: the first time something connects with
+/// The QR code for the next device, always on the main screen, with buttons to share it as a file
+/// and to give the address of the page that hands out the same config. It's the ready device's config: the first time something connects with
 /// it or downloads it, that device is listed and a new code takes its place. When the next code
 /// couldn't be saved, it says so instead.
 struct AddDeviceSection: View {
     @ObservedObject var model: Model
     let first: Bool
+    /// The page's address, while the alert that gives it is up.
+    @State private var pageAddress: String?
 
     var body: some View {
         if let ready = model.wireGuardReady {
@@ -24,26 +26,38 @@ struct AddDeviceSection: View {
                         .accessibilityLabel("QR code for the next device")
                         .accessibilityIdentifier("add.qr")
                 }
-                if let file = code.file {
-                    ShareLink(item: file) {
-                        Label("Share as a file, for a Mac or a router", systemImage: "square.and.arrow.up")
+                if code.file != nil || model.configPageURL != nil {
+                    // Side by side, so the card stays short. Bordered, or the row takes one tap for both.
+                    HStack {
+                        if let file = code.file {
+                            ShareLink(item: file) {
+                                Label("Share file", systemImage: "square.and.arrow.up")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .accessibilityIdentifier("add.share")
+                        }
+                        if let url = model.configPageURL {
+                            Button {
+                                pageAddress = url
+                            } label: {
+                                Label("Browser", systemImage: "globe")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .accessibilityIdentifier("add.page")
+                        }
                     }
-                    .accessibilityIdentifier("add.share")
-                }
-                if let url = model.configPageURL {
-                    Label {
-                        Text("Or open \(Text(url).bold()) in a browser on the device")
-                    } icon: {
-                        Image(systemName: "globe")
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("add.page")
+                    .buttonStyle(.bordered)
                 }
             } header: {
                 header
             } footer: {
-                Text("Install WireGuard on it, tap + > Create from QR code and scan this. Then edit the tunnel and turn On-Demand on for this iPhone's hotspot only. A travel router imports the file and turns its VPN on.")
+                Text("Scan it with WireGuard: + > Create from QR code.")
                     .accessibilityIdentifier("add.steps")
+            }
+            .alert("Open in a browser", isPresented: Binding { pageAddress != nil } set: { if !$0 { pageAddress = nil } }) {
+                Button("OK") {}
+            } message: {
+                Text("Join this iPhone's hotspot on the device, then open \(pageAddress ?? "") in its browser. Keep Tether on screen.")
             }
         } else if let problem = model.wireGuardReadyProblem {
             Section {

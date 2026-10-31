@@ -2,14 +2,14 @@ import XCTest
 
 /// Adding a device: the QR code, the shared file and the steps that are always on the main screen.
 final class AddDeviceTests: TetherUITestCase {
-    private let steps = "Install WireGuard on it, tap + > Create from QR code and scan this. Then edit the tunnel and turn On-Demand on for this iPhone's hotspot only. A travel router imports the file and turns its VPN on."
+    private let steps = "Scan it with WireGuard: + > Create from QR code."
 
     func testBeforeAnyDeviceTheMainScreenShowsTheQRCodeTheFileAndTheSteps() {
         launch(.waiting)
         XCTAssertTrue(reveal(element("add.qr")).exists)
         XCTAssertEqual(element("add.qr").label, "QR code for the next device")
         let share = reveal(element("add.share"))
-        XCTAssertTrue(share.label.contains("Share as a file, for a Mac or a router"), share.label)
+        XCTAssertTrue(share.label.contains("Share file"), share.label)
         XCTAssertEqual(reveal(element("add.steps")).label, steps)
         XCTAssertTrue(sectionHeader("ADD A DEVICE").exists)
         assertNowhere(sectionHeader("ADD ANOTHER DEVICE"))
@@ -40,9 +40,24 @@ final class AddDeviceTests: TetherUITestCase {
         assertNowhere(element("add.qr"), element("add.share"), element("add.page"), element("add.steps"), element("wireguard.problem"))
     }
 
-    func testWhileSharingThePageAddressIsUnderTheCode() {
+    /// The two ways besides the code sit side by side, so the card stays short.
+    func testWhileSharingTheFileAndBrowserButtonsShareARow() {
         launch(.sharing)
-        XCTAssertEqual(reveal(element("add.page")).label, "Or open http://172.20.10.1 in a browser on the device")
+        let page = reveal(element("add.page"))
+        let share = element("add.share")
+        XCTAssertTrue(page.label.contains("Browser"), page.label)
+        XCTAssertEqual(share.frame.midY, page.frame.midY, accuracy: 2)
+        XCTAssertLessThan(share.frame.maxX, page.frame.minX)
+    }
+
+    func testTheBrowserButtonGivesThePageAddress() {
+        launch(.sharing)
+        reveal(element("add.page")).tap()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        XCTAssertTrue(alert.staticTexts["Join this iPhone's hotspot on the device, then open http://172.20.10.1 in its browser. Keep Tether on screen."].exists)
+        alert.buttons["OK"].tap()
+        assertNowhere(app.alerts.firstMatch)
     }
 
     /// The page runs with WireGuard, on the hotspot.

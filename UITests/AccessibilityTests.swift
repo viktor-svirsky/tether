@@ -80,6 +80,21 @@ final class AccessibilityTests: TetherUITestCase {
 
     // MARK: devices and the QR code
 
+    /// The Share file and Browser buttons are bordered, so they get the full audit with the card in view, in both appearances.
+    func testAddDeviceButtonsPassTheAccessibilityAuditInBothAppearances() throws {
+        for appearance in [XCUIDevice.Appearance.light, .dark] {
+            XCUIDevice.shared.appearance = appearance
+            launch(.sharing)
+            XCTAssertTrue(reveal(element("add.page")).isHittable)
+            XCTAssertTrue(element("add.share").isHittable)
+            try audit()
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "Add device card, \(appearance == .dark ? "dark" : "light")"
+            shot.lifetime = .keepAlways
+            add(shot)
+        }
+    }
+
     func testQRCodeSectionPassesTheStructuralAudit() throws {
         launch(.noDevices)
         reveal(element("add.share"))

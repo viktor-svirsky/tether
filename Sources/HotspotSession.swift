@@ -69,7 +69,7 @@ final class HotspotSession {
     /// The tunnel addresses of the WireGuard devices that are connected. Read with every sample
     /// while the app is on screen.
     var wireGuardConnected: Set<String> = [] { willSet { willChange() } }
-    /// The config page's address while it listens, shown under the QR code.
+    /// The config page's address while it listens, given by the Browser button under the QR code.
     var configPageURL: String? { willSet { willChange() } }
     /// The hotspot is on and WireGuard runs. `running` alone is only the hotspot.
     var sharing: Bool { running && wireGuardProblem == nil }
