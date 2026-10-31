@@ -10,6 +10,7 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(element("add.qr").label, "QR code for the next device")
         let share = reveal(element("add.share"))
         XCTAssertTrue(share.label.contains("Share file"), share.label)
+        XCTAssertTrue(element("add.page").label.contains("Browser"))
         XCTAssertEqual(reveal(element("add.steps")).label, steps)
         XCTAssertTrue(sectionHeader("ADD A DEVICE").exists)
         assertNowhere(sectionHeader("ADD ANOTHER DEVICE"))
@@ -60,11 +61,15 @@ final class AddDeviceTests: TetherUITestCase {
         assertNowhere(app.alerts.firstMatch)
     }
 
-    /// The page runs with WireGuard, on the hotspot.
-    func testWithTheHotspotOffThereIsNoPageAddress() {
+    /// iOS makes the hotspot's network only once a device joins, and the page starts with it. The
+    /// address never changes, so the button gives it before that too.
+    func testWithNoDeviceOnTheHotspotTheBrowserButtonStillGivesTheAddress() {
         launch(.waiting)
         XCTAssertTrue(reveal(element("add.qr")).exists)
-        assertNowhere(element("add.page"))
+        reveal(element("add.page")).tap()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        XCTAssertTrue(alert.staticTexts["Join this iPhone's hotspot on the device, then open http://172.20.10.1 in its browser. Keep Tether on screen."].exists)
     }
 
     func testNothingElseOffersToAddADevice() {

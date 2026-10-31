@@ -238,19 +238,30 @@ final class HotspotSessionTests: XCTestCase {
         address = hotspot
         session.syncWithHotspot()
         XCTAssertEqual(page.starts, ["\(hotspot):80"])
-        XCTAssertNil(session.configPageURL, "not before it listens")
-        page.becomeReady()
-        XCTAssertEqual(session.configPageURL, "http://172.20.10.1")
         session.syncWithHotspot()
         XCTAssertEqual(page.starts.count, 1, "no restart while it runs")
         address = "172.20.10.3"
         session.syncWithHotspot()
         XCTAssertEqual(page.starts, ["\(hotspot):80", "172.20.10.3:80"], "a new address, a new page")
-        XCTAssertNil(session.configPageURL)
         address = nil
         session.syncWithHotspot()
         XCTAssertFalse(page.running)
-        XCTAssertNil(session.configPageURL)
+    }
+
+    /// Each failure is logged once, until the page listens again.
+    func testAPageThatListensAgainLogsItsNextFailure() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        page.fail()
+        session.syncWithHotspot()
+        page.fail()
+        XCTAssertEqual(logged.filter { $0 == "config page: address in use" }.count, 1, "the same failure again")
+        session.syncWithHotspot()
+        page.becomeReady()
+        page.fail()
+        XCTAssertEqual(logged.filter { $0 == "config page: address in use" }.count, 2, "\(logged)")
     }
 
     func testAPageThatFailsIsStartedAgainNextRound() {
@@ -260,7 +271,6 @@ final class HotspotSessionTests: XCTestCase {
         session.syncWithHotspot()
         page.becomeReady()
         page.fail()
-        XCTAssertNil(session.configPageURL)
         XCTAssertTrue(logged.contains("config page: address in use"), "\(logged)")
         XCTAssertTrue(server.running, "WireGuard goes on without it")
         XCTAssertNil(session.wireGuardProblem)
@@ -523,7 +533,6 @@ final class HotspotSessionTests: XCTestCase {
             ("downSpeed", { self.session.downSpeed = 1 }),
             ("upSpeed", { self.session.upSpeed = 1 }),
             ("wireGuardConnected", { self.session.wireGuardConnected = ["10.7.0.2"] }),
-            ("configPageURL", { self.page.becomeReady() }),
         ]
         for (name, change) in changes {
             announced = []

@@ -46,10 +46,6 @@ final class Model: ObservableObject {
         get { session.wireGuardConnected }
         set { session.wireGuardConnected = newValue }
     }
-    var configPageURL: String? {
-        get { session.configPageURL }
-        set { session.configPageURL = newValue }
-    }
     var wireGuardPeers: [WireGuardSetup.Peer] { session.wireGuardPeers }
     var wireGuardReady: WireGuardSetup.Ready? { session.wireGuardReady }
     var wireGuardReadyProblem: String? { session.wireGuardReadyProblem }

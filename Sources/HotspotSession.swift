@@ -69,8 +69,6 @@ final class HotspotSession {
     /// The tunnel addresses of the WireGuard devices that are connected. Read with every sample
     /// while the app is on screen.
     var wireGuardConnected: Set<String> = [] { willSet { willChange() } }
-    /// The config page's address while it listens, given by the Browser button under the QR code.
-    var configPageURL: String? { willSet { willChange() } }
     /// The hotspot is on and WireGuard runs. `running` alone is only the hotspot.
     var sharing: Bool { running && wireGuardProblem == nil }
     /// Only the on-screen sampler publishes connections and speeds, so it runs only while the app is on screen.
@@ -115,7 +113,7 @@ final class HotspotSession {
         publishSetup()
         showSetupProblem() // from launch, before any device joins the hotspot
         page.respond = { [weak self] request, client in self?.pageResponse(request, from: client) ?? ConfigPage.notFound }
-        page.onChange = { [weak self] in self?.showConfigPage() }
+        page.onChange = { [weak self] in self?.pageChanged() }
         page.onFailure = { [weak self] error in self?.pageFailed(error) }
     }
 
@@ -300,9 +298,8 @@ final class HotspotSession {
         devices.setup.clientConfig(for: ready)
     }
 
-    private func showConfigPage() {
-        let url = running && page.listening ? boundHost.map { ConfigPage.url(host: $0) } : nil
-        if url != configPageURL { configPageURL = url }
+    /// A page that listens again logs its next failure.
+    private func pageChanged() {
         if page.listening { pageProblem = nil }
     }
 

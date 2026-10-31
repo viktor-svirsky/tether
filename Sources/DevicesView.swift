@@ -2,9 +2,10 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 /// The QR code for the next device, always on the main screen, with buttons to share it as a file
-/// and to give the address of the page that hands out the same config. It's the ready device's config: the first time something connects with
-/// it or downloads it, that device is listed and a new code takes its place. When the next code
-/// couldn't be saved, it says so instead.
+/// and to give the address of the page that hands out the same config. It's the ready device's
+/// config: the first time something connects with it or downloads it, that device is listed and a
+/// new code takes its place. When the next code couldn't be saved, it says so instead. The page runs
+/// once a device is on the hotspot, and its address never changes, so Browser is there before that.
 struct AddDeviceSection: View {
     @ObservedObject var model: Model
     let first: Bool
@@ -26,28 +27,24 @@ struct AddDeviceSection: View {
                         .accessibilityLabel("QR code for the next device")
                         .accessibilityIdentifier("add.qr")
                 }
-                if code.file != nil || model.configPageURL != nil {
-                    // Side by side, so the card stays short. Bordered, or the row takes one tap for both.
-                    HStack {
-                        if let file = code.file {
-                            ShareLink(item: file) {
-                                Label("Share file", systemImage: "square.and.arrow.up")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .accessibilityIdentifier("add.share")
+                // Side by side, so the card stays short. Bordered, or the row takes one tap for both.
+                HStack {
+                    if let file = code.file {
+                        ShareLink(item: file) {
+                            Label("Share file", systemImage: "square.and.arrow.up")
+                                .frame(maxWidth: .infinity)
                         }
-                        if let url = model.configPageURL {
-                            Button {
-                                pageAddress = url
-                            } label: {
-                                Label("Browser", systemImage: "globe")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .accessibilityIdentifier("add.page")
-                        }
+                        .accessibilityIdentifier("add.share")
                     }
-                    .buttonStyle(.bordered)
+                    Button {
+                        pageAddress = ConfigPage.url(host: Hotspot.host)
+                    } label: {
+                        Label("Browser", systemImage: "globe")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .accessibilityIdentifier("add.page")
                 }
+                .buttonStyle(.bordered)
             } header: {
                 header
             } footer: {
