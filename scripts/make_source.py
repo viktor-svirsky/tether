@@ -46,7 +46,7 @@ def source(ipa, tag, date):
                 "localizedDescription": (
                     "Tether runs a WireGuard server on your iPhone's Personal Hotspot. Your laptop "
                     "(Windows, Mac or Linux), Android phone, iPad or travel router connects to it with a WireGuard client, and Tether makes every connection "
-                    "again from the iPhone, so the carrier sees phone traffic, not hotspot traffic. "
+                    "again from the iPhone, so the traffic counts as the phone's own. "
                     f"Setup and caveats: {REPO}#readme"
                 ),
                 "iconURL": f"{RAW}/Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png",

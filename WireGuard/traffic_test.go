@@ -523,10 +523,10 @@ func TestTheBiggestUnfragmentedUDPArrivesWhole(t *testing.T) {
 	}
 }
 
-// Only a router's clients have IPv6, see udp.go. A device with just its IPv4 tunnel address, like a
-// laptop that sends IPv6 from its Wi-Fi address, gets no IPv6 UDP out and no socket for it, while
-// its IPv4 keeps working.
-func TestIPv6UDPFromADeviceThatIsntARouterIsDropped(t *testing.T) {
+// IPv6 is TCP only, see udp.go. A router's IPv6 clients are the only IPv6 that wireguard-go lets
+// through, so their UDP is what udp.go itself has to stop: it gets no socket and doesn't get out,
+// while IPv4 keeps working.
+func TestIPv6UDPFromARoutersClientIsDropped(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
 	s, err := Start(loopback, 0, sPriv)
@@ -539,9 +539,13 @@ func TestIPv6UDPFromADeviceThatIsntARouterIsDropped(t *testing.T) {
 	if err := s.SetPeers([]Peer{{PublicKey: cPub, Address: addr}}); err != nil {
 		t.Fatal(err)
 	}
-	c := newClientAt(t, s, sPub, cPriv, addr, netip.MustParseAddr("2001:db8::5"))
+	c := newClientAt(t, s, sPub, cPriv, netip.MustParseAddr("192.168.4.20"), netip.MustParseAddr("fd12::20"))
+	// Its client's first connection makes it the router, which gives it the IPv6 ranges.
 	if _, err := fetch(t, c, tcpServer(t, 10)); err != nil {
 		t.Fatal(err)
+	}
+	if r := s.routerOf(); r != addr {
+		t.Fatalf("router %v, want %v", r, addr)
 	}
 	// A listener the IPv6 packets would reach if they got out.
 	l, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -576,9 +580,6 @@ func TestIPv6UDPFromADeviceThatIsntARouterIsDropped(t *testing.T) {
 	if n := s.tracked(addr); n != 1 {
 		t.Fatalf("%d flows, want only the IPv4 one", n)
 	}
-	if s.routerOf().IsValid() {
-		t.Fatal("IPv6 from a Wi-Fi address made the device the router")
-	}
 	l.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	if n, _, err := l.ReadFromUDPAddrPort(make([]byte, 100)); err == nil {
 		t.Fatalf("%d bytes of IPv6 UDP got out", n)
@@ -588,7 +589,9 @@ func TestIPv6UDPFromADeviceThatIsntARouterIsDropped(t *testing.T) {
 // deviceStack is the gVisor stack inside a test device's netstack, which wireguard-go doesn't
 // export. A test needs it to pick the device's source port, which a real device does by chance.
 func deviceStack(c *client) *stack.Stack {
-	return (*stack.Stack)(unsafe.Pointer(reflect.ValueOf(c.net).Elem().FieldByName("stack").Pointer()))
+	f := reflect.ValueOf(c.net).Elem().FieldByName("stack")
+	// NewAt keeps the field's type, so the assertion fails loudly if wireguard-go changes it.
+	return reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem().Interface().(*stack.Stack)
 }
 
 // A device connects again from a port it used a moment ago, to the same host, and gets through.

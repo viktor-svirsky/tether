@@ -780,8 +780,14 @@ func TestAFullQueueDropsInsteadOfBlocking(t *testing.T) {
 	if len(tun.incoming) != cap(tun.incoming) {
 		t.Fatalf("queue holds %d, want it full at %d", len(tun.incoming), cap(tun.incoming))
 	}
+	if n := tun.dropped.Load(); n != 10 {
+		t.Fatalf("counted %d dropped, want the 10 past the cap", n)
+	}
 	tun.Close()
 	tun.inject([]byte{0x45}) // after Close it must not block either
+	if n := tun.dropped.Load(); n != 10 {
+		t.Fatalf("counted %d dropped, want a packet after Close not counted", n)
+	}
 }
 
 // A burst as deep as the stack's own queue waits for wireguard-go instead of being dropped.

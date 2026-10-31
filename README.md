@@ -19,10 +19,10 @@ Lots of plans give the iPhone itself plenty of data, then cap, slow down or bloc
 - The free WireGuard app runs on Windows, macOS, Linux, Android, iPad and iPhone, and many travel routers (GL.iNet, UniFi Travel Router) have it built in. Connect a router and every device behind it is covered.
 - Setup takes a minute. A phone or tablet scans a QR code, and a laptop opens a page on the hotspot and downloads its config, no camera needed.
 - It's not only web pages. Video calls, games, streaming, downloads and SSH all go through.
-- There's no account and nothing in the cloud. Traffic goes from your devices to your iPhone and out, and Tether talks to nothing else. It's free and open source (MIT).
+- There's no account and nothing in the cloud. Traffic goes from your devices to your iPhone and out, and Tether itself talks to nothing else. The device configs use Cloudflare's 1.1.1.1 for DNS, which you can change. It's free and open source (MIT).
 - One shortcut turns on the hotspot and Tether together, from the Action button, a widget or Siri.
 
-A device without WireGuard can still join the hotspot, but its traffic goes straight out as hotspot traffic and Tether doesn't help it. Tether isn't in the App Store, so you install it with SideStore or AltStore (a free Apple ID is enough). And a carrier that looks closely can still notice, see [Good to know](#good-to-know).
+A device without WireGuard can still join the hotspot, but its traffic goes straight out as hotspot traffic and Tether doesn't help it. Tether isn't in the App Store, so you install it with SideStore or AltStore (a free Apple ID works, with a refresh every 7 days). And a carrier that looks closely can still notice, see [Good to know](#good-to-know).
 
 ## Quick start
 
