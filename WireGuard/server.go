@@ -854,7 +854,7 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 		return
 	}
 	defer untrackIn()
-	// fail ends both sides once one has failed. The failed side is reset at once. The other gets
+	// fail ends both sides once one has failed. The side it's told failed is reset at once. The other gets
 	// what's already on its way to it first, see drain, then is reset too. The other direction
 	// usually ends because of the first reset, so its end says nothing about what was delivered.
 	var failed atomic.Bool
@@ -874,6 +874,10 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	}
 	var wg sync.WaitGroup
 	wg.Add(2)
+	// Closed once the far end's direction has ended and said why. delivered is what it has passed
+	// on to the device so far.
+	farEndRead := make(chan struct{})
+	var delivered atomic.Int64
 	// A clean end of one direction passes on as a half close. Anything else, a reset or keepalive
 	// giving up, ends both, or the other direction could wait forever on a silent peer. A FIN
 	// there would tell the other side its transfer was complete.
@@ -881,7 +885,13 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 		defer wg.Done()
 		// gVisor gives a reset's error to the first call that asks, and a read after that sees a
 		// clean end, so the endpoint's state says whether the device reset.
-		if err, writing := s.copy(out, in, true); err != io.EOF {
+		if err, writing := s.copy(out, in, true, nil); err != io.EOF {
+			if writing {
+				// The far end failed. What it sent first can still be unread in out's receive
+				// queue, and a reset of out now would throw it away, so the other direction reads
+				// out to its end first. The kernel keeps those bytes readable after the reset.
+				s.awaitProgress(farEndRead, &delivered)
+			}
 			fail(!writing)
 		} else if tcp.EndpointState(ep.State()) == tcp.StateError {
 			fail(true)
@@ -891,11 +901,12 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	}()
 	go func() {
 		defer wg.Done()
-		if err, writing := s.copy(in, out, false); err != io.EOF {
+		if err, writing := s.copy(in, out, false, &delivered); err != io.EOF {
 			fail(writing)
 		} else {
 			in.CloseWrite()
 		}
+		close(farEndRead)
 	}()
 	wg.Wait()
 	closeBoth()
@@ -916,9 +927,32 @@ func (w wake) Close() error {
 // the many short connections a page makes.
 var copyBufs = sync.Pool{New: func() any { return new([16 << 10]byte) }}
 
+// awaitProgress waits for done while moved keeps growing: a slow device still taking the far end's
+// last bytes is waited for, one that stopped taking them for drainGrace is not.
+func (s *Server) awaitProgress(done <-chan struct{}, moved *atomic.Int64) {
+	t := time.NewTimer(drainGrace)
+	defer t.Stop()
+	for last := moved.Load(); ; {
+		select {
+		case <-done:
+			return
+		case <-s.ctx.Done():
+			return
+		case <-t.C:
+			n := moved.Load()
+			if n == last {
+				return
+			}
+			last = n
+			t.Reset(drainGrace)
+		}
+	}
+}
+
 // copy moves one direction of a TCP connection and counts it, until an error. A clean end
-// returns io.EOF. writing says the error was dst's, not src's.
-func (s *Server) copy(dst io.Writer, src io.Reader, up bool) (err error, writing bool) {
+// returns io.EOF. writing says the error was dst's, not src's. moved, when given, adds up what
+// was written.
+func (s *Server) copy(dst io.Writer, src io.Reader, up bool, moved *atomic.Int64) (err error, writing bool) {
 	b := copyBufs.Get().(*[16 << 10]byte)
 	defer copyBufs.Put(b)
 	buf := b[:]
@@ -928,6 +962,9 @@ func (s *Server) copy(dst io.Writer, src io.Reader, up bool) (err error, writing
 			s.count(up, n)
 			if _, werr := dst.Write(buf[:n]); werr != nil {
 				return werr, true
+			}
+			if moved != nil {
+				moved.Add(int64(n))
 			}
 		}
 		if err != nil {

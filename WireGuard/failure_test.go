@@ -78,6 +78,16 @@ func farEnd(t *testing.T, serve func(*net.TCPConn)) string {
 	return viaRemote(l.Addr().String())
 }
 
+// resetOnceSent makes the far end's Close send a reset, once its kernel has sent everything written
+// and Tether's has acked it. A reset right after Write throws away what the kernel hadn't sent yet,
+// 4 times in 200 on loopback, and those bytes never reach Tether, so no test can ask it to pass them on.
+func resetOnceSent(conn *net.TCPConn) {
+	for deadline := time.Now().Add(5 * time.Second); sendQueue(conn) > 0 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
+	conn.SetLinger(0)
+}
+
 // connect opens a TCP connection from the device, with a deadline so a hang fails the test.
 func connect(t *testing.T, c *client, addr string) net.Conn {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -238,7 +248,7 @@ func TestAFarEndThatResetsEndsTheDevicesConnectionWithAnError(t *testing.T) {
 	target := farEnd(t, func(conn *net.TCPConn) {
 		io.ReadFull(conn, make([]byte, 5))
 		conn.Write(make([]byte, 64<<10))
-		conn.SetLinger(0) // so Close sends a reset
+		resetOnceSent(conn)
 	})
 	n, err := fetch(t, c, target)
 	var ne net.Error
@@ -721,7 +731,7 @@ func TestAFarEndThatResetsWhileTheDeviceStillSendsGivesTheWholeReply(t *testing.
 	target := farEnd(t, func(conn *net.TCPConn) {
 		io.ReadFull(conn, make([]byte, 5))
 		conn.Write(make([]byte, 64<<10))
-		conn.SetLinger(0)
+		resetOnceSent(conn)
 	})
 	conn := connect(t, c, target)
 	conn.Write([]byte("hello"))
