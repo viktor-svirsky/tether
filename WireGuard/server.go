@@ -158,6 +158,8 @@ type Server struct {
 	sendTo  func(c *net.UDPConn, payload []byte, to netip.AddrPort) error
 	// nat64 reaches IPv4 addresses from an iPhone that has no IPv4 route, see nat64.go.
 	nat64 nat64
+	// pings are the devices' echo requests waiting for their replies, see icmp.go.
+	pings pinger
 	// ctx ends with Close, and the dials still being made end with it.
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -210,7 +212,7 @@ type Server struct {
 	dials     map[netip.Addr]int
 	conns     map[netip.Addr]int
 	// The caps, see the constants. Tests lower them.
-	maxCones, maxDials, maxConns int
+	maxCones, maxDials, maxConns, maxPings int
 	// closed is set by Close. From then on handleTCP, track and cone let nothing new in.
 	closed bool
 	// forwarding counts the forwardTCP goroutines handleTCP let in, for Close to wait for.
@@ -242,6 +244,7 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		maxCones: maxCones,
 		maxDials: maxDials,
 		maxConns: maxConns,
+		maxPings: maxPings,
 		// Go's default keepalive probes every idle connection every 15 s, which keeps the cellular
 		// radio awake. Probing is still needed: when the device closes first, forwardTCP half-closes
 		// and waits for the remote, so a remote that silently went away would hold it forever.
@@ -276,6 +279,7 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	timeWait := tcpip.TCPTimeWaitTimeoutOption(timeWaitTimeout)
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &timeWait)
 	s.tun = newStackTun()
+	s.tun.ping = s.queuePing
 	if err := s.stack.CreateNIC(1, s.tun.ep); err != nil {
 		s.cancel()
 		return nil, fmt.Errorf("create NIC: %v", err)
@@ -321,6 +325,7 @@ func (s *Server) Close() {
 	s.cancel()
 	s.dev.Close() // closes the tun too
 	s.stack.Close()
+	s.closePings()
 	// The open connections and cones close, and the connections being made stop waiting for their
 	// device. The closed stack doesn't end a handshake that starts after a pass, so the passes go
 	// on until every forwardTCP is done.
@@ -993,6 +998,9 @@ type stackTun struct {
 	incoming chan *buffer.View
 	done     chan struct{}
 	once     sync.Once
+	// ping takes the devices' echo requests, which gVisor would drop, see icmp.go. Nil in tests
+	// that make a stackTun of their own.
+	ping func([]byte)
 	// dropped counts the packets for devices that found incoming full: TCP's from WriteNotify and
 	// UDP replies from inject. Tests read it to tell this loss from any other.
 	dropped atomic.Uint64
@@ -1045,6 +1053,10 @@ func (t *stackTun) Write(bufs [][]byte, offset int) (int, error) {
 	for _, b := range bufs {
 		p := b[offset:]
 		if len(p) == 0 {
+			continue
+		}
+		if t.ping != nil && isEchoRequest(p) {
+			t.ping(p)
 			continue
 		}
 		pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(p)})
