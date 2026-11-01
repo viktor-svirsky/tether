@@ -131,7 +131,16 @@ final class ConfigPageServer {
         let response = respond(request, Self.client(of: connection))
         // The final message ends the stream, so the client reads the whole body before the close.
         connection.send(content: response.bytes, contentContext: .finalMessage, isComplete: true,
-                        completion: .contentProcessed { _ in connection.cancel() })
+                        completion: .contentProcessed { _ in Self.drain(connection) })
+    }
+
+    /// Reads and drops what the client still sends until it closes its side, then closes. A close with
+    /// bytes left unread sends a reset, and the reset can throw away the answer before the client reads
+    /// it: a head over 8 KB got no 400. `timeout` still ends a client that never closes.
+    private nonisolated static func drain(_ connection: NWConnection) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { _, _, isComplete, error in
+            if isComplete || error != nil { connection.cancel() } else { drain(connection) }
+        }
     }
 
     private static func client(of connection: NWConnection) -> String {

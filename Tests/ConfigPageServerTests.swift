@@ -93,7 +93,7 @@ final class ConfigPageServerTests: XCTestCase {
 
     func testAHeadOver8KBIsRefused() async throws {
         let port = try await listen()
-        let head = "GET / HTTP/1.1\r\n" + String(repeating: "X-Pad: 1234567890\r\n", count: 600) // no end, ~11 KB
+        let head = "GET / HTTP/1.1\r\n" + String(repeating: "X-Pad: 1234567890\r\n", count: 6_000) // no end, ~114 KB: most of it unread at the answer
         let reply = text(await exchange(Data(head.utf8), port: port))
         XCTAssertTrue(reply.hasPrefix("HTTP/1.1 400 Bad Request"), reply)
         XCTAssertEqual(asked.map(\.0), [.malformed])
