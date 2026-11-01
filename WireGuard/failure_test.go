@@ -662,6 +662,8 @@ func TestAnExpiredConeGetsAFreshMapping(t *testing.T) {
 		old.conn.SetReadDeadline(time.Now())
 		time.Sleep(20 * time.Millisecond)
 	}
+	// Its own deadline: the wait above can use most of the first one under -race on CI.
+	deadline = time.Now().Add(30 * time.Second)
 	for s.tracked(device.Addr()) != 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}

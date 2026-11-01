@@ -212,15 +212,24 @@ func udpEcho(t *testing.T) string {
 	return viaRemote(c.LocalAddr().String())
 }
 
+// fetchTimeout is how long fetch waits. A download of a few hundred KB can take longer than 15 s
+// under -race on CI's runners.
+func fetchTimeout() time.Duration {
+	if raceEnabled {
+		return time.Minute
+	}
+	return 15 * time.Second
+}
+
 func fetch(t *testing.T, c *client, addr string) (int, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout())
 	defer cancel()
 	conn, err := c.net.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return 0, err
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(15 * time.Second))
+	conn.SetDeadline(time.Now().Add(fetchTimeout()))
 	conn.Write([]byte("hello"))
 	b, err := io.ReadAll(conn)
 	return len(b), err
