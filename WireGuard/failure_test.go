@@ -662,16 +662,25 @@ func TestAnExpiredConeGetsAFreshMapping(t *testing.T) {
 		old.conn.SetReadDeadline(time.Now())
 		time.Sleep(20 * time.Millisecond)
 	}
-	// Its own deadline: the wait above can use most of the first one under -race on CI.
+	// The old cone's socket goes. A "one" sent again under -race can arrive after the expiry and
+	// make a new cone already, which is right: only the old one has to be gone. Its own deadline,
+	// since the wait above can use most of the first one.
 	deadline = time.Now().Add(30 * time.Second)
-	for s.tracked(device.Addr()) != 0 && time.Now().Before(deadline) {
+	for {
+		n, now := s.tracked(device.Addr()), coneOf()
+		if n == 0 || n == 1 && now != nil && now != old {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d flows still tracked after the cone expired", n)
+		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if n := s.tracked(device.Addr()); n != 0 {
-		t.Fatalf("%d flows still tracked after the cone expired", n)
+	// Sent before "two" makes its cone, so it can't land there even if the new port is the old one.
+	// A cone made early on the old port number would rightly get it, so then it isn't sent.
+	if early := coneOf(); early == nil || early.conn.LocalAddr().(*net.UDPAddr).Port != oldPort {
+		far.WriteToUDPAddrPort([]byte("stale"), netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(oldPort)))
 	}
-	// Sent before the new cone exists, so it can't land there even if the new port is the old one.
-	far.WriteToUDPAddrPort([]byte("stale"), netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(oldPort)))
 	exchange("two")
 	fresh := coneOf()
 	if fresh == nil || fresh == old {
