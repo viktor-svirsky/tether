@@ -4,7 +4,7 @@ import Foundation
 enum NoticeKind: String, CaseIterable {
     case connected, disconnected, sharingStopped, expiring
 
-    /// The switch's label on the Notifications screen.
+    /// The switch's label in Settings.
     var label: String {
         switch self {
         case .connected: "A device connects"
@@ -213,7 +213,7 @@ enum NoticePermission {
 }
 
 /// The system's notification center as `NoticePoster` uses it. The app passes the real one
-/// (NoticesView.swift), the tests a fake.
+/// (SettingsView.swift), the tests a fake.
 @MainActor
 protocol NoticeCenter: AnyObject {
     func permission() async -> NoticePermission

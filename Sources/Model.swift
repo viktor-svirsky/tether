@@ -10,7 +10,7 @@
 //   ConfigPageServer.swift  serves that page on the hotspot address
 //   AppExpiry.swift     when a sideloaded build stops opening, and the warning before it
 //   Notices.swift       what to tell in a notification and when, and asking for permission, Foundation only
-//   NoticesView.swift   the Notifications screen, and the system's notification center
+//   SettingsView.swift  the Settings sheet behind the gear, and the system's notification center
 //   DemoMode.swift      fake app state for the UI tests, Debug builds only
 //   Shortcuts.swift     the Shortcuts actions; ShortcutReply.swift has what they say, Foundation only
 //   WireGuardSetup.swift  the hotspot address, WireGuard keys, devices and client configs, Foundation only
@@ -62,7 +62,7 @@ final class Model: ObservableObject {
     /// the 1 s sampler, so it appears on time even on a screen where nothing else changes.
     @Published private(set) var expiryWarning: String?
 
-    /// For the Notifications screen, which refreshes it, see `refreshNoticePermission`.
+    /// For the Settings sheet, which refreshes it, see `refreshNoticePermission`.
     @Published private(set) var noticePermission: NoticePermission = .notAsked
     /// Where the notification switches are saved. A demo launch has its own, emptied at launch.
     let noticeDefaults: UserDefaults
@@ -76,10 +76,10 @@ final class Model: ObservableObject {
     #if DEBUG
     /// Set in a demo launch (`-TetherDemo`, see DemoMode.swift). Nothing real runs then.
     private var demo: DemoState?
-    /// The `notificationsScreen` demo opens on the Notifications screen.
-    var opensNotices: Bool { demo?.scenario == .notificationsScreen }
+    /// The `notificationsScreen` demo opens on the Settings sheet.
+    var opensSettings: Bool { demo?.scenario == .notificationsScreen }
     #else
-    var opensNotices: Bool { false }
+    var opensSettings: Bool { false }
     #endif
 
     init() {

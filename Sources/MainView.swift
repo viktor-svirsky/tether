@@ -12,12 +12,36 @@ struct MainView: View {
             : AnyLayout(HStackLayout())
     }
 
-    /// Only the `notificationsScreen` demo sets it, for the screenshot. The row opens the screen itself.
-    @State private var showNotices = false
+    @State private var showSettings = false
+    /// The gear's circle grows with the text size, so the symbol stays inside it.
+    @ScaledMetric(relativeTo: .title3) private var gearSize: CGFloat = 44
 
     var body: some View {
         NavigationStack {
             List {
+                // The big title and the gear, outside any card, like the system's own large titles.
+                Section {
+                    HStack {
+                        Text("Tether")
+                            .font(.system(.largeTitle, design: .rounded, weight: .heavy))
+                            .accessibilityAddTraits(.isHeader)
+                        Spacer()
+                        Button { showSettings = true } label: {
+                            Image(systemName: "gearshape")
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(Color.primary)
+                                .frame(width: gearSize, height: gearSize)
+                                .background(Color(.secondarySystemGroupedBackground), in: Circle())
+                        }
+                        // Plain, or a tap anywhere in the row (the title too) opens Settings.
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Settings")
+                        .accessibilityIdentifier("settings.open")
+                    }
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+
                 Section {
                     StatusCard(model: model)
                 }
@@ -39,12 +63,6 @@ struct MainView: View {
                 // Above the QR code, so a reason it doesn't work and the way out are both here.
                 WireGuardProblemSection(model: model)
 
-                if model.sharing {
-                    Section {
-                        SpeedRow(down: model.downSpeed, up: model.upSpeed)
-                    }
-                }
-
                 if !model.wireGuardPeers.isEmpty {
                     Section("Devices") {
                         ForEach(model.wireGuardPeers) { peer in
@@ -64,21 +82,14 @@ struct MainView: View {
                 }
 
                 AddDeviceSection(model: model, first: model.wireGuardPeers.isEmpty)
-
-                // One row at the bottom, so the main screen stays short.
-                Section {
-                    NavigationLink { NoticesView(model: model) } label: {
-                        Label("Notifications", systemImage: "bell")
-                    }
-                    .accessibilityIdentifier("notices.open")
-                }
             }
-            // The status card says what this screen is, so the root drops the big title. It's still set,
-            // because the screens pushed from here use it for their back button.
+            // The title above draws it big, so the bar stays hidden. It's still set, because the
+            // screens pushed from here use it for their back button.
             .navigationTitle("Tether")
-            .navigationDestination(isPresented: $showNotices) { NoticesView(model: model) }
-            .onAppear { if model.opensNotices { showNotices = true } }
             .toolbar(.hidden, for: .navigationBar)
+            .sheet(isPresented: $showSettings) { SettingsView(model: model) }
+            // The `notificationsScreen` demo opens on the sheet, for the screenshot.
+            .onAppear { if model.opensSettings { showSettings = true } }
         }
     }
 }
@@ -115,24 +126,16 @@ enum Direction {
 }
 
 /// The one-second answer: is this phone sharing right now, and is anyone using it. Turning off
-/// Personal Hotspot is how sharing stops, so it says that instead of having a switch.
+/// Personal Hotspot is how sharing stops, so it says that instead of having a switch. The orb is
+/// the screen's one bold thing: the app icon's colours while sharing, grey while waiting, orange
+/// when the hotspot is on but WireGuard isn't.
 struct StatusCard: View {
     @ObservedObject var model: Model
-
-    private var tint: Color { model.sharing ? .green : .orange }
-    private var sharing: Bool { model.sharing }
-    /// Grows with the text size, like the title under it.
-    @ScaledMetric(relativeTo: .title2) private var iconSize: CGFloat = 30
-    @ScaledMetric(relativeTo: .title2) private var dotSize: CGFloat = 12
     @Environment(\.dynamicTypeSize) private var textSize
+    @Environment(\.colorScheme) private var colorScheme
 
-    /// Sharing gets the brand's two colours, softly. Waiting stays orange, the warning colour.
-    private var background: some ShapeStyle {
-        sharing
-            ? AnyShapeStyle(LinearGradient(colors: [Direction.download.opacity(0.22), Direction.upload.opacity(0.18)],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing))
-            : AnyShapeStyle(tint.opacity(0.15))
-    }
+    private var sharing: Bool { model.sharing }
+    private var look: StatusOrb.Look { sharing ? .sharing : model.running ? .problem : .waiting }
 
     /// Opens Settings at its main screen, where Personal Hotspot is near the top. Nothing goes
     /// straight to the Personal Hotspot page any more: on iOS 27, App-prefs:INTERNET_TETHERING and
@@ -149,63 +152,102 @@ struct StatusCard: View {
         }
     }
 
-    /// The icon sits left of the text, so the card stays a few lines tall. At the accessibility text
-    /// sizes a row would squeeze the text into a narrow column, so the icon goes above it.
+    /// The orb sits left of the text. At the accessibility text sizes a row would squeeze the text
+    /// into a narrow column, so the orb goes above it.
     private var layout: AnyLayout {
         textSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-            : AnyLayout(HStackLayout(alignment: .center, spacing: 14))
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 18))
     }
 
     var body: some View {
-        layout {
-            Image(systemName: "link")
-                .font(.system(size: iconSize, weight: .semibold))
-                .foregroundStyle(.tint)
-                .overlay(alignment: .bottomTrailing) {
-                    Circle()
-                        .fill(tint)
-                        .frame(width: dotSize, height: dotSize)
-                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: dotSize / 6))
-                        .offset(x: dotSize / 3, y: dotSize / 4)
+        VStack(alignment: .leading, spacing: 14) {
+            layout {
+                StatusOrb(look: look)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(sharing ? "Sharing" : model.running ? "Tether can't share yet" : "Turn on Personal Hotspot")
+                        .font(.system(.title, design: .rounded, weight: .bold))
+                        .accessibilityIdentifier("status.title")
+                    if sharing {
+                        Text(headline)
+                            .font(.headline)
+                            .accessibilityIdentifier("status.headline")
+                    } else if model.running {
+                        // The WireGuard section under the card says why, and what to do.
+                        Text("Personal Hotspot is on, but WireGuard isn't running.")
+                            .font(.headline)
+                            .accessibilityIdentifier("status.headline")
+                    }
                 }
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(sharing ? "Sharing" : model.running ? "Tether can't share yet" : "Turn on Personal Hotspot")
-                    .font(.title2.bold())
-                    .accessibilityIdentifier("status.title")
-                if sharing {
-                    Text(headline)
-                        .font(.headline)
-                        .accessibilityIdentifier("status.headline")
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            if sharing {
+                Divider()
+                SpeedRow(down: model.downSpeed, up: model.upSpeed)
+                hint {
                     Text("To stop, turn off Personal Hotspot.")
-                        .font(.subheadline)
                         .accessibilityIdentifier("status.stopHint")
-                } else if model.running {
-                    // The WireGuard section under the card says why, and what to do.
-                    Text("Personal Hotspot is on, but WireGuard isn't running.")
-                        .font(.headline)
-                        .accessibilityIdentifier("status.headline")
-                } else {
+                }
+            } else if !model.running {
+                Divider()
+                hint {
                     Button(action: Self.openHotspotSettings) {
-                        // The tint fails contrast on the orange card, so the text is the label colour and the underline
-                        // says "tap". Color.primary, because inside a button `.primary` is the button's tint.
                         Text("Settings > Personal Hotspot > Allow Others to Join")
-                            .font(.subheadline)
                             .underline()
                             .multilineTextAlignment(.leading)
                             .foregroundStyle(Color.primary)
                     }
+                    // Plain, or a tap anywhere in the card opens Settings.
+                    .buttonStyle(.plain)
                     .accessibilityIdentifier("status.hotspotPath")
                     .accessibilityHint("Opens Settings")
                 }
             }
-            .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(background, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .animation(.smooth, value: sharing)
+        .padding(18)
+        .background {
+            // The only shadow on the screen, so this card reads first. Dark mode has none, like the system's
+            // cards. On the shape alone: on the whole card every letter gets a grey halo, which fails contrast.
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.07), radius: 14, y: 6)
+        }
+    }
+
+    /// One line under the divider, after a grey info symbol. The text keeps the label colour.
+    private func hint(@ViewBuilder _ content: () -> some View) -> some View {
+        Label { content() } icon: { Image(systemName: "info.circle").foregroundStyle(.secondary) }
+            .font(.subheadline)
+    }
+}
+
+/// The large round sign of the state. Each look is its own layer, so a change cross-fades.
+struct StatusOrb: View {
+    enum Look { case sharing, waiting, problem }
+    let look: Look
+    /// Grows with the text size, like the title next to it.
+    @ScaledMetric(relativeTo: .title) private var size: CGFloat = 84
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The app icon's gradient, sampled from its corners.
+    static let iconColors = [Color(red: 0.12, green: 0.40, blue: 0.94), Color(red: 0.08, green: 0.74, blue: 0.75)]
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(LinearGradient(colors: Self.iconColors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                .opacity(look == .sharing ? 1 : 0)
+            Circle().fill(Color(.systemGray5)).opacity(look == .waiting ? 1 : 0)
+            Circle().fill(Color.orange.opacity(0.18)).opacity(look == .problem ? 1 : 0)
+            Circle().strokeBorder(.white.opacity(look == .sharing ? 0.25 : 0), lineWidth: size * 0.06)
+            Image(systemName: "link")
+                .font(.system(size: size * 0.38, weight: .semibold))
+                .foregroundStyle(look == .sharing ? AnyShapeStyle(.white) : look == .problem ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+        }
+        .frame(width: size, height: size)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: look)
+        .accessibilityHidden(true)
     }
 }
 

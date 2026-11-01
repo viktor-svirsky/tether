@@ -1,6 +1,6 @@
 import XCTest
 
-/// The Notifications screen at the bottom of the main screen, and one notice posted in the background.
+/// The Settings sheet behind the gear (the notification switches and About), and one notice posted in the background.
 /// When to post is covered by the unit tests (NotifierTests), since a demo launch connects no device.
 final class NotificationsTests: TetherUITestCase {
     override func tearDown() {
@@ -8,18 +8,18 @@ final class NotificationsTests: TetherUITestCase {
         super.tearDown()
     }
 
-    private func openNotifications() {
-        reveal(element("notices.open")).tap()
-        XCTAssertTrue(app.navigationBars["Notifications"].waitForExistence(timeout: 5), "the Notifications screen did not open")
+    private func openSettings() {
+        element("settings.open").tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5), "the Settings sheet did not open")
     }
 
     private func toggle(_ kind: String) -> XCUIElement {
         app.switches["notices.\(kind)"].firstMatch
     }
 
-    func testTheBottomRowOpensASwitchForEachKindAllOn() {
+    func testTheGearOpensASwitchForEachKindAllOn() {
         launch(.sharing)
-        openNotifications()
+        openSettings()
         for kind in ["connected", "disconnected", "sharingStopped", "expiring"] {
             XCTAssertTrue(toggle(kind).waitForExistence(timeout: 5), kind)
             XCTAssertEqual(value(of: toggle(kind)), "1", kind)
@@ -28,20 +28,27 @@ final class NotificationsTests: TetherUITestCase {
         XCTAssertEqual(toggle("expiring").label, "Tether stops opening soon")
     }
 
+    func testTheTitleIsNotAButton() {
+        launch(.sharing)
+        app.staticTexts["Tether"].firstMatch.tap()
+        XCTAssertFalse(app.navigationBars["Settings"].waitForExistence(timeout: 2), "a tap on the title opened Settings")
+    }
+
     func testASwitchTurnedOffStaysOff() {
         launch(.sharing)
-        openNotifications()
+        openSettings()
         toggle("connected").switches.firstMatch.tap()
         XCTAssertEqual(value(of: toggle("connected")), "0")
-        goBack(to: "Tether")
-        openNotifications()
+        app.buttons["settings.done"].tap()
+        XCTAssertTrue(element("status.title").waitForExistence(timeout: 5), "back on the main screen")
+        openSettings()
         XCTAssertEqual(value(of: toggle("connected")), "0")
         XCTAssertEqual(value(of: toggle("disconnected")), "1", "only that one")
     }
 
     func testBeforeTetherAskedThereIsAButtonToAllow() {
         launch(.sharing)
-        openNotifications()
+        openSettings()
         XCTAssertTrue(element("notices.allow").waitForExistence(timeout: 5))
         XCTAssertEqual(label(of: "notices.footer"), "Only while Tether is in the background. On screen, the screen shows it.")
         assertNowhere(element("notices.denied"))
@@ -49,8 +56,8 @@ final class NotificationsTests: TetherUITestCase {
 
     func testNotificationsOffInSettingsSaysSoWithTheWayThere() {
         launch(.notificationsOff)
-        openNotifications()
-        XCTAssertEqual(label(of: "notices.denied"), "Notifications are off for Tether in Settings.")
+        openSettings()
+        XCTAssertEqual(label(of: "notices.denied"), "Notifications are off for Tether in iOS Settings.")
         XCTAssertTrue(element("notices.settings").isHittable)
         assertNowhere(element("notices.allow"))
     }
@@ -75,7 +82,7 @@ final class NotificationsTests: TetherUITestCase {
             XCUIDevice.shared.appearance = appearance
             for (scenario, id) in [(Scenario.sharing, "notices.allow"), (.notificationsOff, "notices.denied")] {
                 launch(scenario)
-                openNotifications()
+                openSettings()
                 XCTAssertTrue(element(id).waitForExistence(timeout: 5), id)
                 try audit()
                 app.terminate()
@@ -83,16 +90,37 @@ final class NotificationsTests: TetherUITestCase {
         }
     }
 
-    func testTheNotificationsRowPassesTheStructuralAudit() throws {
-        launch(.sharing)
-        reveal(element("notices.open"))
-        try audit(types: structuralAudit)
+    /// The title, the gear and the status card, the top of the restyled main screen, in both appearances.
+    func testTheTopOfTheMainScreenPassesTheAccessibilityAuditInBothAppearances() throws {
+        for appearance in [XCUIDevice.Appearance.light, .dark] {
+            XCUIDevice.shared.appearance = appearance
+            launch(.sharing)
+            XCTAssertTrue(element("settings.open").isHittable)
+            try audit()
+            app.terminate()
+        }
     }
 
-    /// The screenshot's scenario opens on the Notifications screen, with nothing to allow.
-    func testTheScreenshotScenarioOpensOnTheNotificationsScreen() {
+    /// The screenshot's scenario opens on the Settings sheet, with nothing to allow.
+    func testTheScreenshotScenarioOpensOnTheSettingsSheet() {
         launch(.notificationsScreen)
-        XCTAssertTrue(app.navigationBars["Notifications"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
         assertNowhere(element("notices.allow"), element("notices.denied"))
+    }
+
+    func testAboutSaysTheVersionAndLinksTheSource() {
+        launch(.sharing)
+        openSettings()
+        let version = reveal(element("settings.version")).label
+        XCTAssertNotNil(version.range(of: #"^Version\D*\d+(\.\d+)+ \(\d+\)$"#, options: .regularExpression), version)
+        XCTAssertTrue(reveal(element("settings.help")).isHittable)
+        assertNowhere(element("settings.expires"), message: "no date to show: a demo build has none")
+    }
+
+    func testAboutSaysWhenThisBuildStopsOpening() {
+        launch(.expiring)
+        openSettings()
+        let expires = reveal(element("settings.expires")).label
+        XCTAssertNotNil(expires.range(of: #"^Stops opening.*\d"#, options: .regularExpression), expires)
     }
 }

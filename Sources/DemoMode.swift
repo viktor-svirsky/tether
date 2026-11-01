@@ -34,7 +34,7 @@ enum DemoScenario: String, CaseIterable {
     /// Like `sharing`, and it asks for permission on screen at launch, through the real notification
     /// center, if it never asked. Leaving the screen posts `notice`.
     case notifying
-    /// Like `sharing`, opened on the Notifications screen with notifications allowed, for the
+    /// Like `sharing`, opened on the Settings sheet with notifications allowed, for the
     /// screenshot.
     case notificationsScreen
 
