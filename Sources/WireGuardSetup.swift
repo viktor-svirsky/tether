@@ -2,9 +2,14 @@ import CryptoKit
 import Foundation
 import Security
 
-/// Where Tether listens. The hotspot always gives the iPhone 172.20.10.1.
+/// Where Tether listens on a hotspot that gives devices IPv4, see `Interfaces.hotspotAddress`.
 enum Hotspot {
     static let host = "172.20.10.1"
+
+    /// host as it goes before a port: an IPv6 address in brackets.
+    static func withPort(_ host: String, _ port: UInt16) -> String {
+        host.contains(":") ? "[\(host)]:\(port)" : "\(host):\(port)"
+    }
 }
 
 /// The WireGuard way in: each device gets its own key and an address inside the tunnel, and
@@ -153,7 +158,7 @@ struct WireGuardSetup: Codable, Equatable {
     /// What the next device imports, as a QR code or a .conf file. Only the ready device has one,
     /// since only its private key is kept. All traffic goes into the tunnel, IPv6 too, so nothing
     /// slips past Tether onto the hotspot directly.
-    func clientConfig(for ready: Ready) -> String {
+    func clientConfig(for ready: Ready, host: String = Hotspot.host) -> String {
         """
         [Interface]
         PrivateKey = \(ready.privateKey.base64EncodedString())
@@ -163,7 +168,7 @@ struct WireGuardSetup: Codable, Equatable {
 
         [Peer]
         PublicKey = \(serverPublicKey.base64EncodedString())
-        Endpoint = \(Hotspot.host):\(Self.port)
+        Endpoint = \(Hotspot.withPort(host, Self.port))
         AllowedIPs = 0.0.0.0/0, ::/0
         PersistentKeepalive = 25
 

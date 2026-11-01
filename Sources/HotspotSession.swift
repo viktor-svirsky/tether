@@ -302,8 +302,12 @@ final class HotspotSession {
         if problem != wireGuardDeviceProblem { wireGuardDeviceProblem = problem }
     }
 
+    /// Where devices reach Tether: the hotspot address it listens on, or the usual one while it
+    /// doesn't, for a QR code scanned before the hotspot is on.
+    var deviceHost: String { running ? boundHost ?? Hotspot.host : Hotspot.host }
+
     func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String {
-        devices.setup.clientConfig(for: ready)
+        devices.setup.clientConfig(for: ready, host: deviceHost)
     }
 
     /// A page that listens again logs its next failure.
@@ -333,11 +337,11 @@ final class HotspotSession {
         case .configHead:
             if let repeated { return repeated.forHead }
             guard state == .ready, let ready = wireGuardReady else { return ConfigPage.page(state, status: .notFound).forHead }
-            return ConfigPage.config(devices.setup.clientConfig(for: ready), fileName: WireGuardSetup.fileName(for: "")).forHead
+            return ConfigPage.config(wireGuardConfig(for: ready), fileName: WireGuardSetup.fileName(for: "")).forHead
         case .config:
             if let repeated { return repeated }
             guard state == .ready, let ready = wireGuardReady else { return ConfigPage.page(state, status: .notFound) }
-            let config = devices.setup.clientConfig(for: ready)
+            let config = wireGuardConfig(for: ready)
             guard devices.claimReady(address: ready.address) else {
                 log("WireGuard: \(client) asked for the config, but the new device couldn't be saved")
                 return ConfigPage.page(.noConfig, status: .unavailable)
@@ -438,27 +442,55 @@ final class HotspotSession {
 }
 
 enum Interfaces {
-    static func hotspotAddress() -> String? {
-        hotspotAddress(in: ipv4())
+    /// The last address hotspotAddress() gave, which it keeps while the bridge has it.
+    @MainActor private static var last: String?
+
+    @MainActor static func hotspotAddress() -> String? {
+        last = hotspotAddress(in: addresses(), keeping: last)
+        return last
     }
 
-    /// iOS Personal Hotspot always gives the phone 172.20.10.1 on a bridge interface.
-    /// Matching the subnet, not only the name, keeps other bridges out.
-    /// `interfaces` are lines like "bridge100: 172.20.10.1", from `ipv4()`.
-    static func hotspotAddress(in interfaces: [String]) -> String? {
-        interfaces.lazy
-            .filter { $0.hasPrefix("bridge") }
-            .compactMap { $0.components(separatedBy: ": ").last }
-            .first { $0.hasPrefix("172.20.10.") }
+    /// Where devices on the hotspot reach the iPhone. iOS Personal Hotspot gives the phone
+    /// 172.20.10.1 on a bridge interface, and matching the subnet, not only the name, keeps other
+    /// bridges out. But when the carrier gives the iPhone IPv6 only (T-Mobile US among others), the
+    /// hotspot gives its devices no IPv4 either: a Mac makes up 192.0.0.2 for itself and can't reach
+    /// 172.20.10.1. Then it's the iPhone's IPv6 address on the same bridge. A CLAT's address in
+    /// 192.0.0.0/29 is no IPv4 from the carrier, and nor is IPv4 on another cellular interface than
+    /// pdp_ip0, the internet's: VoLTE often has its own, with IPv4 on an IPv6-only carrier.
+    /// The bridge may have more than one IPv6 address, some of them temporary ones that come and go.
+    /// `current` is kept while the bridge has it, since a new address restarts the server and makes
+    /// the devices' configs point at the wrong place.
+    /// `interfaces` are lines like "bridge100: 172.20.10.1", from `addresses()`.
+    static func hotspotAddress(in interfaces: [String], keeping current: String? = nil) -> String? {
+        let lines = interfaces.compactMap { line -> (name: String, address: String)? in
+            let parts = line.components(separatedBy: ": ")
+            return parts.count == 2 ? (parts[0], parts[1]) : nil
+        }
+        guard let bridge = lines.first(where: { $0.name.hasPrefix("bridge") && $0.address.hasPrefix("172.20.10.") }) else {
+            return nil
+        }
+        let carrierIPv4 = lines.contains { $0.name == "pdp_ip0" && !$0.address.contains(":") && !isCLAT($0.address) }
+        if carrierIPv4 { return bridge.address }
+        // A link-local address comes with its interface after a %, which only the iPhone knows.
+        let ipv6 = lines.filter { $0.name == bridge.name && $0.address.contains(":") && !$0.address.contains("%") }.map(\.address)
+        if let current, ipv6.contains(current) { return current }
+        return ipv6.first ?? bridge.address
     }
 
-    static func ipv4() -> [String] {
+    private static func isCLAT(_ address: String) -> Bool {
+        guard address.hasPrefix("192.0.0."), let last = Int(address.dropFirst("192.0.0.".count)) else { return false }
+        return last < 8
+    }
+
+    /// Every address but loopback's, IPv4 and IPv6, as "name: address".
+    static func addresses() -> [String] {
         var out: [String] = []
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return out }
         defer { freeifaddrs(ifaddr) }
         for p in sequence(first: first, next: { $0.pointee.ifa_next }) {
-            guard let sa = p.pointee.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET) else { continue }
+            guard let sa = p.pointee.ifa_addr,
+                  sa.pointee.sa_family == UInt8(AF_INET) || sa.pointee.sa_family == UInt8(AF_INET6) else { continue }
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             getnameinfo(sa, socklen_t(sa.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
             let name = String(cString: p.pointee.ifa_name)

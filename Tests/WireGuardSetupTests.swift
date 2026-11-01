@@ -63,6 +63,14 @@ final class WireGuardSetupTests: XCTestCase {
             """)
     }
 
+    func testAnIPv6EndpointIsInBrackets() throws {
+        var setup = WireGuardSetup.new()
+        setup.prepareReady()
+        let ready = try XCTUnwrap(setup.ready)
+        XCTAssertTrue(setup.clientConfig(for: ready, host: "2607:fb91::1").contains("\nEndpoint = [2607:fb91::1]:51820\n"))
+        XCTAssertTrue(setup.clientConfig(for: ready, host: "172.20.10.1").contains("\nEndpoint = 172.20.10.1:51820\n"))
+    }
+
     func testAKeyThatIsNotAKeyHasNoPublicKey() {
         XCTAssertEqual(WireGuardSetup.publicKey(of: Data([1, 2, 3])), Data())
         XCTAssertEqual(WireGuardSetup.publicKey(of: Data()), Data())

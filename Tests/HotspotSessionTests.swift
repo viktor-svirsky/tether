@@ -69,6 +69,57 @@ final class HotspotSessionTests: XCTestCase {
         }
     }
 
+    /// A carrier that gives the iPhone IPv6 only gives the hotspot's devices no IPv4 either, so they
+    /// reach the iPhone at its IPv6 address on the same bridge (#58). Everyone else keeps 172.20.10.1.
+    func testOnAnIPv6OnlyCarrierTheHotspotAddressIsIPv6() {
+        let v6 = "2607:fb91:88a2:e822:2c2a:d4de:6d26:71e2"
+        let bridge = ["bridge100: 172.20.10.1", "bridge100: fe80::c416:8fff:feae:9664%bridge100", "bridge100: \(v6)"]
+        let cases: [(interfaces: [String], hotspot: String?, line: UInt)] = [
+            (bridge + ["pdp_ip0: 2607:fb90:1::2"], v6, #line), // no IPv4 from the carrier
+            (bridge, v6, #line),
+            (bridge + ["pdp_ip0: 192.0.0.4"], v6, #line), // a CLAT's address isn't IPv4 from the carrier
+            (bridge + ["pdp_ip0: 10.20.30.40"], "172.20.10.1", #line), // dual stack, as before
+            (bridge + ["pdp_ip1: 10.170.0.9"], v6, #line), // VoLTE's own IPv4 isn't for the internet
+            (bridge + ["pdp_ip0: 192.0.0.8"], "172.20.10.1", #line), // just past the CLAT's range
+            (["bridge100: 172.20.10.1", "bridge100: fe80::1%bridge100"], "172.20.10.1", #line), // no IPv6 to give
+            (["bridge100: 172.20.10.1", "bridge101: \(v6)"], "172.20.10.1", #line), // another bridge's
+            (["bridge101: \(v6)"], nil, #line), // no hotspot
+        ]
+        for c in cases {
+            XCTAssertEqual(Interfaces.hotspotAddress(in: c.interfaces), c.hotspot, line: c.line)
+        }
+    }
+
+    /// A new IPv6 address on the bridge, a temporary one say, doesn't move Tether while the one it
+    /// listens on is still there.
+    func testTheIPv6AddressInUseIsKeptWhileTheBridgeHasIt() {
+        let a = "2607:fb91:88a2:e822::a", b = "2607:fb91:88a2:e822::b", c = "2607:fb91:88a2:e822::c"
+        let both = ["bridge100: 172.20.10.1", "bridge100: \(a)", "bridge100: \(b)"]
+        XCTAssertEqual(Interfaces.hotspotAddress(in: both), a)
+        XCTAssertEqual(Interfaces.hotspotAddress(in: both, keeping: b), b)
+        XCTAssertEqual(Interfaces.hotspotAddress(in: ["bridge100: 172.20.10.1", "bridge100: \(c)"], keeping: b), c, "gone, so a new one")
+        XCTAssertEqual(Interfaces.hotspotAddress(in: both + ["pdp_ip0: 10.20.30.40"], keeping: b), "172.20.10.1", "IPv4 is back")
+    }
+
+    /// On an IPv6-only hotspot everything a device is given points at the iPhone's IPv6 address: the
+    /// server, the page, the QR code's config and the downloaded one.
+    func testOnAnIPv6HotspotEverythingPointsAtTheIPv6Address() throws {
+        makeSession()
+        let v6 = "2607:fb91:88a2:e822:2c2a:d4de:6d26:71e2"
+        XCTAssertEqual(session.deviceHost, hotspot)
+        address = v6
+        session.syncWithHotspot()
+        XCTAssertEqual(server.starts, [v6])
+        XCTAssertEqual(page.starts, ["\(v6):80"])
+        XCTAssertEqual(session.deviceHost, v6)
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertTrue(session.wireGuardConfig(for: ready).contains("Endpoint = [\(v6)]:51820\n"))
+        XCTAssertTrue(body(page.ask(.config, from: "2607:fb91:88a2:e822:1868:49e0:74e1:bee3")).contains("Endpoint = [\(v6)]:51820\n"))
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertEqual(session.deviceHost, hotspot, "the usual address while there's no hotspot")
+    }
+
     // MARK: Problems
 
     /// One watcher round: the hotspot, the Keychain and the server as they are, then what shows.

@@ -126,5 +126,7 @@ final class ConfigPageTests: XCTestCase {
     func testTheAddressLeavesOutPort80() {
         XCTAssertEqual(ConfigPage.url(host: "172.20.10.1", port: 80), "http://172.20.10.1")
         XCTAssertEqual(ConfigPage.url(host: "172.20.10.1", port: 8080), "http://172.20.10.1:8080")
+        XCTAssertEqual(ConfigPage.url(host: "2607:fb91::1", port: 80), "http://[2607:fb91::1]")
+        XCTAssertEqual(ConfigPage.url(host: "2607:fb91::1", port: 8080), "http://[2607:fb91::1]:8080")
     }
 }

@@ -223,6 +223,8 @@ final class Model: ObservableObject {
         session.removeWireGuardDevice(id)
     }
 
+    var deviceHost: String { session.deviceHost }
+
     func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String {
         session.wireGuardConfig(for: ready)
     }

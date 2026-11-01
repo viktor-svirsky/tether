@@ -72,13 +72,18 @@ func newClientAt(t *testing.T, s *Server, serverPub, priv [32]byte, addrs ...net
 }
 
 func newDevice(t *testing.T, s *Server, serverPub, priv [32]byte, mtu int, addrs ...netip.Addr) *client {
+	return newDeviceVia(t, s, loopback, serverPub, priv, mtu, addrs...)
+}
+
+// newDeviceVia is a device whose config points at the server on host.
+func newDeviceVia(t *testing.T, s *Server, host netip.Addr, serverPub, priv [32]byte, mtu int, addrs ...netip.Addr) *client {
 	tdev, tnet, err := netstack.CreateNetTUN(addrs, nil, mtu)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dev := device.NewDevice(tdev, conn.NewDefaultBind(), device.NewLogger(device.LogLevelError, "client: "))
-	err = dev.IpcSet(fmt.Sprintf("private_key=%s\npublic_key=%s\nendpoint=127.0.0.1:%d\nallowed_ip=0.0.0.0/0\nallowed_ip=::/0\n",
-		hex.EncodeToString(priv[:]), hex.EncodeToString(serverPub[:]), s.port(t)))
+	err = dev.IpcSet(fmt.Sprintf("private_key=%s\npublic_key=%s\nendpoint=%s\nallowed_ip=0.0.0.0/0\nallowed_ip=::/0\n",
+		hex.EncodeToString(priv[:]), hex.EncodeToString(serverPub[:]), netip.AddrPortFrom(host, uint16(s.port(t)))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,6 +253,26 @@ func TestTCPGoesThroughTheTunnel(t *testing.T) {
 	}
 	if len(st.Connected) != 1 || st.Connected[0] != "10.7.0.2" {
 		t.Fatalf("connected %v, want the device's tunnel address", st.Connected)
+	}
+}
+
+// On a hotspot that gives devices no IPv4, the server listens on the iPhone's IPv6 address (#58).
+func TestADeviceReachesTheServerOverIPv6(t *testing.T) {
+	sPriv, sPub := keyPair(t)
+	cPriv, cPub := keyPair(t)
+	s, err := Start(netip.IPv6Loopback(), 0, sPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	viaLoopback(s)
+	addr := netip.MustParseAddr("10.7.0.2")
+	if err := s.SetPeers([]Peer{{PublicKey: cPub, Address: addr}}); err != nil {
+		t.Fatal(err)
+	}
+	c := newDeviceVia(t, s, netip.IPv6Loopback(), sPub, cPriv, MTU, addr)
+	if n, err := fetch(t, c, tcpServer(t, 1000)); err != nil || n != 1000 {
+		t.Fatalf("got %d bytes, %v", n, err)
 	}
 }
 

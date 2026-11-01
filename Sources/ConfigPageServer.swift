@@ -144,7 +144,10 @@ final class ConfigPageServer {
     }
 
     private static func client(of connection: NWConnection) -> String {
-        if case let .hostPort(host, _) = connection.endpoint, case let .ipv4(address) = host { return "\(address)" }
+        if case let .hostPort(host, _) = connection.endpoint {
+            if case let .ipv4(address) = host { return "\(address)" }
+            if case let .ipv6(address) = host { return "\(address)" }
+        }
         return "\(connection.endpoint)"
     }
 }

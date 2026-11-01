@@ -14,7 +14,7 @@ struct AddDeviceSection: View {
 
     var body: some View {
         if let ready = model.wireGuardReady {
-            let code = ReadyCode.for(ready) { model.wireGuardConfig(for: ready) }
+            let code = ReadyCode.for(model.wireGuardConfig(for: ready))
             Section {
                 if let qr = code.qr {
                     Image(uiImage: qr)
@@ -37,7 +37,7 @@ struct AddDeviceSection: View {
                         .accessibilityIdentifier("add.share")
                     }
                     Button {
-                        pageAddress = ConfigPage.url(host: Hotspot.host)
+                        pageAddress = ConfigPage.url(host: model.deviceHost)
                     } label: {
                         Label("Browser", systemImage: "globe")
                             .frame(maxWidth: .infinity)
@@ -151,20 +151,19 @@ struct ConnectedLabel: View {
     }
 }
 
-/// The ready device's QR code and file, made once for each ready device. The main screen redraws
-/// every second with the speeds, and making them on each redraw cost a CIContext and a file write
-/// every second.
+/// The ready device's QR code and file, made once for each config: a new ready device, or a new
+/// hotspot address. The main screen redraws every second with the speeds, and making them on each
+/// redraw cost a CIContext and a file write every second.
 @MainActor
 enum ReadyCode {
-    private static var made: (id: WireGuardSetup.Peer.ID, qr: UIImage?, file: URL?)?
+    private static var made: (text: String, qr: UIImage?, file: URL?)?
 
-    static func `for`(_ ready: WireGuardSetup.Ready, config: () -> String) -> (qr: UIImage?, file: URL?) {
+    static func `for`(_ text: String) -> (qr: UIImage?, file: URL?) {
         // The system may clear the temporary directory, so a missing file is written again.
-        if let made, made.id == ready.id, made.file.map({ FileManager.default.fileExists(atPath: $0.path) }) ?? false {
+        if let made, made.text == text, made.file.map({ FileManager.default.fileExists(atPath: $0.path) }) ?? false {
             return (made.qr, made.file)
         }
-        let text = config()
-        let code = (id: ready.id, qr: QRCode.image(text), file: ConfigFile.write(text, named: "Tether"))
+        let code = (text: text, qr: QRCode.image(text), file: ConfigFile.write(text, named: "Tether"))
         made = code
         return (code.qr, code.file)
     }

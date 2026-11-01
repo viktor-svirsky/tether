@@ -1,7 +1,8 @@
 import Foundation
 
 /// The page on the hotspot that gives the next device its config, for a device that can't scan the
-/// QR code: a laptop opens http://172.20.10.1 and downloads it. ConfigPageServer.swift listens,
+/// QR code: a laptop opens http://172.20.10.1, or the iPhone's IPv6 address on an IPv6-only hotspot
+/// (see `Interfaces.hotspotAddress`), and downloads it. ConfigPageServer.swift listens,
 /// HotspotSession decides what it hands out. Foundation only, so `swift test` covers it.
 enum ConfigPage {
     /// 80, so the address is only the IP. The rule against listening below 1024 is macOS's, iOS
@@ -11,7 +12,8 @@ enum ConfigPage {
 
     /// The address to type, without the port when it's 80.
     static func url(host: String, port: UInt16 = port) -> String {
-        port == 80 ? "http://\(host)" : "http://\(host):\(port)"
+        let host = host.contains(":") ? "[\(host)]" : host
+        return port == 80 ? "http://\(host)" : "http://\(host):\(port)"
     }
 
     /// A request's head ends with an empty line.
