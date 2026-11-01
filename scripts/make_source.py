@@ -13,7 +13,9 @@ import zipfile
 from pathlib import Path
 
 REPO = "https://github.com/viktor-svirsky/tether"
-RAW = "https://raw.githubusercontent.com/viktor-svirsky/tether/main"
+# The release's own tag, so each release's screenshots get new URLs: SideStore keeps showing
+# what it cached for an unchanged URL, even after the file changed on main.
+RAW = "https://raw.githubusercontent.com/viktor-svirsky/tether/{tag}"
 
 
 def info_plist(ipa):
@@ -49,8 +51,8 @@ def source(ipa, tag, date):
                     "again from the iPhone, so the traffic counts as the phone's own. "
                     f"Setup and caveats: {REPO}#readme"
                 ),
-                "iconURL": f"{RAW}/Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
-                "screenshots": [f"{RAW}/docs/sharing.png", f"{RAW}/docs/add-device.png"],
+                "iconURL": f"{RAW.format(tag=tag)}/Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+                "screenshots": [f"{RAW.format(tag=tag)}/docs/{name}.png" for name in ("sharing", "add-device", "notifications")],
                 "category": "utilities",
                 # The IPA is unsigned and has no entitlements. The signing app adds its own.
                 "appPermissions": {

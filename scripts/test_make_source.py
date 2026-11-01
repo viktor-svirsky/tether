@@ -60,6 +60,13 @@ class MakeSourceTests(unittest.TestCase):
             "https://github.com/viktor-svirsky/tether/releases/download/v1.2.0/Tether.ipa",
         )
 
+    # SideStore keeps showing what it cached for an unchanged URL, so each release's images are its tag's.
+    def test_the_images_point_at_this_release(self):
+        app = self.app()
+        raw = "https://raw.githubusercontent.com/viktor-svirsky/tether/v1.2.0"
+        self.assertEqual(app["iconURL"], f"{raw}/Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png")
+        self.assertEqual(app["screenshots"], [f"{raw}/docs/sharing.png", f"{raw}/docs/add-device.png", f"{raw}/docs/notifications.png"])
+
     # AltStore refuses an app whose permissions don't match the IPA, so every usage description is listed.
     def test_the_privacy_keys_are_every_usage_description(self):
         self.assertEqual(

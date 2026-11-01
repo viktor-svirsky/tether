@@ -88,4 +88,11 @@ final class NotificationsTests: TetherUITestCase {
         reveal(element("notices.open"))
         try audit(types: structuralAudit)
     }
+
+    /// The screenshot's scenario opens on the Notifications screen, with nothing to allow.
+    func testTheScreenshotScenarioOpensOnTheNotificationsScreen() {
+        launch(.notificationsScreen)
+        XCTAssertTrue(app.navigationBars["Notifications"].waitForExistence(timeout: 5))
+        assertNowhere(element("notices.allow"), element("notices.denied"))
+    }
 }

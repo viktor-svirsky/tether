@@ -76,6 +76,10 @@ final class Model: ObservableObject {
     #if DEBUG
     /// Set in a demo launch (`-TetherDemo`, see DemoMode.swift). Nothing real runs then.
     private var demo: DemoState?
+    /// The `notificationsScreen` demo opens on the Notifications screen.
+    var opensNotices: Bool { demo?.scenario == .notificationsScreen }
+    #else
+    var opensNotices: Bool { false }
     #endif
 
     init() {

@@ -12,6 +12,9 @@ struct MainView: View {
             : AnyLayout(HStackLayout())
     }
 
+    /// Only the `notificationsScreen` demo sets it, for the screenshot. The row opens the screen itself.
+    @State private var showNotices = false
+
     var body: some View {
         NavigationStack {
             List {
@@ -73,6 +76,8 @@ struct MainView: View {
             // The status card says what this screen is, so the root drops the big title. It's still set,
             // because the screens pushed from here use it for their back button.
             .navigationTitle("Tether")
+            .navigationDestination(isPresented: $showNotices) { NoticesView(model: model) }
+            .onAppear { if model.opensNotices { showNotices = true } }
             .toolbar(.hidden, for: .navigationBar)
         }
     }

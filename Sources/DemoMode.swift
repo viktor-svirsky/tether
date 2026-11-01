@@ -34,6 +34,9 @@ enum DemoScenario: String, CaseIterable {
     /// Like `sharing`, and it asks for permission on screen at launch, through the real notification
     /// center, if it never asked. Leaving the screen posts `notice`.
     case notifying
+    /// Like `sharing`, opened on the Notifications screen with notifications allowed, for the
+    /// screenshot.
+    case notificationsScreen
 
     static let argument = "-TetherDemo"
 
@@ -104,7 +107,7 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying:
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen:
             var setup = WireGuardSetup.new()
             _ = setup.addPeer(name: "iPad")
             _ = setup.addPeer(name: "Windows PC")
@@ -132,6 +135,7 @@ struct DemoState {
         switch scenario {
         case .notifying: nil
         case .notificationsOff: DemoNoticeCenter(.denied)
+        case .notificationsScreen: DemoNoticeCenter(.allowed)
         default: DemoNoticeCenter(.notAsked)
         }
     }
@@ -142,7 +146,7 @@ struct DemoState {
         model.downSpeed = downSpeed
         model.upSpeed = upSpeed
         // The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states.
-        model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying].contains(scenario) ? ["10.7.0.2"] : []
+        model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen].contains(scenario) ? ["10.7.0.2"] : []
         model.expires = scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil
     }
 }
