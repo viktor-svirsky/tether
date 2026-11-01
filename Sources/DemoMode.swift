@@ -29,11 +29,19 @@ enum DemoScenario: String, CaseIterable {
     case qrCodeUnsaved
     /// Like `sharing`, with two days left before this build stops opening.
     case expiring
+    /// Like `sharing`, with notifications turned off for Tether in Settings.
+    case notificationsOff
+    /// Like `sharing`, and it asks for permission on screen at launch, through the real notification
+    /// center, if it never asked. Leaving the screen posts `notice`.
+    case notifying
 
     static let argument = "-TetherDemo"
 
     /// Local 2026-10-17 18:00. The expiry warning is relative to this.
     static let now = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 17, hour: 18))!
+
+    /// What `notifying` posts.
+    static let notice = Notice(kind: .connected, id: "demo", title: "iPad connected", body: "It's using this iPhone's data now.")
 
     /// The scenario named after `-TetherDemo` in the launch arguments, nil in a normal launch.
     static var current: DemoScenario? {
@@ -44,6 +52,16 @@ enum DemoScenario: String, CaseIterable {
         }
         return scenario
     }
+}
+
+/// The notification center of a demo launch: the permission its scenario says, and nothing is ever asked or posted.
+@MainActor
+final class DemoNoticeCenter: NoticeCenter {
+    private let state: NoticePermission
+    init(_ state: NoticePermission) { self.state = state }
+    func permission() async -> NoticePermission { state }
+    func ask() async -> Bool { false }
+    func add(_ notice: Notice) async {}
 }
 
 /// A Keychain that is locked until the first unlock after a restart: it can't be read or written.
@@ -86,7 +104,7 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved:
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying:
             var setup = WireGuardSetup.new()
             _ = setup.addPeer(name: "iPad")
             _ = setup.addPeer(name: "Windows PC")
@@ -102,13 +120,29 @@ struct DemoState {
         }
     }
 
+    /// The notification switches, all on at each launch, so one test's switch doesn't leak into the next. Never the app's own.
+    func noticeDefaults() -> UserDefaults {
+        UserDefaults.standard.removePersistentDomain(forName: "TetherDemo")
+        return UserDefaults(suiteName: "TetherDemo")!
+    }
+
+    /// Nil for `notifying`, which uses the real one.
+    @MainActor
+    func noticeCenter() -> NoticeCenter? {
+        switch scenario {
+        case .notifying: nil
+        case .notificationsOff: DemoNoticeCenter(.denied)
+        default: DemoNoticeCenter(.notAsked)
+        }
+    }
+
     @MainActor
     func apply(to model: Model) {
         model.running = running
         model.downSpeed = downSpeed
         model.upSpeed = upSpeed
         // The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states.
-        model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved].contains(scenario) ? ["10.7.0.2"] : []
+        model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying].contains(scenario) ? ["10.7.0.2"] : []
         model.expires = scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil
     }
 }

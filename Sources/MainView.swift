@@ -61,6 +61,14 @@ struct MainView: View {
                 }
 
                 AddDeviceSection(model: model, first: model.wireGuardPeers.isEmpty)
+
+                // One row at the bottom, so the main screen stays short.
+                Section {
+                    NavigationLink { NoticesView(model: model) } label: {
+                        Label("Notifications", systemImage: "bell")
+                    }
+                    .accessibilityIdentifier("notices.open")
+                }
             }
             // The status card says what this screen is, so the root drops the big title. It's still set,
             // because the screens pushed from here use it for their back button.

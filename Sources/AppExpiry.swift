@@ -25,9 +25,14 @@ enum AppExpiry {
     /// What to tell the user, nil while more than `warnBefore` is left. Counted in calendar days,
     /// so 9 am the day after tomorrow is "in 2 days" at any hour today.
     static func warning(expires: Date, now: Date, calendar: Calendar = .current) -> String? {
+        when(expires: expires, now: now, calendar: calendar).map { "Tether stops opening \($0). Refresh or reinstall it before then." }
+    }
+
+    /// "today", "tomorrow" or "in 2 days", for the warning and the notification. Nil while more
+    /// than `warnBefore` is left.
+    static func when(expires: Date, now: Date, calendar: Calendar = .current) -> String? {
         guard expires.timeIntervalSince(now) <= warnBefore else { return nil }
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: expires)).day ?? 0
-        let when = days <= 0 ? "today" : days == 1 ? "tomorrow" : "in \(days) days"
-        return "Tether stops opening \(when). Refresh or reinstall it before then."
+        return days <= 0 ? "today" : days == 1 ? "tomorrow" : "in \(days) days"
     }
 }

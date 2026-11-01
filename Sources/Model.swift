@@ -9,6 +9,8 @@
 //   ConfigPage.swift    the page on the hotspot that hands out the next device's config, Foundation only
 //   ConfigPageServer.swift  serves that page on the hotspot address
 //   AppExpiry.swift     when a sideloaded build stops opening, and the warning before it
+//   Notices.swift       what to tell in a notification and when, and asking for permission, Foundation only
+//   NoticesView.swift   the Notifications screen, and the system's notification center
 //   DemoMode.swift      fake app state for the UI tests, Debug builds only
 //   Shortcuts.swift     the Shortcuts actions; ShortcutReply.swift has what they say, Foundation only
 //   WireGuardSetup.swift  the hotspot address, WireGuard keys, devices and client configs, Foundation only
@@ -60,6 +62,14 @@ final class Model: ObservableObject {
     /// the 1 s sampler, so it appears on time even on a screen where nothing else changes.
     @Published private(set) var expiryWarning: String?
 
+    /// For the Notifications screen, which refreshes it, see `refreshNoticePermission`.
+    @Published private(set) var noticePermission: NoticePermission = .notAsked
+    /// Where the notification switches are saved. A demo launch has its own, emptied at launch.
+    let noticeDefaults: UserDefaults
+    private var notifier: Notifier
+    private let noticeCenter: NoticeCenter
+    private let poster: NoticePoster
+
     private let session: HotspotSession
     private static let logger = Logger(subsystem: "com.vsvirskyi.phoneshare", category: "tether")
 
@@ -72,9 +82,15 @@ final class Model: ObservableObject {
         #if DEBUG
         let demo = DemoState.fromLaunchArguments()
         let secrets: SecretStore = demo?.secrets() ?? KeychainSecrets()
+        noticeDefaults = demo?.noticeDefaults() ?? .standard
+        noticeCenter = demo?.noticeCenter() ?? SystemNoticeCenter(log: Self.append)
         #else
         let secrets: SecretStore = KeychainSecrets()
+        noticeDefaults = .standard
+        noticeCenter = SystemNoticeCenter(log: Self.append)
         #endif
+        notifier = Notifier(defaults: noticeDefaults)
+        poster = NoticePoster(center: noticeCenter)
         session = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(),
                                  keepAlive: KeepAlive(log: Self.append), page: ConfigPageServer(),
                                  sceneActive: UIApplication.shared.applicationState != .background,
@@ -84,6 +100,7 @@ final class Model: ObservableObject {
         if let demo {
             self.demo = demo
             demo.apply(to: self)
+            if demo.scenario == .notifying { postDemoNoticeInBackground() }
             return // no server, keep-alive audio, watcher, sampler or scene observers
         }
         #endif
@@ -92,6 +109,7 @@ final class Model: ObservableObject {
         watcher = Task { [weak self] in
             while !Task.isCancelled {
                 self?.session.watch()
+                self?.notify()
                 // The slack lets iOS wake the app for this together with other timers.
                 let interval = KeepAlivePolicy.watchInterval(sceneActive: self?.session.sceneActive ?? false)
                 try? await Task.sleep(for: interval.every, tolerance: interval.tolerance)
@@ -123,6 +141,51 @@ final class Model: ObservableObject {
 
     private var watcher: Task<Void, Never>?
     private var sampler: Task<Void, Never>?
+
+    /// After each watcher round: what to tell, see `Notifier`. In the background the round has just
+    /// read who is connected, so this costs no more reads of the server. On screen, the first thing it
+    /// would have told asks for permission.
+    private func notify() {
+        let notices = notifier.check(Notifier.Round(now: Date(), onScreen: session.sceneActive, hotspot: session.running,
+                                                    sharing: session.sharing, devices: session.wireGuardPeers,
+                                                    connected: session.connectedNow, expires: expires))
+        if notifier.wouldTell { askForNotices() }
+        guard !notices.isEmpty else { return }
+        for notice in notices { Self.append("notice: \(notice.title)") }
+        Task { await poster.post(notices) }
+    }
+
+    /// Shows the system's question if it was never answered, see `NoticePoster`.
+    func askForNotices() {
+        Task {
+            await poster.askIfNotAsked()
+            await refreshNoticePermission()
+        }
+    }
+
+    func refreshNoticePermission() async {
+        let permission = await noticeCenter.permission()
+        if permission != noticePermission { noticePermission = permission }
+    }
+
+    #if DEBUG
+    /// The `notifying` demo: it asks for permission on screen at launch, the way a device connecting
+    /// there does, and leaving the screen posts one notice through the real notification center. A
+    /// demo has no silent sound, so a background task keeps it running for that.
+    private func postDemoNoticeInBackground() {
+        askForNotices()
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let task = UIApplication.shared.beginBackgroundTask()
+                Task {
+                    await self.poster.post([DemoScenario.notice])
+                    UIApplication.shared.endBackgroundTask(task)
+                }
+            }
+        }
+    }
+    #endif
 
     /// See `HotspotSession.syncWithHotspot`.
     func syncWithHotspot() {

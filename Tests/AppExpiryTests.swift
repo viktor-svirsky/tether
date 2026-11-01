@@ -47,6 +47,11 @@ final class AppExpiryTests: XCTestCase {
                        "Tether stops opening today. Refresh or reinstall it before then.")
     }
 
+    func testWhenIsNilWhileMoreThanThreeDaysAreLeft() {
+        XCTAssertNil(AppExpiry.when(expires: at(26), now: at(19), calendar: utc))
+        XCTAssertEqual(AppExpiry.when(expires: at(26, 9), now: at(24, 20), calendar: utc), "in 2 days")
+    }
+
     /// Still running after the moment it expired: it won't open again once closed.
     func testPastTheDateItSaysToday() {
         XCTAssertEqual(AppExpiry.warning(expires: at(26, 8), now: at(26, 9), calendar: utc),

@@ -69,6 +69,9 @@ final class HotspotSession {
     /// The tunnel addresses of the WireGuard devices that are connected. Read with every sample
     /// while the app is on screen.
     var wireGuardConnected: Set<String> = [] { willSet { willChange() } }
+    /// Who was connected at the last read, for the notifications: the sampler's on screen, the
+    /// watcher's in the background. Nothing on screen shows the watcher's, so it isn't published.
+    var connectedNow: Set<String> { sceneActive ? wireGuardConnected : watchedConnected }
     /// The hotspot is on and WireGuard runs. `running` alone is only the hotspot.
     var sharing: Bool { running && wireGuardProblem == nil }
     /// Only the on-screen sampler publishes connections and speeds, so it runs only while the app is on screen.
@@ -88,6 +91,8 @@ final class HotspotSession {
     /// minutes. "Is Tether Sharing?" launches Tether in the background too, and only reports.
     private var waitingSince: Date? = .distantPast
     private var lastSample: (up: UInt64, down: UInt64, at: Date)?
+    /// Who was connected at the watcher's last read in the background, see `readInBackground`.
+    private var watchedConnected: Set<String> = []
     private var boundHost: String?
     /// Why the saved setup can't be used, see `checkSetup`.
     private var setupProblem: String?
@@ -121,7 +126,7 @@ final class HotspotSession {
     func watch() {
         syncWithHotspot()
         // On screen the sampler does this every second.
-        if !sceneActive { claimReadyInBackground() }
+        if !sceneActive { readInBackground() }
     }
 
     /// The hotspot interface exists only while Personal Hotspot is on. This starts WireGuard when
@@ -239,6 +244,7 @@ final class HotspotSession {
     func leftScreen() {
         sceneActive = false
         lastSample = nil // or the first speed back on screen averages the whole time away
+        watchedConnected = wireGuardConnected // not a list from an earlier time away, until the next round reads
     }
 
     /// For the Shortcuts actions. Off screen the sampler doesn't run, so the connected devices are read now.
@@ -410,12 +416,17 @@ final class HotspotSession {
         wireGuardPeersChanged()
     }
 
-    /// The watcher's check in the background, where the sampler doesn't run, so a device that
-    /// connects then is listed too and the next one gets a new code.
-    private func claimReadyInBackground() {
-        guard running else { return }
+    /// The watcher's read in the background, where the sampler doesn't run: who is connected, for
+    /// the notifications, and a device that connects then is listed too and the next one gets a new
+    /// code. One small JSON from Go each round, which reads the handshakes every 10 seconds anyway.
+    private func readInBackground() {
+        guard running else {
+            watchedConnected = []
+            return
+        }
         _ = server.snapshot() // refreshes connectedAddresses
-        claimReady(connected: server.connectedAddresses)
+        watchedConnected = server.connectedAddresses
+        claimReady(connected: watchedConnected)
     }
 
     /// The server's counters never go backwards. The guard is only a safety net.

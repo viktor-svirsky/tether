@@ -136,11 +136,12 @@ iOS has no automation for "Personal Hotspot turned on", so let one shortcut turn
 
 ## Good to know
 
-- **It stops opening after 7 days** when signed with a free Apple ID. Tether says on its main screen when it has three days or less left. Refresh it in SideStore or AltStore, or build and install it again (step 3 above), before then. A paid certificate lasts longer. Your devices and settings stay.
+- **It stops opening after 7 days** when signed with a free Apple ID. Tether says on its main screen when it has three days or less left, and in a notification once a day while it runs in the background. Refresh it in SideStore or AltStore, or build and install it again (step 3 above), before then. A paid certificate lasts longer. Your devices and settings stay.
 - **Keep it running.** Tether plays silent audio so iOS doesn't suspend it in the background. It mixes with other audio, so your music keeps playing, and it picks up again after a call, Siri, or an audio reset. With no device on the hotspot for 10 minutes it stops, to save battery, and iOS suspends Tether. Open it again, or run Start Tether, before you turn the hotspot back on, and after a restart.
+- **Notifications** say when a device connects or disconnects, by its name, when sharing stops with a problem while devices were connected, and when Tether stops opening soon. Notifications at the bottom of the main screen has a switch for each. They come only while Tether is in the background, since the screen shows the same. Tether asks for permission on screen the first time something happens that it would tell, like a device connecting as you add it. Or tap Allow notifications on the Notifications screen first. A device counts as gone a few minutes after it leaves, and one device posts at most once in 5 minutes, so a laptop that sleeps for a moment stays quiet.
 - **It only listens on the hotspot**, never on other Wi-Fi networks. WireGuard only lets in devices you added.
 - **Devices reach what the iPhone reaches**, private networks included. With a VPN on the iPhone, your devices use it too, so its networks are open to them and to everyone behind a travel router you added.
-- **The main screen** shows whether Tether is sharing, the QR code for the next device with Share file and Browser buttons under it, your devices with Connected or Not connected, and the current download and upload speed. To stop sharing, turn off Personal Hotspot.
+- **The main screen** shows whether Tether is sharing, the QR code for the next device with Share file and Browser buttons under it, your devices with Connected or Not connected, the current download and upload speed, and a Notifications row at the bottom. To stop sharing, turn off Personal Hotspot.
 - **The traffic leaves as your iPhone's.** If your iPhone runs a VPN, shared traffic goes through that VPN too.
 - **Your carrier can still notice.** Tether hides where the traffic comes from, not what it is. A Mac's software updates or an iPad's apps still look like a Mac or an iPad to a carrier that looks closely. Many carrier contracts don't allow tethering workarounds, and a carrier can slow down or close a line that breaks them. Check yours. Using Tether is your call and your risk.
 - **Not for the App Store.** Apple doesn't allow the silent-audio trick, so you sign and install Tether yourself.
@@ -157,6 +158,7 @@ Sources/HotspotSession.swift finds the hotspot, starts the server, samples traff
 Sources/Model.swift          runs the session on timers and feeds the screens
 Sources/MainView.swift       the main screen; DevicesView.swift has the QR code and the device screen
 Sources/ConfigPage.swift     the page on the hotspot that hands out the next device's config; ConfigPageServer.swift serves it
+Sources/Notices.swift        what to tell in a notification and when (tested on the Mac), and NoticesView.swift its screen
 Sources/KeepAlive.swift      silent audio to stay alive in the background
 Sources/Shortcuts.swift      the Start Tether and Is Tether Sharing? actions for Shortcuts and Siri
 Sources/DemoMode.swift       fake app states for the UI tests (Debug builds only)

@@ -231,6 +231,45 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(session.shortcutState(), ShortcutReply.State(running: true, connected: 2, problem: nil))
     }
 
+    /// The notifications need who is connected in the background too, where the sampler doesn't run.
+    func testABackgroundRoundReadsWhoIsConnected() {
+        makeSession(sceneActive: false)
+        address = hotspot
+        session.watch()
+        server.connected = ["10.7.0.2"]
+        XCTAssertEqual(session.connectedNow, [], "the last round's read, not a new one")
+        session.watch()
+        XCTAssertEqual(session.connectedNow, ["10.7.0.2"])
+        XCTAssertEqual(session.wireGuardConnected, [], "the screen's list waits for the sampler")
+        address = nil
+        session.watch()
+        XCTAssertEqual(session.connectedNow, [], "nobody once the hotspot goes")
+    }
+
+    func testOnScreenWhoIsConnectedIsTheSamplers() {
+        makeSession(sceneActive: true)
+        address = hotspot
+        session.watch()
+        server.connected = ["10.7.0.2"]
+        session.watch()
+        XCTAssertEqual(session.connectedNow, [])
+        session.sampleTraffic()
+        XCTAssertEqual(session.connectedNow, ["10.7.0.2"])
+    }
+
+    /// Until the first background round reads again, the screen's last list stands, not one from an earlier time away.
+    func testLeavingTheScreenKeepsTheSamplersList() {
+        makeSession(sceneActive: false)
+        address = hotspot
+        server.connected = ["10.7.0.3"]
+        session.watch()
+        session.cameOnScreen()
+        server.connected = ["10.7.0.2"]
+        session.sampleTraffic()
+        session.leftScreen()
+        XCTAssertEqual(session.connectedNow, ["10.7.0.2"])
+    }
+
     // MARK: The config page
 
     func testThePageListensWhereTheServerDoes() {

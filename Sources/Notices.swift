@@ -1,0 +1,228 @@
+import Foundation
+
+/// What Tether can tell in a notification. Each has its own switch, all on until turned off.
+enum NoticeKind: String, CaseIterable {
+    case connected, disconnected, sharingStopped, expiring
+
+    /// The switch's label on the Notifications screen.
+    var label: String {
+        switch self {
+        case .connected: "A device connects"
+        case .disconnected: "A device disconnects"
+        case .sharingStopped: "Sharing stops with a problem"
+        case .expiring: "Tether stops opening soon"
+        }
+    }
+
+    /// Where its switch is saved in UserDefaults.
+    var key: String { "notify.\(rawValue)" }
+
+    func isOn(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? true
+    }
+}
+
+/// One notification. A later one with the same `id` takes its place in Notification Center, so a
+/// device that connects and then leaves shows only the last of the two.
+struct Notice: Equatable {
+    let kind: NoticeKind
+    let id: String
+    let title: String
+    let body: String
+}
+
+/// Decides what to tell, round by round: a device that connects or leaves, sharing that stops while
+/// devices were connected, and the build about to stop opening, once a day. `Model` gives it every
+/// watcher round. On screen it tells nothing, since the screen shows the same, but it keeps up, so
+/// leaving the screen doesn't tell what was seen there, and it says when it would have told
+/// something, the moment to ask for permission. Foundation only, with the clock passed in, so
+/// `swift test` covers it.
+struct Notifier {
+    /// A device that leaves is told once it has been gone this long. It's a second wait on top of the
+    /// server's: connected already means a handshake in the last 3 minutes, so it's told 3 to 6
+    /// minutes after it went, and one that comes back meanwhile isn't told at all.
+    static let goneFor: TimeInterval = 3 * 60
+    /// One device is told about at most once in this long. A change in between waits, and is told
+    /// only if it still holds then, so a device that comes and goes posts once.
+    static let quietFor: TimeInterval = 5 * 60
+    /// WireGuard that stops and starts again within this long isn't told. A hotspot that goes waits
+    /// `goneFor` instead: its network also goes when the last device leaves it, which is one device
+    /// leaving.
+    static let stoppedFor: TimeInterval = 60
+    /// The last day the expiry was told or shown on screen, saved so a relaunch doesn't tell it again.
+    static let expiryKey = "notify.expiryDay"
+
+    /// What one round sees.
+    struct Round {
+        var now: Date
+        var onScreen: Bool
+        /// Personal Hotspot is on. With `sharing` false, WireGuard isn't running.
+        var hotspot: Bool
+        var sharing: Bool
+        var devices: [WireGuardSetup.Peer]
+        /// The tunnel addresses with a recent handshake.
+        var connected: Set<String>
+        var expires: Date? = nil
+    }
+
+    private struct Device {
+        /// Connected, as last told, or as the screen showed it.
+        var told: Bool
+        /// When it left the connected list. Nil while it's on it.
+        var goneSince: Date?
+        var lastPost: Date?
+    }
+
+    private let defaults: UserDefaults
+    private let calendar: Calendar
+    private var devices: [WireGuardSetup.Peer.ID: Device] = [:]
+    /// When sharing stopped. Nil while sharing.
+    private var stoppedSince: Date?
+    /// The last round was on screen and saw something it would have told in the background. iOS
+    /// shows the permission question only while Tether is on screen, so `Model` asks then.
+    private(set) var wouldTell = false
+
+    init(defaults: UserDefaults, calendar: Calendar = .current) {
+        self.defaults = defaults
+        self.calendar = calendar
+    }
+
+    /// What to post now. Empty on screen.
+    mutating func check(_ round: Round) -> [Notice] {
+        wouldTell = false
+        var notices: [Notice] = []
+        if round.sharing {
+            stoppedSince = nil
+            notices += checkDevices(round)
+        } else {
+            notices += checkStopped(round)
+        }
+        notices += checkExpiry(round)
+        return notices
+    }
+
+    /// Each device's state goes to the screen's at once, and to a notification only once it holds:
+    /// gone for `goneFor`, and `quietFor` after that device's last notification.
+    private mutating func checkDevices(_ round: Round) -> [Notice] {
+        devices = devices.filter { id, _ in round.devices.contains { $0.id == id } } // removed devices
+        var notices: [Notice] = []
+        for peer in round.devices {
+            let connected = round.connected.contains(peer.address)
+            // New to the owner, wherever it's first seen: a device added on screen is listed already connected.
+            var device = devices[peer.id] ?? Device(told: false)
+            if connected { device.goneSince = nil } else if device.goneSince == nil { device.goneSince = round.now }
+            defer { devices[peer.id] = device }
+            if round.onScreen {
+                // The moment to ask: a change the background would tell, now or, for a device gone, in 3 minutes.
+                if connected != device.told, (connected ? NoticeKind.connected : .disconnected).isOn(in: defaults) { wouldTell = true }
+                device.told = connected
+                continue
+            }
+            let held = device.told && device.goneSince.map { round.now.timeIntervalSince($0) < Self.goneFor } ?? false
+            let now = connected || held
+            let quiet = device.lastPost.map { round.now.timeIntervalSince($0) >= Self.quietFor } ?? true
+            guard now != device.told, quiet else { continue }
+            device.told = now
+            let kind: NoticeKind = now ? .connected : .disconnected
+            guard kind.isOn(in: defaults) else { continue }
+            device.lastPost = round.now
+            notices.append(Notice(kind: kind, id: "device.\(peer.id.uuidString)",
+                                  title: "\(peer.name) \(now ? "connected" : "disconnected")",
+                                  body: now ? "It's using this iPhone's data now." : "It left a few minutes ago."))
+        }
+        return notices
+    }
+
+    /// Once sharing has been off for `stoppedFor`, or `goneFor` when the hotspot went, the devices
+    /// still counted as connected are told. When the hotspot went, each is told as disconnected:
+    /// its network also goes when the last device leaves it, so Tether can't tell the hotspot turned
+    /// off from a device that left, and disconnected is true either way. When WireGuard stopped,
+    /// they're told in one notification. After that, or as soon as the screen shows it, nobody
+    /// counts as connected, so each device that comes back is told.
+    private mutating func checkStopped(_ round: Round) -> [Notice] {
+        let since = stoppedSince ?? round.now
+        stoppedSince = since
+        let wait = round.hotspot ? Self.stoppedFor : Self.goneFor
+        guard round.onScreen || round.now.timeIntervalSince(since) >= wait else { return [] }
+        let gone = round.devices.filter { devices[$0.id]?.told == true }
+        for id in devices.keys {
+            devices[id]?.told = false
+            devices[id]?.goneSince = nil
+        }
+        let kind: NoticeKind = round.hotspot ? .sharingStopped : .disconnected
+        let on = kind.isOn(in: defaults)
+        if round.onScreen, !gone.isEmpty, on { wouldTell = true }
+        guard !round.onScreen, !gone.isEmpty, on else { return [] }
+        guard round.hotspot else {
+            return gone.map { peer in
+                devices[peer.id]?.lastPost = round.now
+                return Notice(kind: .disconnected, id: "device.\(peer.id.uuidString)",
+                              title: "\(peer.name) disconnected", body: "It left a few minutes ago.")
+            }
+        }
+        let names = gone.map(\.name)
+        let who = names.count == 1 ? "\(names[0]) was" : names.count == 2 ? "\(names[0]) and \(names[1]) were" : "\(names.count) devices were"
+        return [Notice(kind: .sharingStopped, id: "sharing", title: "Sharing stopped",
+                       body: "WireGuard stopped while \(who) connected. Open Tether to see why.")]
+    }
+
+    /// Once a day within `AppExpiry.warnBefore`. A day the main screen showed the warning counts as told.
+    private func checkExpiry(_ round: Round) -> [Notice] {
+        guard let expires = round.expires, let when = AppExpiry.when(expires: expires, now: round.now, calendar: calendar) else { return [] }
+        let today = calendar.startOfDay(for: round.now)
+        guard defaults.object(forKey: Self.expiryKey) as? Date != today else { return [] }
+        if round.onScreen {
+            defaults.set(today, forKey: Self.expiryKey)
+            return []
+        }
+        guard NoticeKind.expiring.isOn(in: defaults) else { return [] }
+        defaults.set(today, forKey: Self.expiryKey)
+        return [Notice(kind: .expiring, id: "expiry", title: "Tether stops opening \(when)",
+                       body: "Refresh it in SideStore or AltStore before then.")]
+    }
+}
+
+/// Notification permission, as `NoticePoster` needs it.
+enum NoticePermission {
+    case notAsked, allowed, denied
+}
+
+/// The system's notification center as `NoticePoster` uses it. The app passes the real one
+/// (NoticesView.swift), the tests a fake.
+@MainActor
+protocol NoticeCenter: AnyObject {
+    func permission() async -> NoticePermission
+    /// Shows the system's question. True when allowed.
+    func ask() async -> Bool
+    func add(_ notice: Notice) async
+}
+
+/// Posts what `Notifier` decided, and asks for permission the first time something happens that it
+/// would tell, not at launch. Notices post in the background, but iOS shows the question only while
+/// Tether is on screen, so it's asked there, when `Notifier.wouldTell` says so: a device connecting
+/// while it's added, say. Until then, and after a no, nothing posts. iOS never asks twice.
+@MainActor
+final class NoticePoster {
+    private let center: NoticeCenter
+    /// The question while it's up, so a round that comes meanwhile doesn't ask again.
+    private var asking: Task<Void, Never>?
+
+    init(center: NoticeCenter) {
+        self.center = center
+    }
+
+    func post(_ notices: [Notice]) async {
+        guard !notices.isEmpty, await center.permission() == .allowed else { return }
+        for notice in notices { await center.add(notice) }
+    }
+
+    func askIfNotAsked() async {
+        if let asking { return await asking.value }
+        guard await center.permission() == .notAsked else { return }
+        if let asking { return await asking.value } // asked while this one checked
+        let question = Task { _ = await center.ask() }
+        asking = question
+        await question.value
+        asking = nil
+    }
+}
