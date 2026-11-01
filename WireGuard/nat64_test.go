@@ -107,17 +107,24 @@ func TestUDPReachesAnIPv4HostThroughTheCarriersNAT64(t *testing.T) {
 // Only a missing route goes to the NAT64. A host that refuses is refused, as it would be directly.
 func TestARefusedDialIsntTriedThroughTheNAT64(t *testing.T) {
 	s, c := setup(t)
-	var dials atomic.Int32
+	var mu sync.Mutex
+	var dialed []string
 	s.nat64.lookup = func(context.Context) (netip.Prefix, error) { return carrierNAT64, nil }
 	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
-		dials.Add(1)
+		mu.Lock()
+		dialed = append(dialed, address)
+		mu.Unlock()
 		return nil, &net.OpError{Op: "dial", Net: network, Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}
 	}
 	if _, err := fetch(t, c, net.JoinHostPort(remote, "80")); err == nil {
 		t.Fatal("the fetch worked")
 	}
-	if n := dials.Load(); n != 1 {
-		t.Fatalf("%d dials, want 1", n)
+	// A slow run can see the device send its SYN again before the reset reaches it, which is a
+	// second dial to remote. None may go to the NAT64.
+	mu.Lock()
+	defer mu.Unlock()
+	if len(dialed) == 0 || slices.ContainsFunc(dialed, func(a string) bool { return a != net.JoinHostPort(remote, "80") }) {
+		t.Fatalf("dialed %v, want only remote", dialed)
 	}
 }
 
