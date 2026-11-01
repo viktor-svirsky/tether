@@ -178,6 +178,41 @@ final class NotifierTests: XCTestCase {
         XCTAssertEqual(NoticeKind.allCases.map(\.key), ["notify.connected", "notify.disconnected", "notify.sharingStopped", "notify.expiring"])
     }
 
+    /// A device that's connected when Tether starts isn't news, on screen or off. The question
+    /// waits for something that happens, not for launch.
+    func testADeviceAlreadyConnectedAtLaunchIsntAnEvent() {
+        XCTAssertEqual(round(at: 0, ["10.7.0.2"], onScreen: true), [])
+        XCTAssertFalse(notifier.wouldTell)
+        XCTAssertEqual(round(at: 0.25, ["10.7.0.2"]), [])
+    }
+
+    func testADeviceAlreadyConnectedAtABackgroundLaunchIsntTold() {
+        XCTAssertEqual(round(at: 0, ["10.7.0.2"]), [])
+        round(at: 1, [])
+        XCTAssertEqual(round(at: 4, []), ["iPad disconnected: It left a few minutes ago."], "but its leaving is")
+    }
+
+    func testADisconnectOnScreenWouldHaveBeenTold() {
+        round(at: 0, ["10.7.0.2"], onScreen: true)
+        round(at: 0.25, [], onScreen: true)
+        XCTAssertTrue(notifier.wouldTell)
+    }
+
+    func testADisconnectOnScreenWithItsSwitchOffWouldTellNothing() {
+        defaults.set(false, forKey: NoticeKind.disconnected.key)
+        round(at: 0, ["10.7.0.2"], onScreen: true)
+        round(at: 0.25, [], onScreen: true)
+        XCTAssertFalse(notifier.wouldTell)
+    }
+
+    /// A clock set back leaves times in the future. They count as long ago, so nothing waits on them.
+    func testAClockSetBackDoesntHoldANotice() {
+        round(at: 60, [])
+        round(at: 60.25, ["10.7.0.2"]) // told at 60.25
+        XCTAssertEqual(round(at: 0, []), [])
+        XCTAssertEqual(round(at: 3.5, []), ["iPad disconnected: It left a few minutes ago."])
+    }
+
     // MARK: Sharing stops
 
     /// The hotspot's network also goes when the last device leaves it, so Tether can't tell the hotspot
@@ -212,6 +247,23 @@ final class NotifierTests: XCTestCase {
         round(at: 1, [], sharing: false)
         XCTAssertEqual(round(at: 2, [], sharing: false),
                        ["Sharing stopped: WireGuard stopped while iPad was connected. Open Tether to see why."])
+    }
+
+    func testTwoDevicesAreNamed() {
+        round(at: 0, ["10.7.0.2", "10.7.0.3"])
+        round(at: 1, [], sharing: false)
+        XCTAssertEqual(round(at: 2, [], sharing: false),
+                       ["Sharing stopped: WireGuard stopped while iPad and Windows PC were connected. Open Tether to see why."])
+    }
+
+    /// One device posts at most once in 5 minutes, the hotspot going included.
+    func testWhenTheHotspotGoesADeviceToldRecentlyWaitsForItsQuietTime() {
+        round(at: 0, [])
+        round(at: 0.25, ["10.7.0.2"]) // told connected
+        round(at: 0.5, [], hotspot: false, sharing: false)
+        XCTAssertEqual(round(at: 3.5, [], hotspot: false, sharing: false), [])
+        XCTAssertEqual(round(at: 5.25, [], hotspot: false, sharing: false), ["iPad disconnected: It left a few minutes ago."])
+        XCTAssertEqual(round(at: 6, [], hotspot: false, sharing: false), [])
     }
 
     func testThreeDevicesAreCounted() {
@@ -287,12 +339,12 @@ final class NotifierTests: XCTestCase {
         let expires = day(26, 9)
         XCTAssertEqual(expiryRound(at: day(22), expires: expires), [], "more than 3 days left")
         XCTAssertEqual(expiryRound(at: day(23, 10), expires: expires),
-                       ["Tether stops opening in 3 days: Refresh it in SideStore or AltStore before then."])
+                       ["Tether stops opening in 3 days: Refresh or reinstall it before then."])
         XCTAssertEqual(expiryRound(at: day(23, 22), expires: expires), [], "once a day")
         XCTAssertEqual(expiryRound(at: day(25, 1), expires: expires),
-                       ["Tether stops opening tomorrow: Refresh it in SideStore or AltStore before then."])
+                       ["Tether stops opening tomorrow: Refresh or reinstall it before then."])
         XCTAssertEqual(expiryRound(at: day(26, 7), expires: expires),
-                       ["Tether stops opening today: Refresh it in SideStore or AltStore before then."])
+                       ["Tether stops opening today: Refresh or reinstall it before then."])
     }
 
     func testTheDayToldIsSavedForTheNextLaunch() {

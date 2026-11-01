@@ -76,6 +76,8 @@ struct Notifier {
     private let defaults: UserDefaults
     private let calendar: Calendar
     private var devices: [WireGuardSetup.Peer.ID: Device] = [:]
+    /// The first round only learns how things are: a device connected at launch isn't news.
+    private var seen = false
     /// When sharing stopped. Nil while sharing.
     private var stoppedSince: Date?
     /// The last round was on screen and saw something it would have told in the background. iOS
@@ -98,7 +100,20 @@ struct Notifier {
             notices += checkStopped(round)
         }
         notices += checkExpiry(round)
+        seen = true
         return notices
+    }
+
+    /// How long since `since`. A time in the future, left by a clock set back, counts as long ago, so
+    /// no wait gets stuck on it.
+    private static func elapsed(since: Date, now: Date) -> TimeInterval {
+        let d = now.timeIntervalSince(since)
+        return d < 0 ? .infinity : d
+    }
+
+    /// The device's last notification was `quietFor` ago or more.
+    private static func quiet(_ device: Device, now: Date) -> Bool {
+        device.lastPost.map { elapsed(since: $0, now: now) >= quietFor } ?? true
     }
 
     /// Each device's state goes to the screen's at once, and to a notification only once it holds:
@@ -108,8 +123,9 @@ struct Notifier {
         var notices: [Notice] = []
         for peer in round.devices {
             let connected = round.connected.contains(peer.address)
-            // New to the owner, wherever it's first seen: a device added on screen is listed already connected.
-            var device = devices[peer.id] ?? Device(told: false)
+            // New to the owner, wherever it's first seen: a device added on screen is listed already
+            // connected. At launch it's simply how things are.
+            var device = devices[peer.id] ?? Device(told: seen ? false : connected)
             if connected { device.goneSince = nil } else if device.goneSince == nil { device.goneSince = round.now }
             defer { devices[peer.id] = device }
             if round.onScreen {
@@ -118,10 +134,9 @@ struct Notifier {
                 device.told = connected
                 continue
             }
-            let held = device.told && device.goneSince.map { round.now.timeIntervalSince($0) < Self.goneFor } ?? false
+            let held = device.told && device.goneSince.map { Self.elapsed(since: $0, now: round.now) < Self.goneFor } ?? false
             let now = connected || held
-            let quiet = device.lastPost.map { round.now.timeIntervalSince($0) >= Self.quietFor } ?? true
-            guard now != device.told, quiet else { continue }
+            guard now != device.told, Self.quiet(device, now: round.now) else { continue }
             device.told = now
             let kind: NoticeKind = now ? .connected : .disconnected
             guard kind.isOn(in: defaults) else { continue }
@@ -143,23 +158,33 @@ struct Notifier {
         let since = stoppedSince ?? round.now
         stoppedSince = since
         let wait = round.hotspot ? Self.stoppedFor : Self.goneFor
-        guard round.onScreen || round.now.timeIntervalSince(since) >= wait else { return [] }
+        guard round.onScreen || Self.elapsed(since: since, now: round.now) >= wait else { return [] }
         let gone = round.devices.filter { devices[$0.id]?.told == true }
+        let kind: NoticeKind = round.hotspot ? .sharingStopped : .disconnected
+        let on = kind.isOn(in: defaults)
+        if !round.onScreen, !round.hotspot {
+            // Each device in its own notice, once its own quiet time is over. Until then it stays
+            // counted as connected, and a later round tells it.
+            var notices: [Notice] = []
+            for peer in gone {
+                guard var device = devices[peer.id], Self.quiet(device, now: round.now) else { continue }
+                device.told = false
+                device.goneSince = nil
+                if on {
+                    device.lastPost = round.now
+                    notices.append(Notice(kind: .disconnected, id: "device.\(peer.id.uuidString)",
+                                          title: "\(peer.name) disconnected", body: "It left a few minutes ago."))
+                }
+                devices[peer.id] = device
+            }
+            return notices
+        }
         for id in devices.keys {
             devices[id]?.told = false
             devices[id]?.goneSince = nil
         }
-        let kind: NoticeKind = round.hotspot ? .sharingStopped : .disconnected
-        let on = kind.isOn(in: defaults)
         if round.onScreen, !gone.isEmpty, on { wouldTell = true }
         guard !round.onScreen, !gone.isEmpty, on else { return [] }
-        guard round.hotspot else {
-            return gone.map { peer in
-                devices[peer.id]?.lastPost = round.now
-                return Notice(kind: .disconnected, id: "device.\(peer.id.uuidString)",
-                              title: "\(peer.name) disconnected", body: "It left a few minutes ago.")
-            }
-        }
         let names = gone.map(\.name)
         let who = names.count == 1 ? "\(names[0]) was" : names.count == 2 ? "\(names[0]) and \(names[1]) were" : "\(names.count) devices were"
         return [Notice(kind: .sharingStopped, id: "sharing", title: "Sharing stopped",
@@ -178,7 +203,7 @@ struct Notifier {
         guard NoticeKind.expiring.isOn(in: defaults) else { return [] }
         defaults.set(today, forKey: Self.expiryKey)
         return [Notice(kind: .expiring, id: "expiry", title: "Tether stops opening \(when)",
-                       body: "Refresh it in SideStore or AltStore before then.")]
+                       body: "Refresh or reinstall it before then.")]
     }
 }
 

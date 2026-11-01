@@ -238,6 +238,8 @@ final class HotspotSession {
     /// Opening Tether starts the wait again, so there's time to turn on Personal Hotspot in Settings.
     func cameOnScreen() {
         sceneActive = true
+        // The background's last read, not the list from before the app left, until the sampler reads.
+        if wireGuardConnected != watchedConnected { wireGuardConnected = watchedConnected }
         wake()
     }
 

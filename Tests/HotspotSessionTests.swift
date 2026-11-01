@@ -257,6 +257,18 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(session.connectedNow, ["10.7.0.2"])
     }
 
+    /// Back on screen, the list starts from the last background read, not from before the app left,
+    /// until the sampler's next read.
+    func testComingBackOnScreenStartsFromTheLastBackgroundRead() {
+        makeSession(sceneActive: false)
+        address = hotspot
+        server.connected = ["10.7.0.2"]
+        session.watch()
+        session.cameOnScreen()
+        XCTAssertEqual(session.wireGuardConnected, ["10.7.0.2"])
+        XCTAssertEqual(session.connectedNow, ["10.7.0.2"])
+    }
+
     /// Until the first background round reads again, the screen's last list stands, not one from an earlier time away.
     func testLeavingTheScreenKeepsTheSamplersList() {
         makeSession(sceneActive: false)
