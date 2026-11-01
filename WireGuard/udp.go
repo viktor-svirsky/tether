@@ -22,7 +22,8 @@ import (
 // Packets from devices arrive through handleUDP, outside gVisor's UDP endpoints. Replies don't go
 // through gVisor at all: replyPackets builds the IPv4 packet and it goes straight to wireguard-go.
 // IPv4 only: a device's tunnel address, from WireGuardSetup.swift, is IPv4, so it never sends
-// IPv6. The client config still routes ::/0 into the tunnel, so nothing IPv6 leaks around it.
+// IPv6. The client config still routes ::/0 into the tunnel, so nothing IPv6 leaks around it. The
+// iPhone's side can be IPv6 all the same, when it reaches an IPv4 address through NAT64.
 
 // cone is one device port's iPhone socket.
 type cone struct {
@@ -108,7 +109,8 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 	if !owner.IsValid() || full {
 		return nil
 	}
-	conn, err := net.ListenUDP("udp4", nil)
+	// Both IPv4 and IPv6, on one port, for an IPv4 address with no route that goes through NAT64.
+	conn, err := net.ListenUDP("udp", nil)
 	if err != nil {
 		return nil
 	}
@@ -162,7 +164,13 @@ func (s *Server) send(c *cone) {
 			return
 		}
 		s.count(true, len(o.payload))
-		if _, err := c.conn.WriteToUDPAddrPort(o.payload, s.toNet(o.dst)); err == nil {
+		err := s.sendTo(c.conn, o.payload, s.toNet(o.dst))
+		if noRoute(err) {
+			if via, ok := s.viaNAT64(s.ctx, o.dst); ok {
+				err = s.sendTo(c.conn, o.payload, s.toNet(via))
+			}
+		}
+		if err == nil {
 			c.last.Store(time.Now().UnixNano())
 		}
 	}
@@ -181,7 +189,7 @@ func (s *Server) receive(c *cone) {
 			}
 			return
 		}
-		src := s.fromNet(netip.AddrPortFrom(from.Addr().Unmap(), from.Port()))
+		src := s.fromNAT64(s.fromNet(netip.AddrPortFrom(from.Addr().Unmap(), from.Port())))
 		if !src.Addr().Is4() {
 			continue
 		}

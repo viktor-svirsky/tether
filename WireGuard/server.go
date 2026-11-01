@@ -150,10 +150,14 @@ type Server struct {
 	stack *stack.Stack
 	tun   *stackTun
 	// dial makes the iPhone-side TCP connection. toNet and fromNet translate UDP addresses on
-	// the way out and back. Tests swap all three to reach listeners on loopback.
+	// the way out and back. Tests swap all three to reach listeners on loopback, and sendTo, which
+	// sends a cone's packet, to fail as an iPhone without IPv4 does.
 	dial    func(ctx context.Context, network, address string) (net.Conn, error)
 	toNet   func(netip.AddrPort) netip.AddrPort
 	fromNet func(netip.AddrPort) netip.AddrPort
+	sendTo  func(c *net.UDPConn, payload []byte, to netip.AddrPort) error
+	// nat64 reaches IPv4 addresses from an iPhone that has no IPv4 route, see nat64.go.
+	nat64 nat64
 	// ctx ends with Close, and the dials still being made end with it.
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -246,9 +250,13 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		}}).DialContext,
 		toNet:   func(a netip.AddrPort) netip.AddrPort { return a },
 		fromNet: func(a netip.AddrPort) netip.AddrPort { return a },
-		stop:    make(chan struct{}),
-		found:   make(chan struct{}, 1),
-		shake:   make(chan struct{}, 1),
+		sendTo: func(c *net.UDPConn, payload []byte, to netip.AddrPort) error {
+			_, err := c.WriteToUDPAddrPort(payload, to)
+			return err
+		},
+		stop:  make(chan struct{}),
+		found: make(chan struct{}, 1),
+		shake: make(chan struct{}, 1),
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.stack = stack.New(stack.Options{
@@ -795,6 +803,11 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 		return
 	}
 	out, err := s.dial(s.ctx, "tcp", dst.String())
+	if noRoute(err) {
+		if via, ok := s.viaNAT64(s.ctx, dst); ok {
+			out, err = s.dial(s.ctx, "tcp", via.String())
+		}
+	}
 	if err != nil {
 		refuse()
 		return
