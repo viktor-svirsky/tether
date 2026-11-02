@@ -62,6 +62,7 @@ targets:
       path: Sources/Info.plist
       properties:
         UIBackgroundModes: [audio]
+        NSBonjourServices: [_tether._tcp] # see LocalNetworkCheck
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
   TetherUITests:

@@ -37,6 +37,8 @@ enum DemoScenario: String, CaseIterable {
     /// Like `sharing`, opened on the Settings sheet with notifications allowed, for the
     /// screenshot.
     case notificationsScreen
+    /// Like `sharing`, but iOS blocks Tether's replies: Local Network is off for Tether.
+    case localNetworkDenied
     /// Like `noDevices`, opened on the Add a device sheet, for the screenshot.
     case addDeviceScreen
     /// Like `addDeviceScreen`, with Computer picked.
@@ -118,7 +120,7 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone:
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .localNetworkDenied:
             var setup = WireGuardSetup.new()
             _ = setup.addPeer(name: "iPad")
             _ = setup.addPeer(name: "Windows PC")
@@ -159,6 +161,7 @@ struct DemoState {
         // The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states.
         model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone].contains(scenario) ? ["10.7.0.2"] : []
         model.expires = scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil
+        model.localNetworkDenied = scenario == .localNetworkDenied
     }
 }
 #endif

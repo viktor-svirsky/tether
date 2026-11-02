@@ -10,6 +10,7 @@
 //   ConfigPage.swift    the page on the hotspot that hands out the next device's config, Foundation only
 //   ConfigPageServer.swift  serves that page on the hotspot address
 //   AppExpiry.swift     when a sideloaded build stops opening, and the warning before it
+//   LocalNetwork.swift  whether iOS lets Tether answer the devices (Local Network access)
 //   Notices.swift       what to tell in a notification and when, and asking for permission, Foundation only
 //   SettingsView.swift  the Settings sheet behind the gear, and the system's notification center
 //   DemoMode.swift      fake app state for the UI tests, Debug builds only
@@ -56,6 +57,12 @@ final class Model: ObservableObject {
     var wireGuardProblem: String? { session.wireGuardProblem }
     var sharing: Bool { session.sharing }
     var wireGuardNeedsReset: Bool { session.wireGuardNeedsReset }
+
+    /// iOS blocks Tether's replies to the devices, see `LocalNetworkCheck`. Checked while on screen.
+    @Published var localNetworkDenied = false
+    private let localNetwork = LocalNetworkCheck()
+    /// The hotspot was up at the watcher's last round, so the check runs again when it comes up.
+    private var hotspotWasUp = false
 
     /// When this build stops opening, from its provisioning profile. Nil without one.
     var expires: Date? = AppExpiry.installed { didSet { refreshExpiryWarning() } }
@@ -130,9 +137,15 @@ final class Model: ObservableObject {
         #endif
         refreshExpiryWarning()
         observeScene()
+        localNetwork.onChange = { [weak self] denied in
+            self?.localNetworkDenied = denied
+            Self.append("Local Network access: \(denied ? "denied" : "allowed")")
+        }
+        if session.sceneActive { localNetwork.start() }
         watcher = Task { [weak self] in
             while !Task.isCancelled {
                 self?.session.watch()
+                self?.checkLocalNetworkWhenTheHotspotComesUp()
                 self?.notify()
                 // The slack lets iOS wake the app for this together with other timers.
                 let interval = KeepAlivePolicy.watchInterval(sceneActive: self?.session.sceneActive ?? false)
@@ -251,6 +264,13 @@ final class Model: ObservableObject {
         session.wireGuardConfig(for: ready)
     }
 
+    /// The hotspot is a local network iOS may ask about, so a check on screen runs again when it appears.
+    private func checkLocalNetworkWhenTheHotspotComesUp() {
+        let up = session.running
+        defer { hotspotWasUp = up }
+        if up, !hotspotWasUp, session.sceneActive { localNetwork.start() }
+    }
+
     /// The expiry warning and the session's sample, see `HotspotSession.sampleTraffic`.
     func sampleTraffic() {
         refreshExpiryWarning()
@@ -266,10 +286,12 @@ final class Model: ObservableObject {
         }
         observe(UIApplication.didBecomeActiveNotification) { model in
             model.session.cameOnScreen()
+            model.localNetwork.start() // afresh, for a change made in Settings
             model.startSampler() // samples at once, then every second again
         }
         observe(UIApplication.willResignActiveNotification) { model in
             model.session.leftScreen()
+            model.localNetwork.stop()
             model.sampler?.cancel()
         }
         observe(UIApplication.didReceiveMemoryWarningNotification) { $0.session.freeMemory() }

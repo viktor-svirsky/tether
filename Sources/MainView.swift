@@ -62,6 +62,7 @@ struct MainView: View {
                 }
 
                 // Above Add a device, so a reason it doesn't work and the way out are both here.
+                LocalNetworkSection(model: model)
                 WireGuardProblemSection(model: model)
 
                 if !model.wireGuardPeers.isEmpty {
@@ -94,6 +95,28 @@ struct MainView: View {
             .onAppear {
                 if model.opensSettings { showSettings = true }
                 if model.opensAddDevice { addingDevice = true }
+            }
+        }
+    }
+}
+
+/// Local Network is off for Tether, so its replies never reach the devices and none can connect.
+/// Tether's own page in Settings has the switch, once iOS has asked.
+struct LocalNetworkSection: View {
+    @ObservedObject var model: Model
+
+    var body: some View {
+        if model.localNetworkDenied {
+            Section {
+                Label("Local Network is off for Tether, so no device can connect. Turn it on in Settings.",
+                      systemImage: "exclamationmark.triangle")
+                    .accessibilityIdentifier("localNetwork.problem")
+                Button("Open Settings") {
+                    UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
+                }
+                .accessibilityIdentifier("localNetwork.open")
+            } header: {
+                Text("Devices can't connect")
             }
         }
     }
