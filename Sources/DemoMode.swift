@@ -39,6 +39,8 @@ enum DemoScenario: String, CaseIterable {
     case notificationsScreen
     /// Like `noDevices`, opened on the Add a device sheet, for the screenshot.
     case addDeviceScreen
+    /// Like `addDeviceScreen`, with Computer picked.
+    case addDeviceComputer
     /// Like `sharing`, opened on the Add a device sheet as if the Windows PC had just downloaded
     /// the code: its tunnel isn't on yet.
     case addDeviceWaiting
@@ -107,7 +109,7 @@ struct DemoState {
             running = false
             return
         }
-        if [.noDevices, .wireGuardUnsaved, .addDeviceScreen].contains(scenario) { return }
+        if [.noDevices, .wireGuardUnsaved, .addDeviceScreen, .addDeviceComputer].contains(scenario) { return }
         downSpeed = 3_200_000
         upSpeed = 400_000
     }

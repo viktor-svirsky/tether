@@ -89,6 +89,7 @@ final class AccessibilityTests: TetherUITestCase {
             try audit(only: "add.")
             openAddDevice()
             try audit()
+            app.segmentedControls.buttons["Computer"].tap()
             XCTAssertTrue(reveal(element("add.share")).isHittable)
             try audit(only: "add.")
             let shot = XCTAttachment(screenshot: app.screenshot())
@@ -101,7 +102,7 @@ final class AccessibilityTests: TetherUITestCase {
     func testAddDeviceSheetPassesTheStructuralAudit() throws {
         launch(.noDevices)
         openAddDevice()
-        reveal(element("add.share"))
+        reveal(element("add.step3"))
         try audit(types: structuralAudit)
     }
 
@@ -153,8 +154,10 @@ final class AccessibilityTests: TetherUITestCase {
         reveal(element("add.open"), maxSwipes: 30).tap()
         XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
         XCTAssertTrue(reveal(element("add.qr"), maxSwipes: 30).isHittable)
-        XCTAssertTrue(reveal(element("add.share"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("add.step3"), maxSwipes: 30).exists)
+        reveal(app.segmentedControls.buttons["Computer"], maxSwipes: 30).tap()
+        XCTAssertTrue(reveal(element("add.address"), maxSwipes: 30).isHittable)
+        XCTAssertTrue(reveal(element("add.share"), maxSwipes: 30).isHittable)
     }
 
     func testLargeTextKeepsTheProblemAndResetReachable() {

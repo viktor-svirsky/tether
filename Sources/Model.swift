@@ -81,7 +81,9 @@ final class Model: ObservableObject {
     /// The `notificationsScreen` demo opens on the Settings sheet.
     var opensSettings: Bool { demo?.scenario == .notificationsScreen }
     /// Some demos open on the Add a device sheet.
-    var opensAddDevice: Bool { [.addDeviceScreen, .addDeviceWaiting, .addDeviceDone].contains(demo?.scenario) }
+    var opensAddDevice: Bool { [.addDeviceScreen, .addDeviceComputer, .addDeviceWaiting, .addDeviceDone].contains(demo?.scenario) }
+    /// The `addDeviceComputer` demo opens the sheet with Computer picked.
+    var addDeviceStartsOnComputer: Bool { demo?.scenario == .addDeviceComputer }
     /// In the `addDeviceWaiting` and `addDeviceDone` demos, the sheet follows a listed device, as if
     /// it had just claimed the code: the Windows PC isn't connected, the iPad is.
     var addDeviceFollows: WireGuardSetup.Peer.ID? {
@@ -96,6 +98,7 @@ final class Model: ObservableObject {
     var opensSettings: Bool { false }
     var opensAddDevice: Bool { false }
     var addDeviceFollows: WireGuardSetup.Peer.ID? { nil }
+    var addDeviceStartsOnComputer: Bool { false }
     #endif
 
     init() {

@@ -11,7 +11,18 @@ struct AddDeviceSection: View {
     var body: some View {
         if model.wireGuardReady != nil {
             Section {
-                addButton
+                VStack(spacing: 10) {
+                    addButton
+                    if first {
+                        Text("An iPad, a laptop or a travel router. It takes a minute.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 20)
+                            .accessibilityIdentifier("add.hint")
+                    }
+                }
             }
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets())
@@ -28,11 +39,16 @@ struct AddDeviceSection: View {
     private var title: String { first ? "Add a device" : "Add another device" }
 
     @ViewBuilder private var addButton: some View {
+        // The icon and the title side by side: a Label in a list row can drop its icon.
         let button = Button(action: add) {
-            Label(title, systemImage: "plus")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
+            HStack(spacing: 8) {
+                Image(systemName: "plus").fontWeight(.bold).accessibilityHidden(true)
+                Text(title)
+            }
+            .font(.headline)
+            .frame(maxWidth: .infinity)
         }
+        .buttonBorderShape(.capsule)
         .controlSize(.large)
         .accessibilityIdentifier("add.open")
         if first { button.buttonStyle(.borderedProminent) } else { button.buttonStyle(.bordered) }
