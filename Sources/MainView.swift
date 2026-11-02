@@ -62,7 +62,6 @@ struct MainView: View {
                 }
 
                 // Above Add a device, so a reason it doesn't work and the way out are both here.
-                LocalNetworkSection(model: model)
                 WireGuardProblemSection(model: model)
 
                 if !model.wireGuardPeers.isEmpty {
@@ -95,28 +94,6 @@ struct MainView: View {
             .onAppear {
                 if model.opensSettings { showSettings = true }
                 if model.opensAddDevice { addingDevice = true }
-            }
-        }
-    }
-}
-
-/// Local Network is off for Tether, so its replies never reach the devices and none can connect.
-/// Tether's own page in Settings has the switch, once iOS has asked.
-struct LocalNetworkSection: View {
-    @ObservedObject var model: Model
-
-    var body: some View {
-        if model.localNetworkDenied {
-            Section {
-                Label("Local Network is off for Tether, so no device can connect. Turn it on in Settings.",
-                      systemImage: "exclamationmark.triangle")
-                    .accessibilityIdentifier("localNetwork.problem")
-                Button("Open Settings") {
-                    UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
-                }
-                .accessibilityIdentifier("localNetwork.open")
-            } header: {
-                Text("Devices can't connect")
             }
         }
     }
@@ -177,8 +154,26 @@ struct StatusCard: View {
     @Environment(\.dynamicTypeSize) private var textSize
     @Environment(\.colorScheme) private var colorScheme
 
-    private var sharing: Bool { model.sharing }
-    private var look: StatusOrb.Look { sharing ? .sharing : model.running ? .problem : .waiting }
+    private var sharing: Bool { model.sharing && !blocked }
+    /// Local Network is off for Tether, so its replies never reach the devices and none can connect.
+    /// That comes first, hotspot or not: nothing works until it's on.
+    private var blocked: Bool { model.localNetworkDenied }
+    private var look: StatusOrb.Look { sharing ? .sharing : blocked || model.running ? .problem : .waiting }
+    private var title: String {
+        blocked ? "Devices can't connect" : sharing ? "Sharing" : model.running ? "Tether can't share yet" : "Turn on Personal Hotspot"
+    }
+
+    /// The warning's text and button, darker than the system orange so they pass the contrast audit.
+    static let warningText = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 1.0, green: 0.72, blue: 0.40, alpha: 1)
+            : UIColor(red: 0.60, green: 0.29, blue: 0.0, alpha: 1)
+    })
+    static let warningFill = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 1.0, green: 0.58, blue: 0.0, alpha: 0.22)
+            : UIColor(red: 1.0, green: 0.94, blue: 0.85, alpha: 1)
+    })
 
     /// Opens Settings at its main screen, where Personal Hotspot is near the top. Nothing goes
     /// straight to the Personal Hotspot page any more: on iOS 27, App-prefs:INTERNET_TETHERING and
@@ -208,10 +203,14 @@ struct StatusCard: View {
             layout {
                 StatusOrb(look: look)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(sharing ? "Sharing" : model.running ? "Tether can't share yet" : "Turn on Personal Hotspot")
+                    Text(title)
                         .font(.system(.title, design: .rounded, weight: .bold))
                         .accessibilityIdentifier("status.title")
-                    if sharing {
+                    if blocked {
+                        Text("Local Network is off for Tether")
+                            .font(.headline)
+                            .accessibilityIdentifier("status.headline")
+                    } else if sharing {
                         Text(headline)
                             .font(.headline)
                             .accessibilityIdentifier("status.headline")
@@ -224,7 +223,23 @@ struct StatusCard: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
-            if sharing {
+            if blocked {
+                Divider()
+                Text("iOS blocks Tether's answers to your devices until it's on.")
+                    .font(.subheadline)
+                    .accessibilityIdentifier("localNetwork.problem")
+                Button {
+                    UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
+                } label: {
+                    Text("Turn on in Settings")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .foregroundStyle(Self.warningText)
+                        .background(Self.warningFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("localNetwork.open")
+            } else if sharing {
                 Divider()
                 SpeedRow(down: model.downSpeed, up: model.upSpeed)
                 hint {
