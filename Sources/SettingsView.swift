@@ -139,12 +139,27 @@ final class SystemNoticeCenter: NoticeCenter {
     }
 
     func add(_ notice: Notice) async {
+        await post(notice, trigger: nil)
+    }
+
+    func schedule(_ notice: Notice, after: TimeInterval) async {
+        // A request with the same id replaces a waiting one, but not one that showed.
+        center.removeDeliveredNotifications(withIdentifiers: [notice.id])
+        await post(notice, trigger: UNTimeIntervalNotificationTrigger(timeInterval: after, repeats: false))
+    }
+
+    func remove(_ id: String) {
+        center.removePendingNotificationRequests(withIdentifiers: [id])
+        center.removeDeliveredNotifications(withIdentifiers: [id])
+    }
+
+    private func post(_ notice: Notice, trigger: UNNotificationTrigger?) async {
         let content = UNMutableNotificationContent()
         content.title = notice.title
         content.body = notice.body
         content.sound = .default
         do {
-            try await center.add(UNNotificationRequest(identifier: notice.id, content: content, trigger: nil))
+            try await center.add(UNNotificationRequest(identifier: notice.id, content: content, trigger: trigger))
         } catch {
             log("notification \(notice.kind.rawValue) not posted: \(error)")
         }

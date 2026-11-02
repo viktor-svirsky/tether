@@ -65,6 +65,8 @@ final class DemoNoticeCenter: NoticeCenter {
     func permission() async -> NoticePermission { state }
     func ask() async -> Bool { false }
     func add(_ notice: Notice) async {}
+    func schedule(_ notice: Notice, after: TimeInterval) async {}
+    func remove(_ id: String) {}
 }
 
 /// A Keychain that is locked until the first unlock after a restart: it can't be read or written.

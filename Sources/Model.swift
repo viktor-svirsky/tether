@@ -67,6 +67,7 @@ final class Model: ObservableObject {
     /// Where the notification switches are saved. A demo launch has its own, emptied at launch.
     let noticeDefaults: UserDefaults
     private var notifier: Notifier
+    private var closedAlarm = ClosedAlarm()
     private let noticeCenter: NoticeCenter
     private let poster: NoticePoster
 
@@ -154,6 +155,8 @@ final class Model: ObservableObject {
                                                     sharing: session.sharing, devices: session.wireGuardPeers,
                                                     connected: session.connectedNow, expires: expires))
         if notifier.wouldTell { askForNotices() }
+        let alarm = closedAlarm.check(now: Date(), sharing: session.sharing, on: NoticeKind.closed.isOn(in: noticeDefaults))
+        if alarm != .none { poster.queue(alarm) }
         guard !notices.isEmpty else { return }
         for notice in notices { Self.append("notice: \(notice.title)") }
         Task { await poster.post(notices) }

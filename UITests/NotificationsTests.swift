@@ -20,11 +20,12 @@ final class NotificationsTests: TetherUITestCase {
     func testTheGearOpensASwitchForEachKindAllOn() {
         launch(.sharing)
         openSettings()
-        for kind in ["connected", "disconnected", "sharingStopped", "expiring"] {
+        for kind in ["connected", "disconnected", "sharingStopped", "closed", "expiring"] {
             XCTAssertTrue(toggle(kind).waitForExistence(timeout: 5), kind)
             XCTAssertEqual(value(of: toggle(kind)), "1", kind)
         }
         XCTAssertEqual(toggle("connected").label, "A device connects")
+        XCTAssertEqual(toggle("closed").label, "iOS stops Tether in the background")
         XCTAssertEqual(toggle("expiring").label, "Tether stops opening soon")
     }
 

@@ -2,7 +2,7 @@ import Foundation
 
 /// What Tether can tell in a notification. Each has its own switch, all on until turned off.
 enum NoticeKind: String, CaseIterable {
-    case connected, disconnected, sharingStopped, expiring
+    case connected, disconnected, sharingStopped, closed, expiring
 
     /// The switch's label in Settings.
     var label: String {
@@ -10,6 +10,7 @@ enum NoticeKind: String, CaseIterable {
         case .connected: "A device connects"
         case .disconnected: "A device disconnects"
         case .sharingStopped: "Sharing stops with a problem"
+        case .closed: "iOS stops Tether in the background"
         case .expiring: "Tether stops opening soon"
         }
     }
@@ -207,6 +208,47 @@ struct Notifier {
     }
 }
 
+/// A notification that waits while Tether shares and shows if Tether stops. iOS doesn't tell an app
+/// it's ending it in the background, and it can stop running it for good after a call or with too
+/// little memory, so Tether keeps one set `delay` ahead and pushes it back every `pushBackEvery`.
+/// Once Tether is gone nothing pushes it back, and it shows. Sharing that stops, or its switch
+/// turned off, takes it away, and so does the first round after a launch, for one left behind.
+struct ClosedAlarm {
+    /// More than `pushBackEvery` plus a background round (15 s, see `KeepAlivePolicy`) and its
+    /// tolerance, so a late round never lets it show.
+    static let delay: TimeInterval = 3 * 60
+    static let pushBackEvery: TimeInterval = 60
+    static let notice = Notice(kind: .closed, id: "closed", title: "Tether stopped sharing",
+                               body: "Devices on the hotspot have no data until Tether runs again.")
+
+    enum Action: Equatable {
+        /// Show it after this long, in place of any waiting one, and take away one that showed.
+        case set(after: TimeInterval)
+        /// Take it away, waiting or shown.
+        case clear
+        case none
+    }
+
+    /// When it was last set. Nil while it isn't.
+    private var setAt: Date?
+    private var checked = false
+
+    mutating func check(now: Date, sharing: Bool, on: Bool) -> Action {
+        defer { checked = true }
+        guard sharing, on else {
+            let waiting = setAt != nil || !checked
+            setAt = nil
+            return waiting ? .clear : .none
+        }
+        if let setAt {
+            let since = now.timeIntervalSince(setAt)
+            if since >= 0, since < Self.pushBackEvery { return .none } // a clock set back pushes it back too
+        }
+        setAt = now
+        return .set(after: Self.delay)
+    }
+}
+
 /// Notification permission, as `NoticePoster` needs it.
 enum NoticePermission {
     case notAsked, allowed, denied
@@ -220,6 +262,10 @@ protocol NoticeCenter: AnyObject {
     /// Shows the system's question. True when allowed.
     func ask() async -> Bool
     func add(_ notice: Notice) async
+    /// Shows it after this long, in place of one with its id that waits or showed.
+    func schedule(_ notice: Notice, after: TimeInterval) async
+    /// Takes away the notice with this id, waiting or shown.
+    func remove(_ id: String)
 }
 
 /// Posts what `Notifier` decided, and asks for permission the first time something happens that it
@@ -231,6 +277,8 @@ final class NoticePoster {
     private let center: NoticeCenter
     /// The question while it's up, so a round that comes meanwhile doesn't ask again.
     private var asking: Task<Void, Never>?
+    /// The last alarm action queued, see `queue`.
+    private var alarm: Task<Void, Never>?
 
     init(center: NoticeCenter) {
         self.center = center
@@ -239,6 +287,29 @@ final class NoticePoster {
     func post(_ notices: [Notice]) async {
         guard !notices.isEmpty, await center.permission() == .allowed else { return }
         for notice in notices { await center.add(notice) }
+    }
+
+    /// Does what `ClosedAlarm` decided, after what it decided before: a set still asking for the
+    /// permission mustn't come after the clear of a later round, and leave one waiting.
+    func queue(_ action: ClosedAlarm.Action) {
+        let before = alarm
+        alarm = Task { await before?.value; await apply(action) }
+    }
+
+    /// The queued alarm actions are done.
+    func alarmDone() async { await alarm?.value }
+
+    /// Without permission nothing waits, and nothing is asked: the alarm alone is no moment to ask.
+    private func apply(_ action: ClosedAlarm.Action) async {
+        switch action {
+        case let .set(after):
+            guard await center.permission() == .allowed else { return }
+            await center.schedule(ClosedAlarm.notice, after: after)
+        case .clear:
+            center.remove(ClosedAlarm.notice.id)
+        case .none:
+            break
+        }
     }
 
     func askIfNotAsked() async {

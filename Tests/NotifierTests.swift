@@ -175,7 +175,7 @@ final class NotifierTests: XCTestCase {
     }
 
     func testTheSwitchesAreSavedUnderTheirOwnKeys() {
-        XCTAssertEqual(NoticeKind.allCases.map(\.key), ["notify.connected", "notify.disconnected", "notify.sharingStopped", "notify.expiring"])
+        XCTAssertEqual(NoticeKind.allCases.map(\.key), ["notify.connected", "notify.disconnected", "notify.sharingStopped", "notify.closed", "notify.expiring"])
     }
 
     /// A device that's connected when Tether starts isn't news, on screen or off. The question
@@ -444,6 +444,97 @@ final class NoticePosterTests: XCTestCase {
     }
 }
 
+/// The notification that waits while Tether shares, see `ClosedAlarm`.
+final class ClosedAlarmTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_800_000_000)
+    private var alarm = ClosedAlarm()
+
+    private func check(_ s: TimeInterval, sharing: Bool = true, on: Bool = true) -> ClosedAlarm.Action {
+        alarm.check(now: start.addingTimeInterval(s), sharing: sharing, on: on)
+    }
+
+    func testWhileSharingItIsPushedBackEveryMinute() {
+        XCTAssertEqual(check(0), .set(after: ClosedAlarm.delay))
+        XCTAssertEqual(check(15), .none)
+        XCTAssertEqual(check(59), .none)
+        XCTAssertEqual(check(60), .set(after: ClosedAlarm.delay))
+        XCTAssertEqual(check(75), .none)
+        XCTAssertGreaterThan(ClosedAlarm.delay, ClosedAlarm.pushBackEvery + 60, "a late round in the background mustn't let it fire")
+    }
+
+    func testSharingThatStopsTakesItAwayOnce() {
+        _ = check(0)
+        XCTAssertEqual(check(15, sharing: false), .clear)
+        XCTAssertEqual(check(30, sharing: false), .none)
+        XCTAssertEqual(check(45), .set(after: ClosedAlarm.delay), "sharing again")
+    }
+
+    /// A launch takes away one left by the Tether that iOS ended, before or after it showed.
+    func testTheFirstRoundTakesAwayALeftoverOne() {
+        XCTAssertEqual(check(0, sharing: false), .clear)
+        XCTAssertEqual(check(15, sharing: false), .none)
+    }
+
+    func testItsSwitchTurnedOffTakesItAway() {
+        _ = check(0)
+        XCTAssertEqual(check(15, on: false), .clear)
+        XCTAssertEqual(check(30, on: false), .none)
+        XCTAssertEqual(check(45), .set(after: ClosedAlarm.delay))
+    }
+
+    func testAClockSetBackPushesItBack() {
+        _ = check(0)
+        XCTAssertEqual(check(-600), .set(after: ClosedAlarm.delay))
+    }
+}
+
+@MainActor
+final class ClosedAlarmPostingTests: XCTestCase {
+    private func run(_ actions: [ClosedAlarm.Action], _ center: FakeNoticeCenter) async {
+        let poster = NoticePoster(center: center)
+        for action in actions { poster.queue(action) }
+        await poster.alarmDone()
+    }
+
+    func testAllowedItWaits() async {
+        let center = FakeNoticeCenter(.allowed)
+        await run([.set(after: 180)], center)
+        XCTAssertEqual(center.calls, ["schedule closed 180"])
+        XCTAssertEqual(center.scheduled.map(\.notice), [ClosedAlarm.notice])
+    }
+
+    func testWithoutPermissionNothingWaits() async {
+        for state in [NoticePermission.notAsked, .denied] {
+            let center = FakeNoticeCenter(state)
+            await run([.set(after: 180)], center)
+            XCTAssertEqual(center.calls, [], "\(state)")
+            XCTAssertEqual(center.asked, 0, "\(state)")
+        }
+    }
+
+    func testClearTakesItAwayWhateverThePermission() async {
+        let center = FakeNoticeCenter(.denied)
+        await run([.clear, .none], center)
+        XCTAssertEqual(center.calls, ["remove closed"])
+    }
+
+    /// A set that waits for the permission still comes before the clear queued after it, so nothing
+    /// is left waiting once sharing stopped.
+    func testActionsHappenInTheOrderTheyCame() async {
+        let center = FakeNoticeCenter(.allowed)
+        center.slowPermission = true
+        await run([.set(after: 180), .clear, .set(after: 180), .clear], center)
+        XCTAssertEqual(center.calls, ["schedule closed 180", "remove closed", "schedule closed 180", "remove closed"])
+    }
+
+    func testItsWordsSayWhatHappened() {
+        XCTAssertEqual(ClosedAlarm.notice.kind, .closed)
+        XCTAssertEqual(ClosedAlarm.notice.title, "Tether stopped sharing")
+        XCTAssertEqual(ClosedAlarm.notice.body, "Devices on the hotspot have no data until Tether runs again.")
+        XCTAssertEqual(NoticeKind.closed.label, "iOS stops Tether in the background")
+    }
+}
+
 /// The system's notification center, with the permission a test sets and the user's answer to the question.
 @MainActor
 final class FakeNoticeCenter: NoticeCenter {
@@ -455,6 +546,11 @@ final class FakeNoticeCenter: NoticeCenter {
     private(set) var checked = 0
     private(set) var asked = 0
     private(set) var added: [Notice] = []
+    private(set) var scheduled: [(notice: Notice, after: TimeInterval)] = []
+    /// Schedules and removals, in order.
+    private(set) var calls: [String] = []
+    /// permission() lets other tasks run first, the way the real one waits on the system.
+    var slowPermission = false
 
     init(_ state: NoticePermission, answer: Bool = false) {
         self.state = state
@@ -462,6 +558,7 @@ final class FakeNoticeCenter: NoticeCenter {
     }
 
     func permission() async -> NoticePermission {
+        if slowPermission { for _ in 0..<20 { await Task.yield() } }
         checked += 1
         return state
     }
@@ -480,5 +577,14 @@ final class FakeNoticeCenter: NoticeCenter {
 
     func add(_ notice: Notice) async {
         added.append(notice)
+    }
+
+    func schedule(_ notice: Notice, after: TimeInterval) async {
+        scheduled.append((notice, after))
+        calls.append("schedule \(notice.id) \(Int(after))")
+    }
+
+    func remove(_ id: String) {
+        calls.append("remove \(id)")
     }
 }
