@@ -278,6 +278,44 @@ class TetherUITestCase: XCTestCase {
         }
     }
 
+    /// The contrast between a filled control's text and its fill, read from the screen's pixels, as
+    /// WCAG computes it. Only the middle of the control counts, inside its rounded ends: the commonest
+    /// colour there is the fill, and the colour furthest from it that covers at least 1% is the text.
+    func textContrast(of element: XCUIElement) -> Double {
+        guard let image = XCUIScreen.main.screenshot().image.cgImage else { return 0 }
+        let scale = CGFloat(image.width) / app.windows.firstMatch.frame.width
+        let f = element.frame
+        let middle = CGRect(x: (f.minX + f.width * 0.25) * scale, y: (f.minY + f.height * 0.25) * scale,
+                            width: f.width * 0.5 * scale, height: f.height * 0.5 * scale).integral
+        guard let crop = image.cropping(to: middle) else { return 0 }
+        let w = crop.width, h = crop.height
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        let drawn: Void? = px.withUnsafeMutableBytes { bytes in
+            CGContext(data: bytes.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?
+                .draw(crop, in: CGRect(x: 0, y: 0, width: w, height: h))
+        }
+        guard drawn != nil else { return 0 }
+        var counts: [UInt32: Int] = [:]
+        for i in stride(from: 0, to: px.count, by: 4) {
+            counts[UInt32(px[i]) << 16 | UInt32(px[i + 1]) << 8 | UInt32(px[i + 2]), default: 0] += 1
+        }
+        func luminance(_ c: UInt32) -> Double {
+            func channel(_ v: UInt32) -> Double {
+                let s = Double(v & 0xFF) / 255
+                return s <= 0.04045 ? s / 12.92 : pow((s + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * channel(c >> 16) + 0.7152 * channel(c >> 8) + 0.0722 * channel(c)
+        }
+        guard let fill = counts.max(by: { $0.value < $1.value })?.key else { return 0 }
+        let fillL = luminance(fill)
+        let enough = w * h / 100
+        return counts.filter { $0.value >= enough }.keys.map { c in
+            let l = luminance(c)
+            return (max(l, fillL) + 0.05) / (min(l, fillL) + 0.05)
+        }.max() ?? 1
+    }
+
     /// Toolbar buttons, drawn by the system in its own tint.
     static let systemButtons: Set<String> = ["Cancel", "Done"]
     /// Tether's elements that use only `.secondary` text, the plain button tint or the system's red for a destructive button.

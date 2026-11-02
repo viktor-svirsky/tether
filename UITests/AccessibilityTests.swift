@@ -99,6 +99,23 @@ final class AccessibilityTests: TetherUITestCase {
         }
     }
 
+    /// The filled buttons' white text keeps 4.5:1 on their blue in both appearances: Add a device
+    /// before any device, and Done once one connects. The accent is light in dark mode, too light
+    /// under white text (#68). Read from the pixels: the audit doesn't look at a button's own label.
+    func testFilledButtonsKeepTheirContrastInBothAppearances() {
+        for appearance in [XCUIDevice.Appearance.light, .dark] {
+            XCUIDevice.shared.appearance = appearance
+            for (scenario, id) in [(Scenario.noDevices, "add.open"), (.addDeviceDone, "add.done")] {
+                launch(scenario)
+                let button = reveal(element(id))
+                waitUntilStill(button)
+                let ratio = textContrast(of: button)
+                XCTAssertGreaterThanOrEqual(ratio, 4.5, "\(id) in \(appearance == .dark ? "dark" : "light") mode: \(ratio):1")
+                app.terminate()
+            }
+        }
+    }
+
     func testAddDeviceSheetPassesTheStructuralAudit() throws {
         launch(.noDevices)
         openAddDevice()

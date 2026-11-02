@@ -84,6 +84,7 @@ struct AddDeviceSheet: View {
                         Text("Done").font(.headline).frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(.filledButton)
                     .buttonBorderShape(.capsule)
                     .controlSize(.large)
                     .padding(.horizontal, 16)

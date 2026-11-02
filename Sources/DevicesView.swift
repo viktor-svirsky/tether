@@ -51,7 +51,7 @@ struct AddDeviceSection: View {
         .buttonBorderShape(.capsule)
         .controlSize(.large)
         .accessibilityIdentifier("add.open")
-        if first { button.buttonStyle(.borderedProminent) } else { button.buttonStyle(.bordered) }
+        if first { button.buttonStyle(.borderedProminent).tint(.filledButton) } else { button.buttonStyle(.bordered) }
     }
 }
 

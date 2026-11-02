@@ -133,6 +133,16 @@ struct SpeedRow: View {
     }
 }
 
+extension Color {
+    /// A filled button's blue, under white text. The accent is light in dark mode, for text and links
+    /// on black, and white on it fails the contrast audit, so a filled button keeps a darker blue.
+    static let filledButton = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.0, green: 0.40, blue: 0.82, alpha: 1)
+            : UIColor(red: 0.0, green: 0.45, blue: 0.78, alpha: 1)
+    })
+}
+
 /// Download and upload colours, the same in every speed and card. Orange and red stay for warnings.
 enum Direction {
     static let download = Color.accentColor
