@@ -14,7 +14,7 @@ enum DemoScenario: String, CaseIterable {
     case waiting
     /// Hotspot off, and the Keychain is locked: the problem shows from launch, and there's no QR code.
     case wireGuardLockedWaiting
-    /// Hotspot on, no device yet: only the QR code.
+    /// Hotspot on, no device yet: only Add a device.
     case noDevices
     /// Two devices, the iPad connected and the Windows PC not, and a speed.
     case sharing
@@ -37,6 +37,13 @@ enum DemoScenario: String, CaseIterable {
     /// Like `sharing`, opened on the Settings sheet with notifications allowed, for the
     /// screenshot.
     case notificationsScreen
+    /// Like `noDevices`, opened on the Add a device sheet, for the screenshot.
+    case addDeviceScreen
+    /// Like `sharing`, opened on the Add a device sheet as if the Windows PC had just downloaded
+    /// the code: its tunnel isn't on yet.
+    case addDeviceWaiting
+    /// Like `addDeviceWaiting`, for the iPad, which is connected.
+    case addDeviceDone
 
     static let argument = "-TetherDemo"
 
@@ -100,7 +107,7 @@ struct DemoState {
             running = false
             return
         }
-        if [.noDevices, .wireGuardUnsaved].contains(scenario) { return }
+        if [.noDevices, .wireGuardUnsaved, .addDeviceScreen].contains(scenario) { return }
         downSpeed = 3_200_000
         upSpeed = 400_000
     }
@@ -109,7 +116,7 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen:
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone:
             var setup = WireGuardSetup.new()
             _ = setup.addPeer(name: "iPad")
             _ = setup.addPeer(name: "Windows PC")
@@ -148,7 +155,7 @@ struct DemoState {
         model.downSpeed = downSpeed
         model.upSpeed = upSpeed
         // The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states.
-        model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen].contains(scenario) ? ["10.7.0.2"] : []
+        model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone].contains(scenario) ? ["10.7.0.2"] : []
         model.expires = scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil
     }
 }

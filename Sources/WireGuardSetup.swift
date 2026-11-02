@@ -81,7 +81,7 @@ struct WireGuardSetup: Codable, Equatable {
     var serverPrivateKey: Data
     /// The devices someone has used, in the order they first connected.
     var peers: [Peer]
-    /// The device behind the QR code on the main screen: a key nobody has used yet. The server lets
+    /// The device behind the QR code in the Add a device sheet: a key nobody has used yet. The server lets
     /// it in, and the first time it connects it joins `peers`, without its private key, and a new
     /// one takes its place. Nil only in a setup saved before there was one, or with all 253
     /// addresses taken.

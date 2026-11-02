@@ -16,7 +16,7 @@ final class AccessibilityTests: TetherUITestCase {
 
     func testLowerPartOfTheMainScreenPassesTheStructuralAudit() throws {
         launch(.sharing)
-        reveal(element("add.steps"))
+        reveal(element("add.open"))
         try audit(types: structuralAudit)
     }
 
@@ -80,24 +80,27 @@ final class AccessibilityTests: TetherUITestCase {
 
     // MARK: devices and the QR code
 
-    /// The Share file and Browser buttons are bordered, so they get the full audit with the card in view, in both appearances.
-    /// Only the card's elements: scrolled this far, the status card sits under the status bar.
-    func testAddDeviceButtonsPassTheAccessibilityAuditInBothAppearances() throws {
+    /// The button and the sheet's steps and Share file button get the full audit, in both appearances.
+    func testAddDevicePassesTheAccessibilityAuditInBothAppearances() throws {
         for appearance in [XCUIDevice.Appearance.light, .dark] {
             XCUIDevice.shared.appearance = appearance
             launch(.sharing)
-            XCTAssertTrue(reveal(element("add.page")).isHittable)
-            XCTAssertTrue(element("add.share").isHittable)
+            XCTAssertTrue(reveal(element("add.open")).isHittable)
+            try audit(only: "add.")
+            openAddDevice()
+            try audit()
+            XCTAssertTrue(reveal(element("add.share")).isHittable)
             try audit(only: "add.")
             let shot = XCTAttachment(screenshot: app.screenshot())
-            shot.name = "Add device card, \(appearance == .dark ? "dark" : "light")"
+            shot.name = "Add a device, \(appearance == .dark ? "dark" : "light")"
             shot.lifetime = .keepAlways
             add(shot)
         }
     }
 
-    func testQRCodeSectionPassesTheStructuralAudit() throws {
+    func testAddDeviceSheetPassesTheStructuralAudit() throws {
         launch(.noDevices)
+        openAddDevice()
         reveal(element("add.share"))
         try audit(types: structuralAudit)
     }
@@ -147,9 +150,11 @@ final class AccessibilityTests: TetherUITestCase {
         launch(.sharing, arguments: accessibilityXL)
         XCTAssertTrue(reveal(element("device.iPad"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("device.Windows PC"), maxSwipes: 30).isHittable)
+        reveal(element("add.open"), maxSwipes: 30).tap()
+        XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
         XCTAssertTrue(reveal(element("add.qr"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("add.share"), maxSwipes: 30).isHittable)
-        XCTAssertTrue(reveal(element("add.steps"), maxSwipes: 30).exists)
+        XCTAssertTrue(reveal(element("add.step3"), maxSwipes: 30).exists)
     }
 
     func testLargeTextKeepsTheProblemAndResetReachable() {

@@ -1,87 +1,42 @@
-import CoreImage.CIFilterBuiltins
 import SwiftUI
 
-/// The QR code for the next device, always on the main screen, with buttons to share it as a file
-/// and to give the address of the page that hands out the same config. It's the ready device's
-/// config: the first time something connects with it or downloads it, that device is listed and a
-/// new code takes its place. When the next code couldn't be saved, it says so instead. The page runs
-/// once a device is on the hotspot, and its address never changes, so Browser is there before that.
-/// Except on a carrier that gives the iPhone IPv6 only: there the address comes with the hotspot's
-/// first device, so the code and both buttons wait for one, see `HotspotSession.deviceHost`.
+/// The way to add a device from the main screen: a button that opens `AddDeviceSheet`, the
+/// prominent one while there's no device yet. When the next code couldn't be saved, it says so
+/// instead, and there's no button: the devices that have a code still connect.
 struct AddDeviceSection: View {
     @ObservedObject var model: Model
     let first: Bool
-    /// The page's address, while the alert that gives it is up.
-    @State private var pageAddress: String?
+    let add: () -> Void
 
     var body: some View {
-        if let ready = model.wireGuardReady {
-            let config = model.wireGuardConfig(for: ready)
+        if model.wireGuardReady != nil {
             Section {
-                if let config, let host = model.deviceHost {
-                    let code = ReadyCode.for(config)
-                    qrAndButtons(qr: code.qr, file: code.file, host: host)
-                } else {
-                    Label("Join this iPhone's hotspot on the device first. The code shows up here once it's on.", systemImage: "personalhotspot")
-                        .accessibilityIdentifier("add.joinFirst")
-                }
-            } header: {
-                header
-            } footer: {
-                if config != nil {
-                    Text("Scan it with WireGuard: + > Create from QR code.")
-                        .accessibilityIdentifier("add.steps")
-                }
+                addButton
             }
-            .alert("Open in a browser", isPresented: Binding { pageAddress != nil } set: { if !$0 { pageAddress = nil } }) {
-                Button("OK") {}
-            } message: {
-                Text("Join this iPhone's hotspot on the device, then open \(pageAddress ?? "") in its browser. Keep Tether on screen.")
-            }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
         } else if let problem = model.wireGuardReadyProblem {
             Section {
                 Label(problem, systemImage: "exclamationmark.triangle")
                     .accessibilityIdentifier("add.problem")
             } header: {
-                header
+                Text(title)
             }
         }
     }
 
-    /// The QR code, with Share file and Browser under it.
-    @ViewBuilder private func qrAndButtons(qr: UIImage?, file: URL?, host: String) -> some View {
-        if let qr {
-            Image(uiImage: qr)
-                .interpolation(.none)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: 240)
+    private var title: String { first ? "Add a device" : "Add another device" }
+
+    @ViewBuilder private var addButton: some View {
+        let button = Button(action: add) {
+            Label(title, systemImage: "plus")
+                .font(.headline)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .accessibilityLabel("QR code for the next device")
-                .accessibilityIdentifier("add.qr")
         }
-        // Side by side, so the card stays short. Bordered, or the row takes one tap for both.
-        HStack {
-            if let file {
-                ShareLink(item: file) {
-                    Label("Share file", systemImage: "square.and.arrow.up")
-                        .frame(maxWidth: .infinity)
-                }
-                .accessibilityIdentifier("add.share")
-            }
-            Button {
-                pageAddress = ConfigPage.url(host: host)
-            } label: {
-                Label("Browser", systemImage: "globe")
-                    .frame(maxWidth: .infinity)
-            }
-            .accessibilityIdentifier("add.page")
-        }
-        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .accessibilityIdentifier("add.open")
+        if first { button.buttonStyle(.borderedProminent) } else { button.buttonStyle(.bordered) }
     }
-
-    private var header: Text { Text(first ? "Add a device" : "Add another device") }
 }
 
 /// Why WireGuard isn't running, with the way out when the saved keys can't be read.
@@ -163,43 +118,5 @@ struct ConnectedLabel: View {
             Image(systemName: connected ? "checkmark.circle.fill" : "circle.dashed")
                 .foregroundStyle(connected ? .green : .secondary)
         }
-    }
-}
-
-/// The ready device's QR code and file, made once for each config: a new ready device, or a new
-/// hotspot address. The main screen redraws every second with the speeds, and making them on each
-/// redraw cost a CIContext and a file write every second.
-@MainActor
-enum ReadyCode {
-    private static var made: (text: String, qr: UIImage?, file: URL?)?
-
-    static func `for`(_ text: String) -> (qr: UIImage?, file: URL?) {
-        // The system may clear the temporary directory, so a missing file is written again.
-        if let made, made.text == text, made.file.map({ FileManager.default.fileExists(atPath: $0.path) }) ?? false {
-            return (made.qr, made.file)
-        }
-        let code = (text: text, qr: QRCode.image(text), file: ConfigFile.write(text, named: "Tether"))
-        made = code
-        return (code.qr, code.file)
-    }
-}
-
-/// The config as a .conf file to share. WireGuard names the tunnel after the file. It holds a
-/// private key, so it lives in the temporary directory.
-enum ConfigFile {
-    static func write(_ config: String, named name: String) -> URL? {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(WireGuardSetup.fileName(for: name))
-        return (try? config.write(to: url, atomically: true, encoding: .utf8)) == nil ? nil : url
-    }
-}
-
-enum QRCode {
-    static func image(_ text: String) -> UIImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(text.utf8)
-        filter.correctionLevel = "M"
-        guard let output = filter.outputImage,
-              let cg = CIContext().createCGImage(output, from: output.extent) else { return nil }
-        return UIImage(cgImage: cg)
     }
 }

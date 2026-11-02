@@ -13,6 +13,7 @@ struct MainView: View {
     }
 
     @State private var showSettings = false
+    @State private var addingDevice = false
     /// The gear's circle grows with the text size, so the symbol stays inside it.
     @ScaledMetric(relativeTo: .title3) private var gearSize: CGFloat = 44
 
@@ -60,7 +61,7 @@ struct MainView: View {
                     }
                 }
 
-                // Above the QR code, so a reason it doesn't work and the way out are both here.
+                // Above Add a device, so a reason it doesn't work and the way out are both here.
                 WireGuardProblemSection(model: model)
 
                 if !model.wireGuardPeers.isEmpty {
@@ -81,16 +82,35 @@ struct MainView: View {
                     }
                 }
 
-                AddDeviceSection(model: model, first: model.wireGuardPeers.isEmpty)
+                AddDeviceSection(model: model, first: model.wireGuardPeers.isEmpty) { addingDevice = true }
             }
             // The title above draws it big, so the bar stays hidden. It's still set, because the
             // screens pushed from here use it for their back button.
             .navigationTitle("Tether")
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showSettings) { SettingsView(model: model) }
-            // The `notificationsScreen` demo opens on the sheet, for the screenshot.
-            .onAppear { if model.opensSettings { showSettings = true } }
+            .sheet(isPresented: $addingDevice) { AddDeviceSheet(model: model) }
+            // Some demos open on a sheet, for the screenshots and the tests.
+            .onAppear {
+                if model.opensSettings { showSettings = true }
+                if model.opensAddDevice { addingDevice = true }
+            }
         }
+    }
+}
+
+/// Where Personal Hotspot is turned on, as a link to Settings.
+struct HotspotSettingsLink: View {
+    var body: some View {
+        Button(action: StatusCard.openHotspotSettings) {
+            Text("Settings > Personal Hotspot > Allow Others to Join")
+                .underline()
+                .multilineTextAlignment(.leading)
+                .foregroundStyle(Color.primary)
+        }
+        // Plain, or a tap anywhere in the card or the row opens Settings.
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens Settings")
     }
 }
 
@@ -191,16 +211,8 @@ struct StatusCard: View {
             } else if !model.running {
                 Divider()
                 hint {
-                    Button(action: Self.openHotspotSettings) {
-                        Text("Settings > Personal Hotspot > Allow Others to Join")
-                            .underline()
-                            .multilineTextAlignment(.leading)
-                            .foregroundStyle(Color.primary)
-                    }
-                    // Plain, or a tap anywhere in the card opens Settings.
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("status.hotspotPath")
-                    .accessibilityHint("Opens Settings")
+                    HotspotSettingsLink()
+                        .accessibilityIdentifier("status.hotspotPath")
                 }
             }
         }

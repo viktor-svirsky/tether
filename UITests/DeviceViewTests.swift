@@ -114,7 +114,7 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertEqual(banner.label, lockedText)
         XCTAssertTrue(sectionHeader("WIREGUARD ISN'T RUNNING").exists)
         assertNowhere(element("wireguard.reset"), message: "a locked Keychain gets better by unlocking, not by starting over")
-        assertNowhere(element("add.qr"), element("add.share"))
+        assertNowhere(element("add.open"))
     }
 
     /// A code for keys that aren't saved could never connect, since the next launch makes new ones.
@@ -124,7 +124,7 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertTrue(reveal(banner).exists)
         XCTAssertEqual(banner.label, unsavedText)
         XCTAssertEqual(label(of: "status.title"), "Tether can't share yet")
-        assertNowhere(element("add.qr"), element("add.share"), element("add.problem"), element("wireguard.reset"))
+        assertNowhere(element("add.open"), element("add.problem"), element("wireguard.reset"))
     }
 
     /// Without the hotspot there's no QR code either, so a new user would have no way to add a device and no reason why.
@@ -134,14 +134,14 @@ final class DeviceViewTests: TetherUITestCase {
         let banner = staticText("wireguard.problem")
         XCTAssertTrue(reveal(banner).exists)
         XCTAssertEqual(banner.label, lockedText)
-        assertNowhere(element("add.qr"), element("add.share"), element("wireguard.reset"))
+        assertNowhere(element("add.open"), element("wireguard.reset"))
     }
 
     func testUnreadableKeysOfferToStartOver() {
         launch(.wireGuardNeedsReset)
         XCTAssertEqual(staticText("wireguard.problem").label, resetText)
         XCTAssertEqual(reveal(element("wireguard.reset")).label, "Start over with new keys")
-        assertNowhere(element("add.qr"))
+        assertNowhere(element("add.open"))
     }
 
     func testStartingOverClearsTheProblemAndShowsTheQRCode() {
@@ -149,7 +149,6 @@ final class DeviceViewTests: TetherUITestCase {
         reveal(element("wireguard.reset")).tap()
         waitUntilGone(element("wireguard.problem"))
         assertNowhere(element("wireguard.reset"))
-        XCTAssertTrue(reveal(element("add.qr")).exists)
-        XCTAssertTrue(sectionHeader("ADD A DEVICE").exists, "no device yet after starting over")
+        XCTAssertEqual(reveal(element("add.open")).label, "Add a device", "no device yet after starting over")
     }
 }

@@ -5,7 +5,8 @@
 //   Traffic.swift       the server's byte counters, Foundation only
 //   Format.swift        bytes and speeds as text
 //   MainView.swift      MainView (the main screen), StatusCard, and the speeds
-//   DevicesView.swift   the QR code for the next device, and a device's own screen
+//   DevicesView.swift   Add a device on the main screen, and a device's own screen
+//   AddDeviceSheet.swift the steps to add a device, with the QR code for it
 //   ConfigPage.swift    the page on the hotspot that hands out the next device's config, Foundation only
 //   ConfigPageServer.swift  serves that page on the hotspot address
 //   AppExpiry.swift     when a sideloaded build stops opening, and the warning before it
@@ -79,8 +80,22 @@ final class Model: ObservableObject {
     private var demo: DemoState?
     /// The `notificationsScreen` demo opens on the Settings sheet.
     var opensSettings: Bool { demo?.scenario == .notificationsScreen }
+    /// Some demos open on the Add a device sheet.
+    var opensAddDevice: Bool { [.addDeviceScreen, .addDeviceWaiting, .addDeviceDone].contains(demo?.scenario) }
+    /// In the `addDeviceWaiting` and `addDeviceDone` demos, the sheet follows a listed device, as if
+    /// it had just claimed the code: the Windows PC isn't connected, the iPad is.
+    var addDeviceFollows: WireGuardSetup.Peer.ID? {
+        let name = switch demo?.scenario {
+        case .addDeviceWaiting: "Windows PC"
+        case .addDeviceDone: "iPad"
+        default: ""
+        }
+        return wireGuardPeers.first { $0.name == name }?.id
+    }
     #else
     var opensSettings: Bool { false }
+    var opensAddDevice: Bool { false }
+    var addDeviceFollows: WireGuardSetup.Peer.ID? { nil }
     #endif
 
     init() {

@@ -57,7 +57,7 @@ final class HotspotSession {
     var upSpeed = 0.0 { willSet { willChange() } }
     /// The devices that have connected, in the order they first did.
     private(set) var wireGuardPeers: [WireGuardSetup.Peer] = [] { willSet { willChange() } }
-    /// Behind the QR code on the main screen, see `WireGuardSetup.ready`. Only ever a saved one.
+    /// Behind the QR code in the Add a device sheet, see `WireGuardSetup.ready`. Only ever a saved one.
     private(set) var wireGuardReady: WireGuardSetup.Ready? { willSet { willChange() } }
     /// Why there's no QR code while the devices that have one still connect: making the next one couldn't be saved.
     private(set) var wireGuardReadyProblem: String? { willSet { willChange() } }

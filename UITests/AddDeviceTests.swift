@@ -1,80 +1,92 @@
 import XCTest
 
-/// Adding a device: the QR code, the shared file and the steps that are always on the main screen.
+/// Adding a device: the button on the main screen and the sheet with its three steps.
 final class AddDeviceTests: TetherUITestCase {
-    private let steps = "Scan it with WireGuard: + > Create from QR code."
-
-    func testBeforeAnyDeviceTheMainScreenShowsTheQRCodeTheFileAndTheSteps() {
+    func testBeforeAnyDeviceTheMainScreenOffersToAddOne() {
         launch(.waiting)
-        XCTAssertTrue(reveal(element("add.qr")).exists)
-        XCTAssertEqual(element("add.qr").label, "QR code for the next device")
-        let share = reveal(element("add.share"))
-        XCTAssertTrue(share.label.contains("Share file"), share.label)
-        XCTAssertTrue(element("add.page").label.contains("Browser"))
-        XCTAssertEqual(reveal(element("add.steps")).label, steps)
-        XCTAssertTrue(sectionHeader("ADD A DEVICE").exists)
-        assertNowhere(sectionHeader("ADD ANOTHER DEVICE"))
+        XCTAssertEqual(reveal(element("add.open")).label, "Add a device")
+        assertNowhere(element("add.qr"), message: "the code is in the sheet")
     }
 
-    func testTheQRCodeShowsWithTheHotspotOnButNoDevice() {
-        launch(.noDevices)
-        XCTAssertTrue(reveal(element("add.qr")).exists)
-        XCTAssertTrue(sectionHeader("ADD A DEVICE").exists)
-    }
-
-    func testOnceADeviceExistsTheHeaderSaysAddAnotherDevice() {
+    func testOnceADeviceExistsTheButtonSaysAddAnotherDevice() {
         launch(.sharing)
-        XCTAssertTrue(reveal(element("add.qr")).exists, "the code stays for the next device")
-        XCTAssertTrue(sectionHeader("ADD ANOTHER DEVICE").exists)
-        assertNowhere(sectionHeader("ADD A DEVICE"))
-        XCTAssertTrue(reveal(element("add.share")).exists)
-        XCTAssertTrue(reveal(element("add.steps")).exists)
+        XCTAssertEqual(reveal(element("add.open")).label, "Add another device")
+    }
+
+    /// With the hotspot off nothing is ticked, and the code is there anyway: a device can scan it first.
+    func testTheSheetShowsTheStepsAndTheCode() {
+        launch(.waiting)
+        openAddDevice()
+        XCTAssertEqual(label(of: "add.step1.mark"), "Step 1 of 3")
+        XCTAssertEqual(label(of: "add.step2.mark"), "Step 2 of 3")
+        XCTAssertEqual(label(of: "add.step3.mark"), "Step 3 of 3")
+        XCTAssertEqual(label(of: "add.hotspotPath"), "Settings > Personal Hotspot > Allow Others to Join")
+        XCTAssertEqual(element("add.qr").label, "QR code for the next device")
+        XCTAssertEqual(reveal(element("add.scan")).label,
+                       "iPhone or iPad: in WireGuard, tap + > Create from QR code. This ticks off once its tunnel is on.")
+        XCTAssertEqual(reveal(element("add.laptop")).label,
+                       "Mac, Windows or Linux: share the file, or open http://172.20.10.1 in its browser while Tether is on screen.")
+        XCTAssertTrue(reveal(element("add.share")).label.contains("Share file"))
+        assertNowhere(element("add.result"), element("add.done"), element("add.joinFirst"))
+    }
+
+    func testWithTheHotspotOnTheFirstStepIsTicked() {
+        launch(.noDevices)
+        openAddDevice()
+        XCTAssertEqual(label(of: "add.step1.mark"), "Done")
+        XCTAssertTrue(text(containing: "The hotspot is on.").exists)
+        XCTAssertEqual(label(of: "add.step2.mark"), "Step 2 of 3")
+        assertNowhere(element("add.hotspotPath"))
+    }
+
+    func testTheSheetCloses() {
+        launch(.sharing)
+        openAddDevice()
+        element("add.close").tap()
+        waitUntilGone(element("add.step1"))
+        XCTAssertTrue(element("add.open").exists)
+    }
+
+    func testTheScreenshotScenarioOpensOnTheSheet() {
+        launch(.addDeviceScreen)
+        XCTAssertTrue(element("add.qr").waitForExistence(timeout: 5))
+        XCTAssertEqual(label(of: "add.step1.mark"), "Done")
+    }
+
+    /// Once the code's device is listed, the code goes and the last step waits for its tunnel.
+    func testADownloadedCodeWaitsForTheTunnel() {
+        launch(.addDeviceWaiting)
+        XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
+        XCTAssertEqual(label(of: "add.step2.mark"), "Done")
+        XCTAssertTrue(text(containing: "Windows PC has its config.").exists)
+        XCTAssertEqual(label(of: "add.step3.mark"), "Waiting")
+        XCTAssertEqual(label(of: "add.result"), "Waiting for Windows PC to connect.")
+        assertNowhere(element("add.qr"), element("add.share"), element("add.done"))
+    }
+
+    func testOnceItConnectsDoneClosesTheSheet() {
+        launch(.addDeviceDone)
+        XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
+        XCTAssertEqual(label(of: "add.step3.mark"), "Done")
+        XCTAssertEqual(label(of: "add.result"), "iPad is connected. Rename it in the list.")
+        reveal(element("add.done")).tap()
+        waitUntilGone(element("add.step1"))
+        XCTAssertTrue(reveal(element("device.iPad")).exists)
     }
 
     /// The devices it has still connect, so it's sharing. Only the next device has to wait.
-    func testAQRCodeThatCantBeSavedIsntShownAndSaysWhy() {
+    func testAQRCodeThatCantBeSavedSaysWhyAndOffersNoButton() {
         launch(.qrCodeUnsaved)
         XCTAssertEqual(label(of: "status.title"), "Sharing")
         XCTAssertEqual(reveal(staticText("add.problem")).label, "The code for the next device can't be saved: Keychain error -34018.")
         XCTAssertTrue(sectionHeader("ADD ANOTHER DEVICE").exists)
         XCTAssertTrue(reveal(element("device.iPad")).exists)
-        assertNowhere(element("add.qr"), element("add.share"), element("add.page"), element("add.steps"), element("wireguard.problem"))
-    }
-
-    /// The two ways besides the code sit side by side, so the card stays short.
-    func testWhileSharingTheFileAndBrowserButtonsShareARow() {
-        launch(.sharing)
-        let page = reveal(element("add.page"))
-        let share = element("add.share")
-        XCTAssertTrue(page.label.contains("Browser"), page.label)
-        XCTAssertEqual(share.frame.midY, page.frame.midY, accuracy: 2)
-        XCTAssertLessThan(share.frame.maxX, page.frame.minX)
-    }
-
-    func testTheBrowserButtonGivesThePageAddress() {
-        launch(.sharing)
-        reveal(element("add.page")).tap()
-        let alert = app.alerts.firstMatch
-        XCTAssertTrue(alert.waitForExistence(timeout: 5))
-        XCTAssertTrue(alert.staticTexts["Join this iPhone's hotspot on the device, then open http://172.20.10.1 in its browser. Keep Tether on screen."].exists)
-        alert.buttons["OK"].tap()
-        assertNowhere(app.alerts.firstMatch)
-    }
-
-    /// iOS makes the hotspot's network only once a device joins, and the page starts with it. The
-    /// address never changes, so the button gives it before that too.
-    func testWithNoDeviceOnTheHotspotTheBrowserButtonStillGivesTheAddress() {
-        launch(.waiting)
-        XCTAssertTrue(reveal(element("add.qr")).exists)
-        reveal(element("add.page")).tap()
-        let alert = app.alerts.firstMatch
-        XCTAssertTrue(alert.waitForExistence(timeout: 5))
-        XCTAssertTrue(alert.staticTexts["Join this iPhone's hotspot on the device, then open http://172.20.10.1 in its browser. Keep Tether on screen."].exists)
+        assertNowhere(element("add.open"), element("wireguard.problem"))
     }
 
     func testNothingElseOffersToAddADevice() {
         launch(.sharing)
         assertNowhere(element("add.device"), element("add.failed"), element("devices.manage"), element("status.howToConnect"),
-                      app.buttons["Add a device"])
+                      element("add.qr"))
     }
 }

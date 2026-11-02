@@ -12,14 +12,14 @@ final class StatusCardTests: TetherUITestCase {
     func testWaitingHidesTheSharingSections() {
         launch(.waiting)
         assertNowhere(element("traffic.speeds"), sectionHeader("DEVICES"))
-        XCTAssertTrue(reveal(element("add.qr")).exists, "it leads with the code for a device")
+        XCTAssertTrue(reveal(element("add.open")).exists, "it leads with adding a device")
     }
 
     func testNoDevicesSaysNobodyUsesTetherYet() {
         launch(.noDevices)
         XCTAssertEqual(label(of: "status.title"), "Sharing")
         XCTAssertEqual(label(of: "status.headline"), "No device is using Tether yet")
-        assertNowhere(element("status.howToConnect"), message: "the code is on the main screen, so nothing to open")
+        assertNowhere(element("status.howToConnect"), message: "Add a device is on the main screen")
     }
 
     /// The hotspot is on but WireGuard can't start (keys locked after a restart), so nothing is shared.

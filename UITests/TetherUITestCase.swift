@@ -3,7 +3,7 @@ import XCTest
 /// The fake app states a test can launch (`-TetherDemo <name>`, see Sources/DemoMode.swift).
 /// Their fixed values are described there.
 enum Scenario: String {
-    case waiting, wireGuardLockedWaiting, noDevices, sharing, wireGuardLocked, wireGuardNeedsReset, wireGuardUnsaved, qrCodeUnsaved, expiring, notificationsOff, notifying, notificationsScreen
+    case waiting, wireGuardLockedWaiting, noDevices, sharing, wireGuardLocked, wireGuardNeedsReset, wireGuardUnsaved, qrCodeUnsaved, expiring, notificationsOff, notifying, notificationsScreen, addDeviceScreen, addDeviceWaiting, addDeviceDone
 }
 
 /// Base class for the screen tests: launching, finding things by identifier, scrolling a List.
@@ -197,6 +197,12 @@ class TetherUITestCase: XCTestCase {
 
     // MARK: navigation
 
+    /// From the main screen to the Add a device sheet.
+    func openAddDevice(file: StaticString = #filePath, line: UInt = #line) {
+        reveal(element("add.open"), file: file, line: line).tap()
+        XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5), "the sheet did not open", file: file, line: line)
+    }
+
     /// From the main screen to one device's screen, through its row in the Devices section.
     func openDevice(_ name: String) {
         reveal(element("device.\(name)")).tap()
@@ -275,7 +281,7 @@ class TetherUITestCase: XCTestCase {
     /// Toolbar buttons, drawn by the system in its own tint.
     static let systemButtons: Set<String> = ["Cancel", "Done"]
     /// Tether's elements that use only `.secondary` text, the plain button tint or the system's red for a destructive button.
-    static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.steps", "notices.footer"]
+    static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.scan", "add.laptop", "notices.footer"]
 
     /// The audit without contrast, for a screen that is scrolled (see `audit`).
     var structuralAudit: XCUIAccessibilityAuditType {

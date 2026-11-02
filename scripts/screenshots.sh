@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Makes the README screenshots, docs/sharing.png, docs/add-device.png and docs/notifications.png, on a
 # fresh iPhone 17 Pro simulator with the newest iOS runtime installed. Builds a Debug app (the demo
-# scenarios are Debug only), takes the `sharing`, `noDevices` and `notificationsScreen` scenarios at
+# scenarios are Debug only), takes the `sharing`, `addDeviceScreen` and `notificationsScreen` scenarios at
 # 9:41 with full bars, and deletes the simulator afterwards. Run it after a change to those screens.
 set -euo pipefail
 
@@ -41,5 +41,5 @@ shot() { # shot <scenario> <docs file>
     echo "docs/$2"
 }
 shot sharing sharing.png
-shot noDevices add-device.png
+shot addDeviceScreen add-device.png
 shot notificationsScreen notifications.png
