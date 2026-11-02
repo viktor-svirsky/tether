@@ -16,6 +16,7 @@ final class HotspotSessionTests: XCTestCase {
     private var secrets: FlakySecrets!
     private var devices: WireGuardDevices!
     private var address: String?
+    private var ipv6Only = false
     private var now = Date(timeIntervalSince1970: 1_800_000_000)
     private var session: HotspotSession!
 
@@ -27,7 +28,8 @@ final class HotspotSessionTests: XCTestCase {
         secrets.failing = locked
         devices = WireGuardDevices(secrets: secrets)
         session = HotspotSession(devices: devices, server: server, keepAlive: sound, page: page,
-                                 sceneActive: sceneActive, hotspotAddress: { [unowned self] in address }, now: { [unowned self] in now }, log: log)
+                                 sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
+                                 carrierIPv6Only: { [unowned self] in ipv6Only }, now: { [unowned self] in now }, log: log)
     }
 
     private func minutes(_ m: Double) -> Date { start.addingTimeInterval(m * 60) }
@@ -113,11 +115,57 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(page.starts, ["\(v6):80"])
         XCTAssertEqual(session.deviceHost, v6)
         let ready = try XCTUnwrap(session.wireGuardReady)
-        XCTAssertTrue(session.wireGuardConfig(for: ready).contains("Endpoint = [\(v6)]:51820\n"))
+        XCTAssertTrue(try XCTUnwrap(session.wireGuardConfig(for: ready)).contains("Endpoint = [\(v6)]:51820\n"))
         XCTAssertTrue(body(page.ask(.config, from: "2607:fb91:88a2:e822:1868:49e0:74e1:bee3")).contains("Endpoint = [\(v6)]:51820\n"))
         address = nil
         session.syncWithHotspot()
         XCTAssertEqual(session.deviceHost, hotspot, "the usual address while there's no hotspot")
+    }
+
+    /// Before a device joins, the hotspot has no bridge, so there's no IPv6 address to give yet. The
+    /// carrier's own interface, pdp_ip0, already says whether there will be IPv4 (#64).
+    func testTheCarrierIsIPv6OnlyWhenTheInternetHasNoIPv4() {
+        let v6 = "2607:fb90:1::2"
+        let cases: [(interfaces: [String], ipv6Only: Bool, line: UInt)] = [
+            ([], false, #line), // no cellular, the simulator say
+            (["en0: 192.168.1.5", "en0: 2001:db8::5"], false, #line), // Wi-Fi only
+            (["pdp_ip0: \(v6)"], true, #line),
+            (["pdp_ip0: \(v6)", "pdp_ip0: 192.0.0.4"], true, #line), // a CLAT's address isn't IPv4 from the carrier
+            (["pdp_ip0: \(v6)", "pdp_ip1: 10.170.0.9"], true, #line), // nor is VoLTE's
+            (["pdp_ip0: \(v6)", "pdp_ip0: 10.20.30.40"], false, #line), // dual stack
+            (["pdp_ip0: 10.20.30.40"], false, #line),
+            (["pdp_ip0: fe80::1%pdp_ip0"], false, #line), // link-local only, not online yet
+            (["pdp_ip1: \(v6)"], false, #line), // not the internet's
+        ]
+        for c in cases {
+            XCTAssertEqual(Interfaces.carrierIPv6Only(in: c.interfaces), c.ipv6Only, line: c.line)
+        }
+    }
+
+    /// On an IPv6-only carrier nothing is handed out before a device joins the hotspot: 172.20.10.1
+    /// can't be reached there, and the IPv6 address comes with the hotspot (#64).
+    func testOnAnIPv6OnlyCarrierThereIsNoConfigBeforeTheHotspot() throws {
+        ipv6Only = true
+        makeSession()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertNil(session.deviceHost, "known from the start")
+        XCTAssertNil(session.wireGuardConfig(for: ready))
+        let v6 = "2607:fb91:88a2:e822:2c2a:d4de:6d26:71e2"
+        address = v6
+        session.syncWithHotspot()
+        XCTAssertEqual(session.deviceHost, v6)
+        XCTAssertTrue(try XCTUnwrap(session.wireGuardConfig(for: ready)).contains("Endpoint = [\(v6)]:51820\n"))
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertNil(session.deviceHost, "the hotspot went")
+        var changes = 0
+        session.willChange = { changes += 1 }
+        ipv6Only = false // IPv4 is back
+        session.syncWithHotspot()
+        XCTAssertEqual(session.deviceHost, hotspot)
+        XCTAssertEqual(changes, 1, "the screen hears of it")
+        session.syncWithHotspot()
+        XCTAssertEqual(changes, 1, "and only when it changes")
     }
 
     // MARK: Problems

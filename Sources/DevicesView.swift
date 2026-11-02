@@ -6,6 +6,8 @@ import SwiftUI
 /// config: the first time something connects with it or downloads it, that device is listed and a
 /// new code takes its place. When the next code couldn't be saved, it says so instead. The page runs
 /// once a device is on the hotspot, and its address never changes, so Browser is there before that.
+/// Except on a carrier that gives the iPhone IPv6 only: there the address comes with the hotspot's
+/// first device, so the code and both buttons wait for one, see `HotspotSession.deviceHost`.
 struct AddDeviceSection: View {
     @ObservedObject var model: Model
     let first: Bool
@@ -14,42 +16,22 @@ struct AddDeviceSection: View {
 
     var body: some View {
         if let ready = model.wireGuardReady {
-            let code = ReadyCode.for(model.wireGuardConfig(for: ready))
+            let config = model.wireGuardConfig(for: ready)
             Section {
-                if let qr = code.qr {
-                    Image(uiImage: qr)
-                        .interpolation(.none)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 240)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .accessibilityLabel("QR code for the next device")
-                        .accessibilityIdentifier("add.qr")
+                if let config, let host = model.deviceHost {
+                    let code = ReadyCode.for(config)
+                    qrAndButtons(qr: code.qr, file: code.file, host: host)
+                } else {
+                    Label("Join this iPhone's hotspot on the device first. The code shows up here once it's on.", systemImage: "personalhotspot")
+                        .accessibilityIdentifier("add.joinFirst")
                 }
-                // Side by side, so the card stays short. Bordered, or the row takes one tap for both.
-                HStack {
-                    if let file = code.file {
-                        ShareLink(item: file) {
-                            Label("Share file", systemImage: "square.and.arrow.up")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .accessibilityIdentifier("add.share")
-                    }
-                    Button {
-                        pageAddress = ConfigPage.url(host: model.deviceHost)
-                    } label: {
-                        Label("Browser", systemImage: "globe")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .accessibilityIdentifier("add.page")
-                }
-                .buttonStyle(.bordered)
             } header: {
                 header
             } footer: {
-                Text("Scan it with WireGuard: + > Create from QR code.")
-                    .accessibilityIdentifier("add.steps")
+                if config != nil {
+                    Text("Scan it with WireGuard: + > Create from QR code.")
+                        .accessibilityIdentifier("add.steps")
+                }
             }
             .alert("Open in a browser", isPresented: Binding { pageAddress != nil } set: { if !$0 { pageAddress = nil } }) {
                 Button("OK") {}
@@ -64,6 +46,39 @@ struct AddDeviceSection: View {
                 header
             }
         }
+    }
+
+    /// The QR code, with Share file and Browser under it.
+    @ViewBuilder private func qrAndButtons(qr: UIImage?, file: URL?, host: String) -> some View {
+        if let qr {
+            Image(uiImage: qr)
+                .interpolation(.none)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: 240)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .accessibilityLabel("QR code for the next device")
+                .accessibilityIdentifier("add.qr")
+        }
+        // Side by side, so the card stays short. Bordered, or the row takes one tap for both.
+        HStack {
+            if let file {
+                ShareLink(item: file) {
+                    Label("Share file", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+                .accessibilityIdentifier("add.share")
+            }
+            Button {
+                pageAddress = ConfigPage.url(host: host)
+            } label: {
+                Label("Browser", systemImage: "globe")
+                    .frame(maxWidth: .infinity)
+            }
+            .accessibilityIdentifier("add.page")
+        }
+        .buttonStyle(.bordered)
     }
 
     private var header: Text { Text(first ? "Add a device" : "Add another device") }

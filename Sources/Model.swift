@@ -99,7 +99,8 @@ final class Model: ObservableObject {
         session = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(),
                                  keepAlive: KeepAlive(log: Self.append), page: ConfigPageServer(),
                                  sceneActive: UIApplication.shared.applicationState != .background,
-                                 hotspotAddress: Interfaces.hotspotAddress, log: Self.append)
+                                 hotspotAddress: Interfaces.hotspotAddress, carrierIPv6Only: Interfaces.carrierIPv6Only,
+                                 log: Self.append)
         session.willChange = { [weak self] in self?.objectWillChange.send() }
         #if DEBUG
         if let demo {
@@ -226,9 +227,9 @@ final class Model: ObservableObject {
         session.removeWireGuardDevice(id)
     }
 
-    var deviceHost: String { session.deviceHost }
+    var deviceHost: String? { session.deviceHost }
 
-    func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String {
+    func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String? {
         session.wireGuardConfig(for: ready)
     }
 

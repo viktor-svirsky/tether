@@ -83,6 +83,7 @@ final class HotspotSession {
     private let keepAlive: KeepAliveSound
     private let page: ConfigPageServing
     private let hotspotAddress: () -> String?
+    private let carrierIPv6Only: () -> Bool
     private let now: () -> Date
     private let log: @MainActor (String) -> Void
 
@@ -94,6 +95,8 @@ final class HotspotSession {
     /// Who was connected at the watcher's last read in the background, see `readInBackground`.
     private var watchedConnected: Set<String> = []
     private var boundHost: String?
+    /// The carrier gives this iPhone IPv6 only, see `deviceHost`.
+    private var onIPv6OnlyCarrier: Bool { willSet { willChange() } }
     /// Why the saved setup can't be used, see `checkSetup`.
     private var setupProblem: String?
     /// Why the server didn't start on the hotspot. It goes with the hotspot.
@@ -105,7 +108,8 @@ final class HotspotSession {
     private var lastDownload: (client: String, at: Date, response: ConfigPage.Response)?
 
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
-         sceneActive: Bool, hotspotAddress: @escaping () -> String?, now: @escaping () -> Date = Date.init,
+         sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
+         now: @escaping () -> Date = Date.init,
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -113,6 +117,8 @@ final class HotspotSession {
         self.page = page
         self.sceneActive = sceneActive
         self.hotspotAddress = hotspotAddress
+        self.carrierIPv6Only = carrierIPv6Only
+        onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
         self.log = log
         publishSetup()
@@ -133,6 +139,8 @@ final class HotspotSession {
     /// it appears and stops it when it goes away or changes, so it never listens anywhere else.
     func syncWithHotspot() {
         checkSetup()
+        let ipv6Only = carrierIPv6Only()
+        if ipv6Only != onIPv6OnlyCarrier { onIPv6OnlyCarrier = ipv6Only }
         let hotspot = hotspotAddress()
         if running, hotspot != boundHost {
             log("hotspot address gone or changed, stopping")
@@ -303,11 +311,17 @@ final class HotspotSession {
     }
 
     /// Where devices reach Tether: the hotspot address it listens on, or the usual one while it
-    /// doesn't, for a QR code scanned before the hotspot is on.
-    var deviceHost: String { running ? boundHost ?? Hotspot.host : Hotspot.host }
+    /// doesn't, for a QR code scanned before the hotspot is on. None on a carrier that gives the
+    /// iPhone IPv6 only, until a device joins the hotspot: 172.20.10.1 can't be reached there, and
+    /// the iPhone's IPv6 address on the hotspot only comes with the hotspot's first device.
+    var deviceHost: String? {
+        if running { return boundHost ?? Hotspot.host }
+        return onIPv6OnlyCarrier ? nil : Hotspot.host
+    }
 
-    func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String {
-        devices.setup.clientConfig(for: ready, host: deviceHost)
+    /// None while there's no `deviceHost`, so no config is made that can't connect.
+    func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String? {
+        deviceHost.map { devices.setup.clientConfig(for: ready, host: $0) }
     }
 
     /// A page that listens again logs its next failure.
@@ -336,12 +350,15 @@ final class HotspotSession {
             return ConfigPage.page(state).forHead
         case .configHead:
             if let repeated { return repeated.forHead }
-            guard state == .ready, let ready = wireGuardReady else { return ConfigPage.page(state, status: .notFound).forHead }
-            return ConfigPage.config(wireGuardConfig(for: ready), fileName: WireGuardSetup.fileName(for: "")).forHead
+            guard state == .ready, let ready = wireGuardReady, let config = wireGuardConfig(for: ready) else {
+                return ConfigPage.page(state, status: .notFound).forHead
+            }
+            return ConfigPage.config(config, fileName: WireGuardSetup.fileName(for: "")).forHead
         case .config:
             if let repeated { return repeated }
-            guard state == .ready, let ready = wireGuardReady else { return ConfigPage.page(state, status: .notFound) }
-            let config = wireGuardConfig(for: ready)
+            guard state == .ready, let ready = wireGuardReady, let config = wireGuardConfig(for: ready) else {
+                return ConfigPage.page(state, status: .notFound)
+            }
             guard devices.claimReady(address: ready.address) else {
                 log("WireGuard: \(client) asked for the config, but the new device couldn't be saved")
                 return ConfigPage.page(.noConfig, status: .unavailable)
@@ -462,19 +479,39 @@ enum Interfaces {
     /// the devices' configs point at the wrong place.
     /// `interfaces` are lines like "bridge100: 172.20.10.1", from `addresses()`.
     static func hotspotAddress(in interfaces: [String], keeping current: String? = nil) -> String? {
-        let lines = interfaces.compactMap { line -> (name: String, address: String)? in
-            let parts = line.components(separatedBy: ": ")
-            return parts.count == 2 ? (parts[0], parts[1]) : nil
-        }
+        let lines = parse(interfaces)
         guard let bridge = lines.first(where: { $0.name.hasPrefix("bridge") && $0.address.hasPrefix("172.20.10.") }) else {
             return nil
         }
-        let carrierIPv4 = lines.contains { $0.name == "pdp_ip0" && !$0.address.contains(":") && !isCLAT($0.address) }
-        if carrierIPv4 { return bridge.address }
+        if carrierIPv4(lines) { return bridge.address }
         // A link-local address comes with its interface after a %, which only the iPhone knows.
         let ipv6 = lines.filter { $0.name == bridge.name && $0.address.contains(":") && !$0.address.contains("%") }.map(\.address)
         if let current, ipv6.contains(current) { return current }
         return ipv6.first ?? bridge.address
+    }
+
+    @MainActor static func carrierIPv6Only() -> Bool {
+        carrierIPv6Only(in: addresses())
+    }
+
+    /// The carrier gives this iPhone IPv6 and no IPv4, so the hotspot will give its devices no IPv4
+    /// either. Unlike `hotspotAddress`, this is known before a device joins and the bridge appears.
+    /// It takes pdp_ip0 with IPv6 to say so: no cellular at all, or Wi-Fi only, isn't IPv6 only.
+    static func carrierIPv6Only(in interfaces: [String]) -> Bool {
+        let lines = parse(interfaces)
+        let ipv6 = lines.contains { $0.name == "pdp_ip0" && $0.address.contains(":") && !$0.address.contains("%") }
+        return ipv6 && !carrierIPv4(lines)
+    }
+
+    private static func parse(_ interfaces: [String]) -> [(name: String, address: String)] {
+        interfaces.compactMap { line in
+            let parts = line.components(separatedBy: ": ")
+            return parts.count == 2 ? (parts[0], parts[1]) : nil
+        }
+    }
+
+    private static func carrierIPv4(_ lines: [(name: String, address: String)]) -> Bool {
+        lines.contains { $0.name == "pdp_ip0" && !$0.address.contains(":") && !isCLAT($0.address) }
     }
 
     private static func isCLAT(_ address: String) -> Bool {
