@@ -29,7 +29,12 @@ import (
 type cone struct {
 	device netip.AddrPort // where the packets come from: a device's tunnel address, or a client behind a router
 	owner  netip.Addr     // whose traffic it is, see Server.owner
-	conn   *net.UDPConn
+	// conn is IPv4 only. A socket for IPv4 and IPv6 gets its port from the free IPv6 ports alone,
+	// and on macOS and iOS that port can be another app's IPv4 one, which then gets every reply.
+	conn *net.UDPConn
+	// conn64 reaches IPv4 hosts through the carrier's NAT64 when there's no IPv4 route. Opened by
+	// the first packet that needs it, under lock, and nil until then.
+	conn64 *net.UDPConn
 	// out is never closed, so a late packet from handleUDP can't panic. done ends send instead.
 	out  chan outgoing
 	done chan struct{}
@@ -68,8 +73,21 @@ func (c *cone) idle() time.Duration {
 func (c *cone) Close() error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	c.once.Do(func() { c.conn.Close(); close(c.done) })
+	c.once.Do(func() {
+		c.conn.Close()
+		if c.conn64 != nil {
+			c.conn64.Close()
+		}
+		close(c.done)
+	})
 	return nil
+}
+
+// nat64Conn is the cone's NAT64 socket, nil until a packet needed it.
+func (c *cone) nat64Conn() *net.UDPConn {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.conn64
 }
 
 // handleUDP runs on wireguard-go's receive goroutine, since gVisor calls protocol handlers inline.
@@ -109,8 +127,7 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 	if !owner.IsValid() || full {
 		return nil
 	}
-	// Both IPv4 and IPv6, on one port, for an IPv4 address with no route that goes through NAT64.
-	conn, err := net.ListenUDP("udp", nil)
+	conn, err := net.ListenUDP("udp4", nil)
 	if err != nil {
 		return nil
 	}
@@ -167,7 +184,9 @@ func (s *Server) send(c *cone) {
 		err := s.sendTo(c.conn, o.payload, s.toNet(o.dst))
 		if noRoute(err) {
 			if via, ok := s.viaNAT64(s.ctx, o.dst); ok {
-				err = s.sendTo(c.conn, o.payload, s.toNet(via))
+				if conn64 := s.openNAT64(c); conn64 != nil {
+					err = s.sendTo(conn64, o.payload, s.toNet(via))
+				}
 			}
 		}
 		if err == nil {
@@ -176,36 +195,85 @@ func (s *Server) send(c *cone) {
 	}
 }
 
+// openNAT64 is the cone's NAT64 socket, opened the first time, with a goroutine that hands its
+// replies to the device until the cone closes. Both IPv4 and IPv6: the NAT64's addresses are IPv6,
+// and tests reach theirs on loopback IPv4. Nil when it can't open, or the cone or server closed.
+func (s *Server) openNAT64(c *cone) *net.UDPConn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c.conn64 != nil {
+		return c.conn64
+	}
+	select {
+	case <-c.done:
+		return nil
+	default:
+	}
+	if s.closed {
+		return nil
+	}
+	conn, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		return nil
+	}
+	c.conn64 = conn
+	s.conesRunning.Add(1) // under s.mu, so it comes before Close's Wait or not at all
+	go func() {
+		defer s.conesRunning.Done()
+		buf := make([]byte, 65535)
+		for s.reply(c, conn, buf) == nil {
+		}
+		// A NAT64 socket nobody reads must not stay in use, so the cone goes, as with its own socket.
+		c.Close()
+	}()
+	return conn
+}
+
 // receive hands replies from anyone to the device, until the cone's idle time passes without the
-// device sending.
+// device sending. The cone's NAT64 socket has a loop of its own, which ends when the cone closes.
 func (s *Server) receive(c *cone) {
 	buf := make([]byte, 65535)
 	for {
 		c.conn.SetReadDeadline(time.Unix(0, c.last.Load()).Add(c.idle()))
-		n, from, err := c.conn.ReadFromUDPAddrPort(buf)
-		if err != nil {
+		if err := s.reply(c, c.conn, buf); err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() && time.Since(time.Unix(0, c.last.Load())) < c.idle() {
 				continue // quiet this way, but the device is still sending
 			}
 			return
 		}
-		src := s.fromNAT64(s.fromNet(netip.AddrPortFrom(from.Addr().Unmap(), from.Port())))
-		if !src.Addr().Is4() {
-			continue
-		}
-		s.count(false, n)
-		packets := replyPackets(src, c.device, buf[:n], s.nextID())
-		s.mu.Lock()
-		select {
-		case <-c.done:
-			s.mu.Unlock()
-			return
-		default:
-		}
-		for _, p := range packets {
-			s.tun.inject(p)
-		}
-		s.mu.Unlock()
+	}
+}
+
+// reply reads one packet from conn and hands it to the cone's device. The read's error, a timeout
+// included, or net.ErrClosed once the cone closed.
+func (s *Server) reply(c *cone, conn *net.UDPConn, buf []byte) error {
+	n, from, err := conn.ReadFromUDPAddrPort(buf)
+	if err != nil {
+		return err
+	}
+	src := s.fromNAT64(s.fromNet(netip.AddrPortFrom(from.Addr().Unmap(), from.Port())))
+	if !src.Addr().Is4() {
+		return nil
+	}
+	s.count(false, n)
+	packets := replyPackets(src, c.device, buf[:n], s.nextID())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c.closed() {
+		return net.ErrClosed
+	}
+	for _, p := range packets {
+		s.tun.inject(p)
+	}
+	return nil
+}
+
+func (c *cone) closed() bool {
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
 	}
 }
 

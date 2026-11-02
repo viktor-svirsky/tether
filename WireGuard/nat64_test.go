@@ -102,6 +102,41 @@ func TestUDPReachesAnIPv4HostThroughTheCarriersNAT64(t *testing.T) {
 			t.Fatalf("echo %d: %q %v", i, buf[:n], err)
 		}
 	}
+	port := netip.MustParseAddrPort(conn.LocalAddr().String())
+	s.mu.Lock()
+	cn := s.cones[port]
+	s.mu.Unlock()
+	if cn == nil || cn.nat64Conn() == nil {
+		t.Fatal("no NAT64 socket on the cone that used the NAT64")
+	}
+}
+
+// A cone's own socket is IPv4 only. One socket for both would get its port from the free IPv6
+// ports alone, and on macOS and iOS that port can be another app's IPv4 one, which then gets the
+// replies: a lookup that never hears back (#67). NAT64 has a socket of its own, opened when needed.
+func TestAConesSocketHoldsItsIPv4Port(t *testing.T) {
+	s, c := setup(t)
+	conn, err := c.net.Dial("udp", udpEcho(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := answered(conn, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	port := netip.MustParseAddrPort(conn.LocalAddr().String())
+	s.mu.Lock()
+	cn := s.cones[port]
+	s.mu.Unlock()
+	if cn == nil {
+		t.Fatal("no cone for the device's port")
+	}
+	if local := cn.conn.LocalAddr().(*net.UDPAddr); local.IP.To4() == nil {
+		t.Fatalf("the cone's socket is on %v, want an IPv4 one", local)
+	}
+	if cn.nat64Conn() != nil {
+		t.Fatal("a NAT64 socket opened with an IPv4 route there")
+	}
 }
 
 // Only a missing route goes to the NAT64. A host that refuses is refused, as it would be directly.
