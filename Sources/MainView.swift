@@ -70,11 +70,14 @@ struct MainView: View {
                             NavigationLink { DeviceView(model: model, peer: peer) } label: {
                                 // A plain row: LabeledContent with a Label on its right grows several
                                 // rows tall inside a NavigationLink on iOS 27.
-                                deviceRow {
-                                    Text(peer.name)
-                                    if !textSize.isAccessibilitySize { Spacer() }
-                                    ConnectedLabel(connected: model.wireGuardConnected.contains(peer.address))
-                                        .font(.subheadline)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    deviceRow {
+                                        Text(peer.name)
+                                        if !textSize.isAccessibilitySize { Spacer() }
+                                        ConnectedLabel(connected: model.wireGuardConnected.contains(peer.address))
+                                            .font(.subheadline)
+                                    }
+                                    if model.needsNewConfig(peer) { OldAddressLabel().font(.footnote) }
                                 }
                             }
                             .accessibilityIdentifier("device.\(peer.name)")

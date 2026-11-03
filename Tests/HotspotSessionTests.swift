@@ -20,12 +20,15 @@ final class HotspotSessionTests: XCTestCase {
     private var now = Date(timeIntervalSince1970: 1_800_000_000)
     private var session: HotspotSession!
 
-    private func makeSession(sceneActive: Bool = true, locked: Bool = false, log: @escaping @MainActor (String) -> Void = { _ in }) {
+    /// `saved` is a setup already in the Keychain at launch.
+    private func makeSession(sceneActive: Bool = true, locked: Bool = false, saved: WireGuardSetup? = nil,
+                             log: @escaping @MainActor (String) -> Void = { _ in }) {
         server = FakeServer()
         sound = FakeSound()
         page = FakePage()
         secrets = FlakySecrets()
         secrets.failing = locked
+        secrets.data = saved.flatMap { try? JSONEncoder().encode($0) }
         devices = WireGuardDevices(secrets: secrets)
         session = HotspotSession(devices: devices, server: server, keepAlive: sound, page: page,
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
@@ -103,6 +106,33 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(Interfaces.hotspotAddress(in: both + ["pdp_ip0: 10.20.30.40"], keeping: b), "172.20.10.1", "IPv4 is back")
     }
 
+    /// The IPv6 address in use is kept through the hotspot going off and on and a relaunch, while the
+    /// bridge has it, since the devices set up there point at it (#65). 172.20.10.1 never changes, so
+    /// it isn't kept.
+    func testTheIPv6AddressInUseIsKeptAcrossARelaunch() {
+        let defaults = UserDefaults(suiteName: "HotspotSessionTests")!
+        defaults.removePersistentDomain(forName: "HotspotSessionTests")
+        let a = "2607:fb91:88a2:e822::a", b = "2607:fb91:88a2:e822::b"
+        var interfaces = ["bridge100: 172.20.10.1", "bridge100: \(a)", "pdp_ip0: 10.20.30.40"]
+        let keeper = HotspotAddressKeeper(defaults: defaults) { interfaces }
+        XCTAssertEqual(keeper.address(), "172.20.10.1")
+        XCTAssertNil(defaults.string(forKey: HotspotAddressKeeper.key), "nothing kept on a usual carrier")
+        interfaces = ["bridge100: 172.20.10.1", "bridge100: \(a)"]
+        XCTAssertEqual(keeper.address(), a)
+        interfaces = []
+        XCTAssertNil(keeper.address(), "the hotspot went")
+        interfaces = ["bridge100: 172.20.10.1", "bridge100: \(b)", "bridge100: \(a)"]
+        XCTAssertEqual(keeper.address(), a, "back, with another address listed first")
+        let relaunched = HotspotAddressKeeper(defaults: defaults) { interfaces }
+        XCTAssertEqual(relaunched.address(), a, "and after a relaunch")
+        interfaces = ["bridge100: 172.20.10.1", "bridge100: \(b)"]
+        XCTAssertEqual(relaunched.address(), b, "gone, so a new one")
+        interfaces += ["pdp_ip0: 10.20.30.40"]
+        XCTAssertEqual(relaunched.address(), "172.20.10.1", "IPv4 is back")
+        XCTAssertEqual(defaults.string(forKey: HotspotAddressKeeper.key), b, "only IPv6 is kept")
+        defaults.removePersistentDomain(forName: "HotspotSessionTests")
+    }
+
     /// On an IPv6-only hotspot everything a device is given points at the iPhone's IPv6 address: the
     /// server, the page, the QR code's config and the downloaded one.
     func testOnAnIPv6HotspotEverythingPointsAtTheIPv6Address() throws {
@@ -167,6 +197,132 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(changes, 1, "the screen hears of it")
         session.syncWithHotspot()
         XCTAssertEqual(changes, 1, "and only when it changes")
+    }
+
+    // MARK: Where a device's config points (#65)
+
+    /// A device keeps the address Tether listened on when it connected with the QR code or downloaded its config.
+    func testADeviceKeepsTheAddressItsConfigPointsAt() throws {
+        makeSession()
+        let v6 = "2607:fb91:88a2:e822::a"
+        address = v6
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let scanned = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [scanned.address]
+        session.sampleTraffic()
+        XCTAssertEqual(page.ask(.config, from: "2607:fb91:88a2:e822::99").status, .ok)
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [v6, v6])
+        XCTAssertEqual(WireGuardDevices(secrets: secrets).setup.peers.map(\.host), [v6, v6], "saved")
+        XCTAssertFalse(session.wireGuardPeers.contains { session.needsNewConfig($0) })
+    }
+
+    /// A new IPv6 address, from a new cellular session say, leaves a config pointing at the old one.
+    /// It says so while Tether listens somewhere else, and not while the hotspot is off, where it isn't known.
+    func testADeviceWhoseConfigPointsAtAnOldAddressNeedsANewOne() throws {
+        makeSession()
+        let a = "2607:fb91:88a2:e822::a", b = "2607:fb91:88a3:1234::b"
+        address = a
+        session.syncWithHotspot()
+        session.openAddWindow()
+        _ = page.ask(.config)
+        let peer = try XCTUnwrap(session.wireGuardPeers.first)
+        let rounds: [(address: String?, needsNewConfig: Bool, line: UInt)] = [
+            (a, false, #line),
+            (nil, false, #line),
+            (b, true, #line),
+            (hotspot, true, #line), // IPv4 is back, and the config still points at a
+            (a, false, #line),
+        ]
+        for round in rounds {
+            address = round.address
+            session.syncWithHotspot()
+            XCTAssertEqual(session.needsNewConfig(peer), round.needsNewConfig, line: round.line)
+        }
+    }
+
+    /// On a usual carrier the address is always 172.20.10.1, so no device ever needs a new config.
+    func testOnAUsualCarrierNoDeviceNeedsANewConfig() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let scanned = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [scanned.address]
+        session.sampleTraffic()
+        _ = page.ask(.config)
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [hotspot, hotspot])
+        for address in [nil, hotspot] {
+            self.address = address
+            session.syncWithHotspot()
+            XCTAssertFalse(session.wireGuardPeers.contains { session.needsNewConfig($0) })
+        }
+    }
+
+    /// A device saved before Tether kept where its config points isn't told to add itself again: that
+    /// isn't known. Once it connects, it points where Tether listens, after a relaunch too.
+    func testADeviceSavedWithoutAnAddressLearnsItWhenItConnects() throws {
+        var saved = WireGuardSetup.new()
+        let old = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        makeSession(saved: saved)
+        let a = "2607:fb91:88a2:e822::a", b = "2607:fb91:88a3:1234::b"
+        address = a
+        session.syncWithHotspot()
+        XCTAssertFalse(session.needsNewConfig(try XCTUnwrap(session.wireGuardPeers.first)), "not known is fine")
+        server.connected = [old.address]
+        session.sampleTraffic()
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [a])
+        server.connected = [] // its config can't reach b
+        address = b
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        XCTAssertTrue(session.needsNewConfig(try XCTUnwrap(session.wireGuardPeers.first)))
+
+        let again = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: FakeServer(), keepAlive: FakeSound(),
+                                   page: FakePage(), sceneActive: true, hotspotAddress: { [unowned self] in address },
+                                   now: { [unowned self] in now })
+        again.syncWithHotspot()
+        XCTAssertTrue(again.needsNewConfig(try XCTUnwrap(again.wireGuardPeers.first)), "after a relaunch too")
+    }
+
+    /// The server listens on one address only, so a device that connects points there, its config
+    /// changed by hand say, and isn't told to add itself again.
+    func testADeviceThatConnectsPointsWhereTetherListens() throws {
+        makeSession()
+        let a = "2607:fb91:88a2:e822::a", b = "2607:fb91:88a3:1234::b"
+        address = a
+        session.syncWithHotspot()
+        session.openAddWindow()
+        _ = page.ask(.config)
+        let peer = try XCTUnwrap(session.wireGuardPeers.first)
+        address = b
+        session.syncWithHotspot()
+        XCTAssertTrue(session.needsNewConfig(peer))
+        server.connected = [peer.address]
+        session.leftScreen()
+        session.watch() // the background read
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [b])
+        XCTAssertFalse(session.needsNewConfig(try XCTUnwrap(session.wireGuardPeers.first)))
+        XCTAssertEqual(WireGuardDevices(secrets: secrets).setup.peers.map(\.host), [b], "saved")
+    }
+
+    /// A device that is connected reaches Tether, so it isn't told otherwise, even when where it
+    /// points now can't be saved.
+    func testAConnectedDeviceNeverNeedsANewConfig() throws {
+        makeSession()
+        let a = "2607:fb91:88a2:e822::a", b = "2607:fb91:88a3:1234::b"
+        address = a
+        session.syncWithHotspot()
+        session.openAddWindow()
+        _ = page.ask(.config)
+        let peer = try XCTUnwrap(session.wireGuardPeers.first)
+        address = b
+        session.syncWithHotspot()
+        secrets.savesFail = true
+        server.connected = [peer.address]
+        session.sampleTraffic()
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [a], "not saved")
+        XCTAssertFalse(session.needsNewConfig(peer))
     }
 
     // MARK: Problems

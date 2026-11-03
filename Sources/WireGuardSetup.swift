@@ -31,8 +31,12 @@ struct WireGuardSetup: Codable, Equatable {
         var name: String
         var publicKey: Data
         var address: String
+        /// Where its config points: the hotspot address Tether listened on when the device got its
+        /// config, or when it last connected. Nil for a device saved before Tether kept it, until it
+        /// connects. See `HotspotSession.needsNewConfig`.
+        var host: String?
 
-        private enum SavedKeys: String, CodingKey { case id, name, privateKey, publicKey, address }
+        private enum SavedKeys: String, CodingKey { case id, name, privateKey, publicKey, address, host }
 
         func encode(to encoder: Encoder) throws {
             try encode(to: encoder, privateKey: Data())
@@ -46,6 +50,7 @@ struct WireGuardSetup: Codable, Equatable {
             try container.encode(privateKey, forKey: .privateKey)
             try container.encode(publicKey, forKey: .publicKey)
             try container.encode(address, forKey: .address)
+            try container.encodeIfPresent(host, forKey: .host)
         }
     }
 
@@ -102,10 +107,11 @@ struct WireGuardSetup: Codable, Equatable {
 
     /// Lists a device with a new key and the lowest free address, as if it had used the QR code, so
     /// its private key isn't kept. Nil when all 253 addresses are taken. For demos and tests.
-    mutating func addPeer(name: String) -> Peer? {
+    mutating func addPeer(name: String, host: String? = nil) -> Peer? {
         guard var peer = newReady()?.peer else { return nil }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         peer.name = trimmed.isEmpty ? freeName("Device") : trimmed
+        peer.host = host
         peers.append(peer)
         return peer
     }
@@ -116,11 +122,12 @@ struct WireGuardSetup: Codable, Equatable {
     }
 
     /// The ready device connected for the first time from `address`, or its config was downloaded
-    /// from the page: it's listed from now on, without its private key, and a new one is ready for
-    /// the next device. False when `address` isn't the ready device's.
-    mutating func claimReady(address: String) -> Bool {
+    /// from the page, pointing at `host`: it's listed from now on, without its private key, and a new
+    /// one is ready for the next device. False when `address` isn't the ready device's.
+    mutating func claimReady(address: String, host: String) -> Bool {
         guard var peer = ready?.peer, peer.address == address else { return false }
         peer.name = freeName("Device")
+        peer.host = host
         peers.append(peer)
         ready = nil
         prepareReady()
@@ -138,6 +145,11 @@ struct WireGuardSetup: Codable, Equatable {
 
     mutating func removePeer(_ id: Peer.ID) {
         peers.removeAll { $0.id == id }
+    }
+
+    /// The devices at these tunnel addresses reach Tether at `host`, see `Peer.host`.
+    mutating func pointPeers(_ addresses: Set<String>, at host: String) {
+        for i in peers.indices where addresses.contains(peers[i].address) { peers[i].host = host }
     }
 
     /// "Device", then "Device 2", "Device 3", skipping names already taken.
@@ -347,10 +359,10 @@ final class WireGuardDevices {
 
     /// See `WireGuardSetup.claimReady`. False too when it couldn't be saved, and then nothing changes,
     /// so the next sample tries again.
-    func claimReady(address: String) -> Bool {
+    func claimReady(address: String, host: String) -> Bool {
         guard loaded else { return false }
         let before = setup
-        guard setup.claimReady(address: address) else { return false }
+        guard setup.claimReady(address: address, host: host) else { return false }
         do {
             try save()
             return true
@@ -358,6 +370,13 @@ final class WireGuardDevices {
             setup = before
             return false
         }
+    }
+
+    /// See `WireGuardSetup.pointPeers`. Saves only when a device's host changes. False when none did,
+    /// or it couldn't be saved, and then nothing changes.
+    func point(_ addresses: Set<String>, at host: String) -> Bool {
+        guard setup.peers.contains(where: { addresses.contains($0.address) && $0.host != host }) else { return false }
+        return change { $0.pointPeers(addresses, at: host) }
     }
 
     /// False when the change couldn't be saved, and then nothing changes.

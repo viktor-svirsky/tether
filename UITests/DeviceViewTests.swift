@@ -76,6 +76,32 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(element("device.Windows PC"))
     }
 
+    /// On an IPv6-only carrier the iPhone's address changes with the cellular session, and a device set
+    /// up before points at the old one (#65). Its row and its screen say so, and only its own.
+    func testADeviceWhoseConfigPointsAtAnOldAddressSaysToAddItAgain() {
+        launch(.oldAddress)
+        let pc = reveal(element("device.Windows PC"))
+        XCTAssertTrue(pc.label.contains("Its config points at an old address. Add it again."), pc.label)
+        XCTAssertFalse(element("device.iPad").label.contains("old address"), element("device.iPad").label)
+        openDevice("Windows PC")
+        let warning = staticText("device.oldAddress") // the warning icon carries the identifier too
+        XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertEqual(warning.label, "Its config points at an old address of this iPhone, so it can't connect. Remove it, then add it again.")
+        XCTAssertTrue(element("device.remove").exists)
+        goBack(to: "Tether")
+        openDevice("iPad")
+        assertNowhere(element("device.oldAddress"))
+    }
+
+    /// A usual carrier's address never changes, so nothing says it did.
+    func testNoDevicePointsAtAnOldAddressOnAUsualCarrier() {
+        launch(.sharing)
+        reveal(element("device.Windows PC"))
+        assertNowhere(text(containing: "old address"))
+        openDevice("Windows PC")
+        assertNowhere(element("device.oldAddress"))
+    }
+
     // MARK: problems
 
     func testARenameThatCantBeSavedSaysSoAndKeepsTheName() {

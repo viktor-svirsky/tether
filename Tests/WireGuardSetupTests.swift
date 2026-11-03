@@ -115,13 +115,13 @@ final class WireGuardSetupTests: XCTestCase {
         var setup = WireGuardSetup.new()
         setup.prepareReady()
         let first = try XCTUnwrap(setup.ready)
-        XCTAssertTrue(setup.claimReady(address: first.address))
+        XCTAssertTrue(setup.claimReady(address: first.address, host: Hotspot.host))
         XCTAssertEqual(setup.peers.map(\.id), [first.id])
         XCTAssertEqual(setup.peers[0].name, "Device")
         let next = try XCTUnwrap(setup.ready)
         XCTAssertNotEqual(next.publicKey, first.publicKey)
         XCTAssertEqual(next.address, "10.7.0.3")
-        XCTAssertTrue(setup.claimReady(address: next.address))
+        XCTAssertTrue(setup.claimReady(address: next.address, host: Hotspot.host))
         XCTAssertEqual(setup.peers.map(\.name), ["Device", "Device 2"])
     }
 
@@ -129,9 +129,45 @@ final class WireGuardSetupTests: XCTestCase {
         var setup = WireGuardSetup.new()
         setup.prepareReady()
         let ready = setup.ready
-        XCTAssertFalse(setup.claimReady(address: "10.7.0.9"))
+        XCTAssertFalse(setup.claimReady(address: "10.7.0.9", host: Hotspot.host))
         XCTAssertEqual(setup.ready, ready)
         XCTAssertTrue(setup.peers.isEmpty)
+    }
+
+    /// A device keeps where its config points, saved with it (#65).
+    func testAClaimKeepsWhereTheConfigPoints() throws {
+        var setup = WireGuardSetup.new()
+        setup.prepareReady()
+        let ready = try XCTUnwrap(setup.ready)
+        XCTAssertNil(ready.host, "nobody has its config yet")
+        XCTAssertTrue(setup.claimReady(address: ready.address, host: "2001:db8::1"))
+        XCTAssertEqual(setup.peers.map(\.host), ["2001:db8::1"])
+        XCTAssertNil(setup.ready?.host)
+        XCTAssertEqual(try JSONDecoder().decode(WireGuardSetup.self, from: JSONEncoder().encode(setup)), setup)
+    }
+
+    /// Devices saved before Tether kept where their configs point have none, which isn't a reason to add them again.
+    func testASetupSavedWithoutHostsStillLoads() throws {
+        let setup = try JSONDecoder().decode(WireGuardSetup.self, from: oldSetup().data)
+        XCTAssertEqual(setup.peers.map(\.name), ["iPad", "Mac"])
+        XCTAssertEqual(setup.peers.map(\.host), [nil, nil])
+        XCTAssertNil(setup.ready?.host)
+    }
+
+    /// Only a change is saved, since every sample of who is connected asks.
+    func testPointingDevicesSavesOnlyAChange() throws {
+        let secrets = FlakySecrets()
+        let devices = WireGuardDevices(secrets: secrets)
+        let peer = try XCTUnwrap(devices.connectReady())
+        let saves = secrets.saves
+        XCTAssertFalse(devices.point([peer.address], at: Hotspot.host), "it points there already")
+        XCTAssertFalse(devices.point(["10.7.0.9"], at: "2001:db8::2"), "no device there")
+        XCTAssertEqual(secrets.saves, saves)
+        XCTAssertTrue(devices.point([peer.address], at: "2001:db8::2"))
+        XCTAssertEqual(WireGuardDevices(secrets: secrets).setup.peers.map(\.host), ["2001:db8::2"], "saved")
+        secrets.savesFail = true
+        XCTAssertFalse(devices.point([peer.address], at: "2001:db8::3"))
+        XCTAssertEqual(devices.setup.peers.map(\.host), ["2001:db8::2"], "not saved, not changed")
     }
 
     func testAFullSubnetHasNoReadyDevice() {
@@ -139,7 +175,7 @@ final class WireGuardSetupTests: XCTestCase {
         for i in 0..<253 { _ = setup.addPeer(name: "d\(i)") }
         setup.prepareReady()
         XCTAssertNil(setup.ready)
-        XCTAssertFalse(setup.claimReady(address: "10.7.0.2"))
+        XCTAssertFalse(setup.claimReady(address: "10.7.0.2", host: Hotspot.host))
     }
 
     func testTheStorePreparesAReadyDeviceForAnOlderSetup() throws {
@@ -158,7 +194,7 @@ final class WireGuardSetupTests: XCTestCase {
         let secrets = InMemorySecrets()
         let devices = WireGuardDevices(secrets: secrets)
         let ready = try XCTUnwrap(devices.setup.ready)
-        XCTAssertTrue(devices.claimReady(address: ready.address))
+        XCTAssertTrue(devices.claimReady(address: ready.address, host: Hotspot.host))
         let reloaded = WireGuardDevices(secrets: secrets).setup
         XCTAssertEqual(reloaded.peers.map(\.id), [ready.id])
         XCTAssertNotNil(reloaded.ready)
@@ -169,7 +205,7 @@ final class WireGuardSetupTests: XCTestCase {
         let devices = WireGuardDevices(secrets: secrets)
         let ready = try XCTUnwrap(devices.setup.ready)
         secrets.savesFail = true
-        XCTAssertFalse(devices.claimReady(address: ready.address))
+        XCTAssertFalse(devices.claimReady(address: ready.address, host: Hotspot.host))
         XCTAssertEqual(devices.setup.ready, ready)
         XCTAssertTrue(devices.setup.peers.isEmpty)
     }
@@ -216,7 +252,7 @@ final class WireGuardSetupTests: XCTestCase {
         var setup = WireGuardSetup.new()
         setup.prepareReady()
         let ready = try XCTUnwrap(setup.ready)
-        XCTAssertTrue(setup.claimReady(address: ready.address))
+        XCTAssertTrue(setup.claimReady(address: ready.address, host: Hotspot.host))
         let saved = try savedJSON(JSONEncoder().encode(setup))
         XCTAssertEqual(saved.peers[0]["privateKey"] as? String, "", "the device has its own copy, and the server only needs the public key")
         XCTAssertEqual(setup.peers[0].publicKey, ready.publicKey)
@@ -271,7 +307,7 @@ final class WireGuardSetupTests: XCTestCase {
         var setup = WireGuardSetup.new()
         setup.prepareReady()
         let claimed = try XCTUnwrap(setup.ready)
-        XCTAssertTrue(setup.claimReady(address: claimed.address))
+        XCTAssertTrue(setup.claimReady(address: claimed.address, host: Hotspot.host))
         let ready = try XCTUnwrap(setup.ready)
         let old = try JSONDecoder().decode(OldWireGuardSetup.self, from: JSONEncoder().encode(setup))
         XCTAssertEqual(old.serverPrivateKey, setup.serverPrivateKey)
@@ -606,7 +642,7 @@ final class FlakySecrets: SecretStore {
 extension WireGuardDevices {
     /// What a device scanning the QR code does: it connects with the ready device, which is claimed.
     func connectReady() -> WireGuardSetup.Peer? {
-        guard let ready = setup.ready, claimReady(address: ready.address) else { return nil }
+        guard let ready = setup.ready, claimReady(address: ready.address, host: Hotspot.host) else { return nil }
         return setup.peers.last
     }
 }

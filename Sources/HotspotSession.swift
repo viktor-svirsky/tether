@@ -387,6 +387,17 @@ final class HotspotSession {
         return onIPv6OnlyCarrier ? nil : Hotspot.host
     }
 
+    /// The device's config points at another address than the one Tether listens on, so it can't
+    /// connect until it's added again (#65). That happens only where the address changes: on a
+    /// carrier that gives the iPhone IPv6 only, whose address comes with each cellular session, or
+    /// one that starts or stops giving it IPv4. Elsewhere it's always 172.20.10.1. While the hotspot
+    /// is off, or for a device saved before Tether kept where it points, it's not known, and no. A
+    /// device that is connected reaches Tether, whatever is saved, see `rememberHosts`.
+    func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {
+        guard running, let host = peer.host, !connectedNow.contains(peer.address) else { return false }
+        return host != deviceHost
+    }
+
     /// None while there's no `deviceHost`, so no config is made that can't connect.
     func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String? {
         deviceHost.map { devices.setup.clientConfig(for: ready, host: $0) }
@@ -426,10 +437,11 @@ final class HotspotSession {
             return ConfigPage.config(config, fileName: WireGuardSetup.fileName(for: "")).forHead
         case .config:
             if let repeated { return repeated }
-            guard state == .ready, let ready = wireGuardReady, let config = wireGuardConfig(for: ready) else {
+            guard state == .ready, let ready = wireGuardReady, let host = deviceHost else {
                 return ConfigPage.page(state, status: .notFound)
             }
-            guard devices.claimReady(address: ready.address) else {
+            let config = devices.setup.clientConfig(for: ready, host: host)
+            guard devices.claimReady(address: ready.address, host: host) else {
                 log("WireGuard: \(client) asked for the config, but the new device couldn't be saved")
                 return ConfigPage.page(.noConfig, status: .unavailable)
             }
@@ -494,6 +506,7 @@ final class HotspotSession {
         let connected = server.connectedAddresses // from the snapshot above
         if connected != wireGuardConnected { wireGuardConnected = connected }
         claimReady(connected: connected)
+        rememberHosts(connected: connected)
         guard let last = lastSample else { return } // the first sample has nothing to compare with
         let seconds = now.timeIntervalSince(last.at)
         guard seconds > 0 else { return }
@@ -505,10 +518,19 @@ final class HotspotSession {
     /// Not saved means not claimed: the next check tries again. A code that isn't on the server can't
     /// have connected, whatever an older read says.
     private func claimReady(connected: Set<String>) {
-        guard readyLetIn, let ready = wireGuardReady, connected.contains(ready.address),
-              devices.claimReady(address: ready.address) else { return }
+        guard readyLetIn, let ready = wireGuardReady, connected.contains(ready.address), let host = deviceHost,
+              devices.claimReady(address: ready.address, host: host) else { return }
         log("WireGuard: a new device connected with the QR code")
         wireGuardPeersChanged()
+    }
+
+    /// A device that is connected reaches Tether where it listens now, since the server listens on
+    /// that one address only, so its config points there, or at a name that leads there. Saved for a
+    /// device saved before Tether kept where it points, and for one whose config was changed by hand
+    /// to the new address. Not saved means the next read tries again.
+    private func rememberHosts(connected: Set<String>) {
+        guard running, let host = deviceHost, devices.point(connected, at: host) else { return }
+        publishSetup()
     }
 
     /// The watcher's read in the background, where the sampler doesn't run: who is connected, for
@@ -522,6 +544,7 @@ final class HotspotSession {
         _ = server.snapshot() // refreshes connectedAddresses
         watchedConnected = server.connectedAddresses
         claimReady(connected: watchedConnected)
+        rememberHosts(connected: watchedConnected)
     }
 
     /// The server's counters never go backwards. The guard is only a safety net.
@@ -530,15 +553,30 @@ final class HotspotSession {
     }
 }
 
-enum Interfaces {
-    /// The last address hotspotAddress() gave, which it keeps while the bridge has it.
-    @MainActor private static var last: String?
+/// Where Tether listens on the hotspot, as `Interfaces.hotspotAddress(in:keeping:)` picks it, with the
+/// IPv6 address it last used kept in `defaults`: a device's config points at the address it was given,
+/// so Tether keeps it through the hotspot going off and on and a relaunch, while the bridge has it.
+/// Only IPv6 is kept, since 172.20.10.1 is always the same.
+final class HotspotAddressKeeper {
+    static let key = "hotspot.ipv6Address"
+    private let defaults: UserDefaults
+    private let interfaces: () -> [String]
 
-    @MainActor static func hotspotAddress() -> String? {
-        last = hotspotAddress(in: addresses(), keeping: last)
-        return last
+    /// `interfaces` are lines like "bridge100: 172.20.10.1", the tests' own in place of the iPhone's.
+    init(defaults: UserDefaults, interfaces: @escaping () -> [String] = Interfaces.addresses) {
+        self.defaults = defaults
+        self.interfaces = interfaces
     }
 
+    func address() -> String? {
+        let kept = defaults.string(forKey: Self.key)
+        let address = Interfaces.hotspotAddress(in: interfaces(), keeping: kept)
+        if let address, address.contains(":"), address != kept { defaults.set(address, forKey: Self.key) }
+        return address
+    }
+}
+
+enum Interfaces {
     /// Where devices on the hotspot reach the iPhone. iOS Personal Hotspot gives the phone
     /// 172.20.10.1 on a bridge interface, and matching the subnet, not only the name, keeps other
     /// bridges out. But when the carrier gives the iPhone IPv6 only (T-Mobile US among others), the
@@ -548,7 +586,7 @@ enum Interfaces {
     /// pdp_ip0, the internet's: VoLTE often has its own, with IPv4 on an IPv6-only carrier.
     /// The bridge may have more than one IPv6 address, some of them temporary ones that come and go.
     /// `current` is kept while the bridge has it, since a new address restarts the server and makes
-    /// the devices' configs point at the wrong place.
+    /// the devices' configs point at the wrong place. `HotspotAddressKeeper` keeps it across launches.
     /// `interfaces` are lines like "bridge100: 172.20.10.1", from `addresses()`.
     static func hotspotAddress(in interfaces: [String], keeping current: String? = nil) -> String? {
         let lines = parse(interfaces)

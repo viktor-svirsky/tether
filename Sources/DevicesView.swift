@@ -76,7 +76,8 @@ struct WireGuardProblemSection: View {
 }
 
 /// One device: whether it's connected, and removing it. Tapping the title renames it. A rename or
-/// removal that couldn't be saved says so at the top.
+/// removal that couldn't be saved says so at the top, and so does a config that points at an old
+/// address of this iPhone.
 struct DeviceView: View {
     @ObservedObject var model: Model
     let peer: WireGuardSetup.Peer
@@ -98,6 +99,13 @@ struct DeviceView: View {
                         .accessibilityIdentifier("device.problem")
                 }
             }
+            if model.needsNewConfig(current) {
+                Section {
+                    Label("Its config points at an old address of this iPhone, so it can't connect. Remove it, then add it again.",
+                          systemImage: "exclamationmark.triangle")
+                        .accessibilityIdentifier("device.oldAddress")
+                }
+            }
             Section {
                 ConnectedLabel(connected: connected)
                     .accessibilityIdentifier("device.status")
@@ -117,6 +125,20 @@ struct DeviceView: View {
                 // A removal that couldn't be saved stays here, and the screen says so.
                 if model.removeWireGuardDevice(peer.id) { dismiss() }
             }
+        }
+    }
+}
+
+/// Under a device's row on the main screen: its config points at an old address of this iPhone,
+/// see `HotspotSession.needsNewConfig`. The text keeps the label colour, since orange or grey text on
+/// the grouped background fails the contrast audit. The icon carries the orange.
+struct OldAddressLabel: View {
+    var body: some View {
+        Label {
+            Text("Its config points at an old address. Add it again.")
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
         }
     }
 }

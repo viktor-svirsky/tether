@@ -48,6 +48,9 @@ enum DemoScenario: String, CaseIterable {
     case addDeviceWaiting
     /// Like `addDeviceWaiting`, for the iPad, which is connected.
     case addDeviceDone
+    /// Like `sharing`, but the Windows PC's config points at an IPv6 address this iPhone had before,
+    /// the way a new cellular session moves it on an IPv6-only carrier, so it needs adding again.
+    case oldAddress
 
     static let argument = "-TetherDemo"
 
@@ -120,10 +123,11 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .localNetworkDenied:
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .localNetworkDenied, .oldAddress:
             var setup = WireGuardSetup.new()
             _ = setup.addPeer(name: "iPad")
-            _ = setup.addPeer(name: "Windows PC")
+            // A documentation address. The demo listens on 172.20.10.1, so it's an old one.
+            _ = setup.addPeer(name: "Windows PC", host: scenario == .oldAddress ? "2001:db8::1" : nil)
             secrets.data = try? JSONEncoder().encode(setup) // no ready device yet: loading makes and saves one
         case .wireGuardNeedsReset:
             secrets.data = Data("not a WireGuard setup".utf8) // undecodable, like a setup from a newer version
@@ -159,7 +163,7 @@ struct DemoState {
         model.downSpeed = downSpeed
         model.upSpeed = upSpeed
         // The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states.
-        model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone].contains(scenario) ? ["10.7.0.2"] : []
+        model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .oldAddress].contains(scenario) ? ["10.7.0.2"] : []
         model.expires = scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil
         model.localNetworkDenied = scenario == .localNetworkDenied
     }
