@@ -2,9 +2,12 @@
 
 [![CI](https://github.com/viktor-svirsky/tether/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/viktor-svirsky/tether/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/viktor-svirsky/tether)](https://github.com/viktor-svirsky/tether/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/viktor-svirsky/tether/total)](https://github.com/viktor-svirsky/tether/releases)
+[![Add to SideStore or AltStore](https://img.shields.io/badge/SideStore%20%7C%20AltStore-add%20source-0069b8)](https://viktor-svirsky.github.io/tether/add/)
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-blue)
 [![License: MIT](https://img.shields.io/github/license/viktor-svirsky/tether)](LICENSE)
 [![Website](https://img.shields.io/badge/website-viktor--svirsky.github.io%2Ftether-0069b8)](https://viktor-svirsky.github.io/tether/)
+[![Discussions](https://img.shields.io/github/discussions/viktor-svirsky/tether)](https://github.com/viktor-svirsky/tether/discussions)
 
 <img src="Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png" width="96" alt="Tether icon">
 
