@@ -5,9 +5,10 @@ import Foundation
 // and nothing to share, so a test launches the app with `-TetherDemo <scenario>` and gets one of
 // these states instead.
 //
-// A demo launch starts nothing real: no WireGuard server, keep-alive audio, hotspot watcher, 1 s
-// sampler or scene observers. Model.swift has the few hooks, all inside `#if DEBUG`.
-// This whole file is compiled out of Release builds.
+// A demo runs the real HotspotSession once, against the fakes in Fakes.swift, so a screen shows only
+// what the session itself publishes. Nothing runs after that: no WireGuard server, keep-alive audio,
+// hotspot watcher, 1 s sampler or scene observers. Model.swift has the few hooks, all inside
+// `#if DEBUG`. Foundation only, and compiled out of Release builds.
 
 enum DemoScenario: String, CaseIterable {
     /// Hotspot off.
@@ -157,15 +158,38 @@ struct DemoState {
         }
     }
 
-    @MainActor
-    func apply(to model: Model) {
-        model.running = running
-        model.downSpeed = downSpeed
-        model.upSpeed = upSpeed
-        // The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states.
-        model.wireGuardConnected = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .oldAddress].contains(scenario) ? ["10.7.0.2"] : []
-        model.expires = scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil
-        model.localNetworkDenied = scenario == .localNetworkDenied
+    /// The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states.
+    var connected: Set<String> {
+        [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .oldAddress].contains(scenario) ? ["10.7.0.2"] : []
     }
+
+    /// When this build stops opening: two days on for `expiring`, never for the others.
+    var expires: Date? { scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil }
+
+    var localNetworkDenied: Bool { scenario == .localNetworkDenied }
+
+    /// The real session, run the way the app would have by the time the screen shows: the hotspot comes
+    /// up or doesn't, the iPad's tunnel is up or not, and two samples a second apart give the speed.
+    @MainActor
+    func makeSession(log: @escaping @MainActor (String) -> Void = { _ in }) -> HotspotSession {
+        let server = FakeServer()
+        let clock = DemoClock()
+        let address = running ? Hotspot.host : nil
+        let session = HotspotSession(devices: WireGuardDevices(secrets: secrets()), server: server, keepAlive: FakeSound(),
+                                     page: FakePage(), sceneActive: true, hotspotAddress: { address },
+                                     now: { clock.now }, log: log)
+        session.syncWithHotspot()
+        server.connected = connected
+        session.sampleTraffic()
+        clock.now = clock.now.addingTimeInterval(1)
+        server.totals = TrafficTotals(bytesUp: UInt64(upSpeed / 8), bytesDown: UInt64(downSpeed / 8))
+        session.sampleTraffic()
+        return session
+    }
+}
+
+/// The demo session's clock, which `makeSession` moves on one second between its two samples.
+private final class DemoClock {
+    var now = DemoScenario.now
 }
 #endif

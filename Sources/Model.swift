@@ -124,19 +124,20 @@ final class Model: ObservableObject {
         #endif
         notifier = Notifier(defaults: noticeDefaults)
         poster = NoticePoster(center: noticeCenter)
-        session = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(log: Self.append),
-                                 keepAlive: KeepAlive(log: Self.append), page: ConfigPageServer(),
-                                 sceneActive: UIApplication.shared.applicationState != .background,
-                                 hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,
-                                 carrierIPv6Only: Interfaces.carrierIPv6Only,
-                                 log: Self.append)
+        #if DEBUG
+        session = demo?.makeSession(log: Self.append) ?? Self.session(secrets: secrets)
+        #else
+        session = Self.session(secrets: secrets)
+        #endif
         session.willChange = { [weak self] in self?.objectWillChange.send() }
         #if DEBUG
         if let demo {
             self.demo = demo
-            demo.apply(to: self)
+            expires = demo.expires
+            refreshExpiryWarning() // didSet doesn't run for a property set in its own class's init
+            localNetworkDenied = demo.localNetworkDenied
             if demo.scenario == .notifying { postDemoNoticeInBackground() }
-            return // no server, keep-alive audio, watcher, sampler or scene observers
+            return // no watcher, sampler or scene observers
         }
         #endif
         refreshExpiryWarning()
@@ -157,6 +158,16 @@ final class Model: ObservableObject {
             }
         }
         if session.sceneActive { startSampler() }
+    }
+
+    /// The session with the real server, sound, page and hotspot.
+    private static func session(secrets: SecretStore) -> HotspotSession {
+        HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(log: Self.append),
+                       keepAlive: KeepAlive(log: Self.append), page: ConfigPageServer(),
+                       sceneActive: UIApplication.shared.applicationState != .background,
+                       hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,
+                       carrierIPv6Only: Interfaces.carrierIPv6Only,
+                       log: Self.append)
     }
 
     /// Every second while the app is on screen. In the background nothing on screen needs it, so it stops.
