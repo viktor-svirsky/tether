@@ -581,8 +581,12 @@ func TestIPv6UDPFromARoutersClientIsDropped(t *testing.T) {
 	if rtts, err := pings(c, udpEcho(t), 1, 10*time.Second); err != nil || len(rtts) != 1 {
 		t.Fatalf("IPv4 UDP stopped working: %v", err)
 	}
-	if n := s.tracked(addr); n != 1 {
-		t.Fatalf("%d flows, want only the IPv4 one", n)
+	// UDP cones only: the download's TCP flow can still be closing on a slow machine (#70).
+	s.mu.Lock()
+	cones := s.conesOf[addr]
+	s.mu.Unlock()
+	if cones != 1 {
+		t.Fatalf("%d UDP flows, want only the IPv4 one", cones)
 	}
 	l.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	if n, _, err := l.ReadFromUDPAddrPort(make([]byte, 100)); err == nil {
