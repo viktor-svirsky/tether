@@ -48,9 +48,12 @@ type pinger struct {
 type waitingPing struct {
 	device netip.Addr // where the request came from: a device's tunnel address or a router's client
 	owner  netip.Addr // whose it is, see Server.owner
-	dst    netip.Addr
-	id     uint16 // the device's own identifier
-	at     time.Time
+	// traffic is the owner's counter, taken with the request, so a reply that comes after the
+	// owner left isn't counted for a device given its address since.
+	traffic *traffic
+	dst     netip.Addr
+	id      uint16 // the device's own identifier
+	at      time.Time
 }
 
 // isEchoRequest says p is a whole IPv4 echo request. A fragment of one isn't: ping never sends one
@@ -135,7 +138,8 @@ func (s *Server) sendPing(p []byte) {
 	s.mu.Lock()
 	limit := s.maxPings
 	s.mu.Unlock()
-	id, ok := s.pings.add(waitingPing{device: src, owner: owner, dst: dst, id: m.Ident(), at: time.Now()}, limit)
+	counts := s.trafficOf(owner)
+	id, ok := s.pings.add(waitingPing{device: src, owner: owner, traffic: counts, dst: dst, id: m.Ident(), at: time.Now()}, limit)
 	if !ok {
 		return
 	}
@@ -149,7 +153,7 @@ func (s *Server) sendPing(p []byte) {
 		s.pings.take(id, dst)
 		return
 	}
-	s.count(true, len(m.Payload())) // the data, as UDP and TCP count theirs
+	s.count(counts, true, len(m.Payload())) // the data, as UDP and TCP count theirs
 }
 
 // receivePings hands each reply to the device whose request it answers, until the socket closes.
@@ -175,7 +179,7 @@ func (s *Server) receivePings() {
 		if !ok {
 			continue // another app's, or one that waited too long
 		}
-		s.count(false, len(echo.Data))
+		s.count(w.traffic, false, len(echo.Data))
 		reply := echoReply(w.dst, w.device, w.id, uint16(echo.Seq), echo.Data, s.nextID())
 		s.mu.Lock()
 		// A reply whose owner went since, a removed device or a router that lost the role, is dropped.

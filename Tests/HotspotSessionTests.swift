@@ -1062,6 +1062,24 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(session.downSpeed, 0)
     }
 
+    func testEachDeviceStatsArePublished() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        let peer = try XCTUnwrap(devices.connectReady())
+        server.connected = [peer.address]
+        server.peerTraffic = [peer.address: TrafficTotals(bytesUp: 5, bytesDown: 1000)]
+        session.sampleTraffic()
+        XCTAssertEqual(session.wireGuardPeerStats[peer.address],
+                       PeerStats(traffic: TrafficTotals(bytesUp: 5, bytesDown: 1000), connected: true))
+        address = nil
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        XCTAssertEqual(session.wireGuardPeerStats[peer.address]?.traffic, TrafficTotals(bytesUp: 5, bytesDown: 1000),
+                       "with the hotspot off, what it used still shows")
+        XCTAssertEqual(session.wireGuardPeerStats[peer.address]?.connected, false)
+    }
+
     func testANewHotspotStartsFromZero() {
         makeSession()
         address = hotspot
@@ -1112,15 +1130,16 @@ final class FakeServer: WireGuardServing {
     }
 
     private(set) var running = false
-    private(set) var connectedAddresses: Set<String> = []
     /// Thrown by every start while set, before the devices are applied.
     var startError: Error?
     /// Every list with a device on this tunnel address is refused, by `setPeers` and so by `start`:
     /// the real server refuses a list by what's in it, so trying the same list again doesn't help.
     var refusedAddress: String?
-    /// What the next snapshot reports, while running.
+    /// What the next snapshot reports. Connected only while running, and the counters always, as
+    /// the real server carries them across restarts.
     var connected: Set<String> = []
     var totals = TrafficTotals()
+    var peerTraffic: [String: TrafficTotals] = [:]
     private(set) var starts: [String] = []
     private(set) var lastSetup: WireGuardSetup?
 
@@ -1139,7 +1158,6 @@ final class FakeServer: WireGuardServing {
 
     func stop() {
         running = false
-        connectedAddresses = []
     }
 
     func setPeers(_ setup: WireGuardSetup) throws {
@@ -1148,9 +1166,13 @@ final class FakeServer: WireGuardServing {
         lastSetup = setup
     }
 
-    func snapshot() -> TrafficTotals {
-        connectedAddresses = running ? connected : []
-        return totals
+    func snapshot() -> ServerSnapshot {
+        var peers: [String: PeerStats] = [:]
+        for (address, traffic) in peerTraffic { peers[address] = PeerStats(traffic: traffic) }
+        if running {
+            for address in connected { peers[address, default: PeerStats()].connected = true }
+        }
+        return ServerSnapshot(totals: totals, peers: peers)
     }
 
     func freeMemory() {}

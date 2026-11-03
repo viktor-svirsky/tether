@@ -203,6 +203,8 @@ type Server struct {
 	refused      netip.Addr
 	refusedAt    time.Time
 	shaken       map[netip.Addr]time.Time              // tunnel address -> when its last handshake was
+	endpoints    map[netip.Addr]string                 // tunnel address -> where it last connected from, ip:port
+	traffic      map[netip.Addr]*traffic               // each device's bytes, see trafficOfLocked
 	flows        map[netip.Addr]map[io.Closer]struct{} // open connections, to close a removed device's
 	cones        map[netip.AddrPort]*cone              // UDP, by device port, see udp.go
 	conesOf      map[netip.Addr]int                    // how many cones each device has
@@ -232,21 +234,23 @@ type arrival struct {
 // Start listens for WireGuard on host:port with the server's private key. Peers come from SetPeers.
 func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	s := &Server{
-		peers:    map[[32]byte]netip.Addr{},
-		keys:     map[netip.Addr][32]byte{},
-		names:    map[string]netip.Addr{},
-		shaken:   map[netip.Addr]time.Time{},
-		now:      time.Now,
-		flows:    map[netip.Addr]map[io.Closer]struct{}{},
-		cones:    map[netip.AddrPort]*cone{},
-		conesOf:  map[netip.Addr]int{},
-		arriving: map[stack.TransportEndpointID]*arrival{},
-		dials:    map[netip.Addr]int{},
-		conns:    map[netip.Addr]int{},
-		maxCones: maxCones,
-		maxDials: maxDials,
-		maxConns: maxConns,
-		maxPings: maxPings,
+		peers:     map[[32]byte]netip.Addr{},
+		keys:      map[netip.Addr][32]byte{},
+		names:     map[string]netip.Addr{},
+		shaken:    map[netip.Addr]time.Time{},
+		endpoints: map[netip.Addr]string{},
+		traffic:   map[netip.Addr]*traffic{},
+		now:       time.Now,
+		flows:     map[netip.Addr]map[io.Closer]struct{}{},
+		cones:     map[netip.AddrPort]*cone{},
+		conesOf:   map[netip.Addr]int{},
+		arriving:  map[stack.TransportEndpointID]*arrival{},
+		dials:     map[netip.Addr]int{},
+		conns:     map[netip.Addr]int{},
+		maxCones:  maxCones,
+		maxDials:  maxDials,
+		maxConns:  maxConns,
+		maxPings:  maxPings,
 		// Go's default keepalive probes every idle connection every 15 s, which keeps the cellular
 		// radio awake. Probing is still needed: when the device closes first, forwardTCP half-closes
 		// and waits for the remote, so a remote that silently went away would hold it forever.
@@ -525,6 +529,9 @@ func (s *Server) apply(want map[[32]byte]netip.Addr, router netip.Addr) error {
 		// clients' connections too, or their UDP flows would still count as its own.
 		if want[key] != addr || (addr == wasRouter && addr != router) {
 			delete(s.shaken, addr)
+			if want[key] != addr {
+				delete(s.traffic, addr) // what it used isn't the next one's
+			}
 			for c := range s.flows[addr] {
 				closing = append(closing, c)
 			}
@@ -597,6 +604,7 @@ func (s *Server) readHandshakes() {
 		return
 	}
 	handshakes := map[[32]byte]time.Time{}
+	endpoints := map[[32]byte]string{}
 	var key [32]byte
 	sc := bufio.NewScanner(strings.NewReader(status))
 	for sc.Scan() {
@@ -610,17 +618,24 @@ func (s *Server) readHandshakes() {
 			if sec, err := strconv.ParseInt(v, 10, 64); err == nil && sec > 0 {
 				handshakes[key] = time.Unix(sec, 0)
 			}
+		case "endpoint":
+			endpoints[key] = v
 		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	shaken := map[netip.Addr]time.Time{}
+	where := map[netip.Addr]string{}
 	for key, addr := range s.peers {
 		if at, ok := handshakes[key]; ok {
 			shaken[addr] = at
 		}
+		if ep, ok := endpoints[key]; ok {
+			where[addr] = ep
+		}
 	}
 	s.shaken = shaken
+	s.endpoints = where
 }
 
 // forwardable says whether a device may reach dst through the iPhone. The iPhone's own loopback,
@@ -697,12 +712,46 @@ func (s *Server) trackLocked(device netip.Addr, conns ...io.Closer) (untrack fun
 }
 
 // count adds n bytes to the totals.
-func (s *Server) count(up bool, n int) {
+// count adds n bytes to the totals and to t, the counter of the device the flow belongs to. Each
+// flow takes its device's counter when it starts, so counting takes no lock.
+func (s *Server) count(t *traffic, up bool, n int) {
 	if up {
 		s.up.Add(uint64(n))
 	} else {
 		s.down.Add(uint64(n))
 	}
+	if t == nil {
+		return
+	}
+	if up {
+		t.up.Add(uint64(n))
+	} else {
+		t.down.Add(uint64(n))
+	}
+}
+
+// traffic is one device's bytes, the same ones the totals count. It's kept while the device keeps
+// its address, so a device that leaves, or another one given its address, starts from zero.
+type traffic struct{ up, down atomic.Uint64 }
+
+// trafficOfLocked is the device's counter, made the first time. A flow of a device that's gone
+// gets one of its own that nothing keeps, so a device given that address later doesn't inherit it.
+func (s *Server) trafficOfLocked(owner netip.Addr) *traffic {
+	if _, ok := s.keys[owner]; !ok {
+		return &traffic{}
+	}
+	t := s.traffic[owner]
+	if t == nil {
+		t = &traffic{}
+		s.traffic[owner] = t
+	}
+	return t
+}
+
+func (s *Server) trafficOf(owner netip.Addr) *traffic {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trafficOfLocked(owner)
 }
 
 func addrPort(a tcpip.Address, port uint16) netip.AddrPort {
@@ -835,6 +884,7 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	// ended is set when SetPeers or Close resets the connection's sides, so fail has nothing left
 	// to wait for.
 	var ended atomic.Bool
+	counts := s.trafficOf(a.owner)
 	untrackOut, ok := s.track(src, a.owner, a.key, &closer{func() { ended.Store(true); resetOut() }}, wake{&wq})
 	if !ok {
 		out.Close() // nothing was exchanged, so a FIN is as honest as a reset
@@ -907,7 +957,7 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 		defer wg.Done()
 		// gVisor gives a reset's error to the first call that asks, and a read after that sees a
 		// clean end, so the endpoint's state says whether the device reset.
-		if err, writing := s.copy(out, in, true, nil); err != io.EOF {
+		if err, writing := s.copy(out, in, counts, true, nil); err != io.EOF {
 			if writing {
 				// The far end failed. What it sent first can still be unread in out's receive
 				// queue, and a reset of out now would throw it away, so the other direction reads
@@ -923,7 +973,7 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	}()
 	go func() {
 		defer wg.Done()
-		if err, writing := s.copy(in, out, false, &delivered); err != io.EOF {
+		if err, writing := s.copy(in, out, counts, false, &delivered); err != io.EOF {
 			fail(writing)
 		} else {
 			in.CloseWrite()
@@ -974,14 +1024,14 @@ func (s *Server) awaitProgress(done <-chan struct{}, moved *atomic.Int64) {
 // copy moves one direction of a TCP connection and counts it, until an error. A clean end
 // returns io.EOF. writing says the error was dst's, not src's. moved, when given, adds up what
 // was written.
-func (s *Server) copy(dst io.Writer, src io.Reader, up bool, moved *atomic.Int64) (err error, writing bool) {
+func (s *Server) copy(dst io.Writer, src io.Reader, counts *traffic, up bool, moved *atomic.Int64) (err error, writing bool) {
 	b := copyBufs.Get().(*[16 << 10]byte)
 	defer copyBufs.Put(b)
 	buf := b[:]
 	for {
 		n, err := src.Read(buf)
 		if n > 0 {
-			s.count(up, n)
+			s.count(counts, up, n)
 			if _, werr := dst.Write(buf[:n]); werr != nil {
 				return werr, true
 			}

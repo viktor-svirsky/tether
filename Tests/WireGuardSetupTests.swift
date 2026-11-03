@@ -620,6 +620,24 @@ final class TrafficTotalsTests: XCTestCase {
         XCTAssertEqual(carried.apply(to: TrafficTotals(bytesUp: 1, bytesDown: 5)), TrafficTotals(bytesUp: 11, bytesDown: 105))
         XCTAssertEqual(carried.apply(to: TrafficTotals()), run1, "a stopped server still counts what came before")
     }
+
+    func testEachDeviceCarriesItsOwnCountsAcrossRestarts() {
+        var carried = CarriedDevices()
+        let ipad = PeerStats(traffic: TrafficTotals(bytesUp: 10, bytesDown: 100), connected: true)
+        let mac = PeerStats(traffic: TrafficTotals(bytesUp: 1, bytesDown: 2))
+        carried.absorb(["10.7.0.2": ipad, "10.7.0.3": mac]) // the server restarts
+        let now = carried.apply(to: ["10.7.0.2": PeerStats(traffic: TrafficTotals(bytesUp: 5, bytesDown: 5), connected: true)])
+        XCTAssertEqual(now["10.7.0.2"], PeerStats(traffic: TrafficTotals(bytesUp: 15, bytesDown: 105), connected: true))
+        XCTAssertEqual(now["10.7.0.3"], mac, "a device the new run hasn't seen yet keeps what it used")
+        XCTAssertEqual(now["10.7.0.3"]?.connected, false)
+    }
+
+    func testADeviceThatLeavesDropsWhatItCarried() {
+        var carried = CarriedDevices()
+        carried.absorb(["10.7.0.2": PeerStats(traffic: TrafficTotals(bytesUp: 10, bytesDown: 100))])
+        carried.keep(only: [])
+        XCTAssertEqual(carried.apply(to: [:]), [:], "a device given its address later starts from zero, as on the server")
+    }
 }
 
 final class FlakySecrets: SecretStore {

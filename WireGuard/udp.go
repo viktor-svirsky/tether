@@ -29,6 +29,8 @@ import (
 type cone struct {
 	device netip.AddrPort // where the packets come from: a device's tunnel address, or a client behind a router
 	owner  netip.Addr     // whose traffic it is, see Server.owner
+	// traffic is the owner's byte counter, see Server.count. Set when the cone is kept, under s.mu.
+	traffic *traffic
 	// conn is IPv4 only. A socket for IPv4 and IPv6 gets its port from the free IPv6 ports alone,
 	// and on macOS and iOS that port can be another app's IPv4 one, which then gets every reply.
 	conn *net.UDPConn
@@ -147,6 +149,7 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 		}
 		return nil // the packet belonged to an owner that's gone, or came too late, so it goes too
 	}
+	c.traffic = s.trafficOfLocked(owner)
 	s.cones[device] = c
 	s.conesOf[owner]++
 	if device.Addr() != owner {
@@ -180,7 +183,7 @@ func (s *Server) send(c *cone) {
 		case <-c.done:
 			return
 		}
-		s.count(true, len(o.payload))
+		s.count(c.traffic, true, len(o.payload))
 		err := s.sendTo(c.conn, o.payload, s.toNet(o.dst))
 		if noRoute(err) {
 			if via, ok := s.viaNAT64(s.ctx, o.dst); ok {
@@ -255,7 +258,7 @@ func (s *Server) reply(c *cone, conn *net.UDPConn, buf []byte) error {
 	if !src.Addr().Is4() {
 		return nil
 	}
-	s.count(false, n)
+	s.count(c.traffic, false, n)
 	packets := replyPackets(src, c.device, buf[:n], s.nextID())
 	s.mu.Lock()
 	defer s.mu.Unlock()

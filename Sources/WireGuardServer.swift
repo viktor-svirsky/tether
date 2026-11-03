@@ -6,8 +6,9 @@ import TetherWG
 final class WireGuardServer {
     private(set) var running = false
     private var carried = CarriedTotals()
-    /// The run's counters at the last read Swift could decode.
-    private var lastRun = TrafficTotals()
+    private var carriedDevices = CarriedDevices()
+    /// The run's stats at the last read Swift could decode.
+    private var lastRun = ServerSnapshot()
     /// The last time stats couldn't be read, so it's logged once.
     private var statsProblem: String?
     private let log: (String) -> Void
@@ -42,14 +43,16 @@ final class WireGuardServer {
 
     func stop() {
         guard running else { return }
-        carried.absorb(currentRun())
-        lastRun = TrafficTotals() // the next run counts from zero
+        let last = currentRun()
+        carried.absorb(last.totals)
+        carriedDevices.absorb(last.peers)
+        lastRun = ServerSnapshot() // the next run counts from zero
         TetherWGStop()
         running = false
-        connectedAddresses = []
     }
 
-    /// Lets in exactly the devices in `setup`. A removed device's open connections finish on their own.
+    /// Lets in exactly the devices in `setup`. A removed device's open connections finish on their own,
+    /// and what it used is dropped, as on the server. A saved device the server doesn't let in now keeps it.
     func setPeers(_ setup: WireGuardSetup) throws {
         guard running else { return }
         let peers = setup.serverPeers
@@ -59,6 +62,7 @@ final class WireGuardServer {
         let json = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
         let error = json.withCString { TetherWGConfigure(UnsafeMutablePointer(mutating: $0)) }
         if let message = take(error) { throw Failure(message: message) }
+        carriedDevices.keep(only: Set(peers.map(\.address)).union(setup.peers.map(\.address)))
     }
 
     /// Gives memory Go's GC has freed back to iOS, on a memory warning.
@@ -66,33 +70,28 @@ final class WireGuardServer {
         if running { TetherWGFreeMemory() }
     }
 
-    /// Counters that only grow, across restarts.
-    func snapshot() -> TrafficTotals {
-        carried.apply(to: running ? currentRun() : TrafficTotals())
+    /// Counters that only grow, across restarts, the totals and each device's. Which devices are
+    /// connected, only while running.
+    func snapshot() -> ServerSnapshot {
+        let run = running ? currentRun() : ServerSnapshot()
+        return ServerSnapshot(totals: carried.apply(to: run.totals), peers: carriedDevices.apply(to: run.peers))
     }
 
-    /// The tunnel addresses of the devices with a recent handshake: set up and working, also
-    /// before they sent anything. From the last `snapshot()`, so both describe the same moment.
-    private(set) var connectedAddresses: Set<String> = []
-
-    /// This run's counters. Stats it can't read leave the last ones it read, so a stop still carries
-    /// what the run counted, and the failure is logged once, not every second.
-    private func currentRun() -> TrafficTotals {
-        guard let json = take(TetherWGStats()) else {
-            connectedAddresses = []
-            return lastRun
-        }
+    /// This run's stats. Stats it can't read leave the last counters it read, so a stop still carries
+    /// what the run counted, with no device shown as connected, and the failure is logged once, not
+    /// every second.
+    private func currentRun() -> ServerSnapshot {
+        guard let json = take(TetherWGStats()) else { return lastRun.disconnected }
         do {
-            let stats = try Stats(json: Data(json.utf8))
-            lastRun = stats.totals
-            connectedAddresses = stats.connected
+            lastRun = try Stats.read(Data(json.utf8))
             statsProblem = nil
+            return lastRun
         } catch {
             let problem = "WireGuard stats can't be read: \(error)"
             if problem != statsProblem { log(problem) }
             statsProblem = problem
+            return lastRun.disconnected
         }
-        return lastRun
     }
 
     struct Failure: Error, CustomStringConvertible {
@@ -101,7 +100,7 @@ final class WireGuardServer {
     }
 
     /// The message version both sides read, see boundary.go. A key added later doesn't change it.
-    static let messageVersion = 1
+    nonisolated static let messageVersion = 1
 
     /// The devices for TetherWGConfigure, see configMessage in boundary.go.
     struct ConfigMessage: Encodable {
@@ -116,13 +115,13 @@ final class WireGuardServer {
 
     /// What TetherWGStats returns, see statsMessage in boundary.go. WireGuard/testdata/stats.json is an
     /// example Go's tests check against the real thing.
-    struct Stats {
-        let totals: TrafficTotals
-        /// The devices with a recent handshake: set up and working, also before they sent anything.
-        let connected: Set<String>
+    enum Stats {
+        /// Only the version, read first: another version may lack keys this one needs.
+        private struct Version: Decodable {
+            let v: Int
+        }
 
         private struct Message: Decodable {
-            let v: Int
             let up: UInt64
             let down: UInt64
             let peers: [Peer]
@@ -130,6 +129,10 @@ final class WireGuardServer {
             struct Peer: Decodable {
                 let address: String
                 let connected: Bool
+                let up: UInt64
+                let down: UInt64
+                let handshake: Int64 // Unix seconds, 0 for never
+                let endpoint: String // "" for never
             }
         }
 
@@ -138,12 +141,27 @@ final class WireGuardServer {
             var description: String { "version \(version), this app reads \(WireGuardServer.messageVersion)" }
         }
 
-        init(json: Data) throws {
+        static func read(_ json: Data) throws -> ServerSnapshot {
+            let version = try JSONDecoder().decode(Version.self, from: json).v
+            guard version == WireGuardServer.messageVersion else { throw OtherVersion(version: version) }
             let m = try JSONDecoder().decode(Message.self, from: json)
-            guard m.v == WireGuardServer.messageVersion else { throw OtherVersion(version: m.v) }
-            totals = TrafficTotals(bytesUp: m.up, bytesDown: m.down)
-            connected = Set(m.peers.filter(\.connected).map(\.address))
+            var peers: [String: PeerStats] = [:]
+            for p in m.peers {
+                peers[p.address] = PeerStats(traffic: TrafficTotals(bytesUp: p.up, bytesDown: p.down), connected: p.connected,
+                                             lastHandshake: p.handshake > 0 ? Date(timeIntervalSince1970: TimeInterval(p.handshake)) : nil,
+                                             endpoint: p.endpoint.isEmpty ? nil : p.endpoint)
+            }
+            return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers)
         }
+    }
+}
+
+private extension ServerSnapshot {
+    /// The same counters, with no device connected: what's known when a read fails.
+    var disconnected: ServerSnapshot {
+        var s = self
+        for address in s.peers.keys { s.peers[address]?.connected = false }
+        return s
     }
 }
 

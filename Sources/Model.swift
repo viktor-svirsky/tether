@@ -52,6 +52,7 @@ final class Model: ObservableObject {
         set { session.wireGuardConnected = newValue }
     }
     var wireGuardPeers: [WireGuardSetup.Peer] { session.wireGuardPeers }
+    var wireGuardPeerStats: [String: PeerStats] { session.wireGuardPeerStats }
     var wireGuardReady: WireGuardSetup.Ready? { session.wireGuardReady }
     var wireGuardReadyProblem: String? { session.wireGuardReadyProblem }
     var wireGuardDeviceProblem: HotspotSession.DeviceProblem? { session.wireGuardDeviceProblem }

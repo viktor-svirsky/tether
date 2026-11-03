@@ -43,12 +43,11 @@ final class WireGuardServerTests: XCTestCase {
         try start()
         XCTAssertTrue(server.running)
         let s = server.snapshot()
-        XCTAssertEqual(s.bytesUp, 0)
-        XCTAssertEqual(s.bytesDown, 0)
-        XCTAssertTrue(server.connectedAddresses.isEmpty)
+        XCTAssertEqual(s.totals, TrafficTotals())
+        XCTAssertTrue(s.connected.isEmpty)
         server.stop()
         XCTAssertFalse(server.running)
-        XCTAssertEqual(server.snapshot().bytesDown, 0, "a stopped server still answers with its carried counters")
+        XCTAssertEqual(server.snapshot().totals, TrafficTotals(), "a stopped server still answers with its carried counters")
     }
 
     func testStartingAgainReplacesTheServer() throws {
@@ -117,10 +116,11 @@ final class WireGuardServerTests: XCTestCase {
     func testNoDeviceIsConnectedBeforeAHandshake() throws {
         var setup = WireGuardSetup.new()
         _ = setup.addPeer(name: "iPad")
-        XCTAssertTrue(server.connectedAddresses.isEmpty, "stopped")
+        XCTAssertTrue(server.snapshot().connected.isEmpty, "stopped")
         try start(setup)
-        _ = server.snapshot()
-        XCTAssertTrue(server.connectedAddresses.isEmpty, "the connected list comes back from Go, empty until a handshake")
+        let snap = server.snapshot()
+        XCTAssertTrue(snap.connected.isEmpty, "the connected list comes back from Go, empty until a handshake")
+        XCTAssertEqual(snap.peers[setup.peers[0].address], PeerStats(), "listed from Go, with nothing yet")
     }
 
     func testASetupGoRefusesComesBackAsAnError() throws {
@@ -179,22 +179,29 @@ final class WireGuardServerTests: XCTestCase {
     func testTheStatsGoSendsAreRead() throws {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("WireGuard/testdata/stats.json")
-        let stats = try WireGuardServer.Stats(json: Data(contentsOf: fixture))
+        let stats = try WireGuardServer.Stats.read(Data(contentsOf: fixture))
         XCTAssertEqual(stats.totals, TrafficTotals(bytesUp: 1840, bytesDown: 5262))
         XCTAssertEqual(stats.connected, ["10.7.0.2"])
+        XCTAssertEqual(stats.peers["10.7.0.2"], PeerStats(traffic: TrafficTotals(bytesUp: 1840, bytesDown: 5262), connected: true,
+                                                          lastHandshake: Date(timeIntervalSince1970: 1_793_718_000),
+                                                          endpoint: "172.20.10.3:51820"))
+        XCTAssertEqual(stats.peers["10.7.0.3"], PeerStats(), "never connected: no handshake, no endpoint")
     }
 
     func testStatsOfAnotherShapeAreRefused() {
-        XCTAssertThrowsError(try WireGuardServer.Stats(json: Data(#"{"v":2,"up":1,"down":1,"peers":[]}"#.utf8))) { error in
+        XCTAssertThrowsError(try WireGuardServer.Stats.read(Data(#"{"v":2,"up":1,"down":1,"peers":[]}"#.utf8))) { error in
             XCTAssertEqual("\(error)", "version 2, this app reads 1")
         }
-        XCTAssertThrowsError(try WireGuardServer.Stats(json: Data(#"{"up":1,"down":1,"connected":[]}"#.utf8)),
+        XCTAssertThrowsError(try WireGuardServer.Stats.read(Data(#"{"v":2,"bytes":1}"#.utf8))) { error in
+            XCTAssertEqual("\(error)", "version 2, this app reads 1", "the version is read first, whatever else changed")
+        }
+        XCTAssertThrowsError(try WireGuardServer.Stats.read(Data(#"{"up":1,"down":1,"connected":[]}"#.utf8)),
                              "the shape from before versions")
     }
 
     func testAStatsKeyAddedLaterIsSkipped() throws {
-        let json = #"{"v":1,"up":1,"down":2,"peers":[{"address":"10.7.0.2","connected":true,"handshake":5}],"paused":[]}"#
-        XCTAssertEqual(try WireGuardServer.Stats(json: Data(json.utf8)).connected, ["10.7.0.2"])
+        let json = #"{"v":1,"up":1,"down":2,"peers":[{"address":"10.7.0.2","connected":true,"up":1,"down":2,"handshake":5,"endpoint":"","paused":true}],"new":0}"#
+        XCTAssertEqual(try WireGuardServer.Stats.read(Data(json.utf8)).connected, ["10.7.0.2"])
     }
 
     func testTheDeviceListIsTheMessageGoReads() throws {

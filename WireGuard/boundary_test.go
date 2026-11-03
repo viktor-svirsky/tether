@@ -39,6 +39,7 @@ func TestParseConfig(t *testing.T) {
 	refused := map[string]string{
 		"another version":           configJSON(2, [][]byte{key(1)}, []string{"10.7.0.2"}),
 		"no version":                `{"peers":[]}`,
+		"no peers":                  `{"v":1}`,
 		"not JSON":                  `10.7.0.2`,
 		"a short key":               configJSON(1, [][]byte{make([]byte, 31)}, []string{"10.7.0.2"}),
 		"a key that isn't base64":   `{"v":1,"peers":[{"key":"not base64!","address":"10.7.0.2"}]}`,

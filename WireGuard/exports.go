@@ -100,7 +100,8 @@ func TetherWGFreeMemory() { debug.FreeOSMemory() }
 //
 //export TetherWGStats
 func TetherWGStats() (result *C.char) {
-	// A panic that leaves here would end the whole app, see survive. Swift reads nil as no stats.
+	// A panic that leaves here would end the whole app, see survive. This one is dropped on
+	// purpose: Swift reads nil as no stats this round and keeps the last counters it read.
 	defer func() {
 		if recover() != nil {
 			result = nil

@@ -42,6 +42,13 @@ type peerStats struct {
 	Address string `json:"address"`
 	// Connected: a recent handshake, so the device is set up and working, also before it sent anything.
 	Connected bool `json:"connected"`
+	// Up and Down are its bytes since it got its address in this run, the same bytes as the totals.
+	Up   uint64 `json:"up"`
+	Down uint64 `json:"down"`
+	// Handshake is its last one in Unix seconds, 0 for never. Endpoint is where that came from,
+	// ip:port, empty for never.
+	Handshake int64  `json:"handshake"`
+	Endpoint  string `json:"endpoint"`
 }
 
 // parseConfig reads a configMessage. A key that isn't 32 bytes, an address that isn't one, or a
@@ -54,6 +61,9 @@ func parseConfig(js string) ([]Peer, error) {
 	}
 	if m.V != messageVersion {
 		return nil, fmt.Errorf("device list version %d, this server reads %d", m.V, messageVersion)
+	}
+	if m.Peers == nil { // missing or null, while no devices is []
+		return nil, fmt.Errorf("device list: no peers")
 	}
 	peers := make([]Peer, 0, len(m.Peers))
 	seenKeys := map[[32]byte]bool{}
@@ -106,6 +116,8 @@ func statsJSON() (string, bool) {
 	return string(b), true
 }
 
+// statsMessage reads the totals and the devices one after the other, so bytes moving meanwhile can
+// make the devices differ from the totals for one read.
 func (s *Server) statsMessage() statsMessage {
 	st := s.Stats()
 	connected := map[string]bool{}
@@ -113,8 +125,20 @@ func (s *Server) statsMessage() statsMessage {
 		connected[a] = true
 	}
 	m := statsMessage{V: messageVersion, Up: st.Up, Down: st.Down, Peers: []peerStats{}}
-	for _, a := range s.addresses() {
-		m.Peers = append(m.Peers, peerStats{Address: a, Connected: connected[a]})
+	addresses := s.addresses()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range addresses {
+		p := peerStats{Address: a, Connected: connected[a]}
+		addr := netip.MustParseAddr(a)
+		if t := s.traffic[addr]; t != nil {
+			p.Up, p.Down = t.up.Load(), t.down.Load()
+		}
+		if at, ok := s.shaken[addr]; ok {
+			p.Handshake = at.Unix()
+		}
+		p.Endpoint = s.endpoints[addr]
+		m.Peers = append(m.Peers, p)
 	}
 	return m
 }

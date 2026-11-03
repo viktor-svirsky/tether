@@ -4,13 +4,13 @@ import Foundation
 @MainActor
 protocol WireGuardServing: AnyObject {
     var running: Bool { get }
-    /// From the last `snapshot()`.
-    var connectedAddresses: Set<String> { get }
     /// Applies the setup's devices as `setPeers` does, and is left stopped when they're refused.
     func start(host: String, setup: WireGuardSetup, port: UInt16) throws
     func stop()
     func setPeers(_ setup: WireGuardSetup) throws
-    func snapshot() -> TrafficTotals
+    /// The counters, the totals and each device's, only grow, across restarts. Which devices are
+    /// connected, only while running.
+    func snapshot() -> ServerSnapshot
     func freeMemory()
 }
 
@@ -71,6 +71,8 @@ final class HotspotSession {
     /// The tunnel addresses of the WireGuard devices that are connected. Read with every sample
     /// while the app is on screen.
     var wireGuardConnected: Set<String> = [] { willSet { willChange() } }
+    /// Each device's numbers by tunnel address, read with the speeds. With the hotspot off, what they used.
+    private(set) var wireGuardPeerStats: [String: PeerStats] = [:] { willSet { willChange() } }
     /// Who was connected at the last read, for the notifications: the sampler's on screen, the
     /// watcher's in the background. Nothing on screen shows the watcher's, so it isn't published.
     var connectedNow: Set<String> { sceneActive ? wireGuardConnected : watchedConnected }
@@ -306,8 +308,7 @@ final class HotspotSession {
         guard open != readyLetIn, !open || devices.loaded else { return }
         // A device whose first handshake came since the last read is listed before its code goes.
         if !open, running, server.running {
-            _ = server.snapshot() // refreshes connectedAddresses
-            claimReady(connected: server.connectedAddresses)
+            claimReady(connected: server.snapshot().connected)
         }
         readyLetIn = open
         if open {
@@ -330,8 +331,7 @@ final class HotspotSession {
     func shortcutState() -> ShortcutReply.State {
         var connected = wireGuardConnected
         if running, server.running {
-            _ = server.snapshot() // refreshes connectedAddresses
-            connected = server.connectedAddresses
+            connected = server.snapshot().connected
         }
         return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem)
     }
@@ -500,19 +500,22 @@ final class HotspotSession {
             if downSpeed != 0 { downSpeed = 0 }
             if upSpeed != 0 { upSpeed = 0 }
             if !wireGuardConnected.isEmpty { wireGuardConnected = [] }
+            let peers = server.snapshot().peers // a stopped server answers with what each device used
+            if peers != wireGuardPeerStats { wireGuardPeerStats = peers }
             return
         }
         let snap = server.snapshot()
-        defer { lastSample = (snap.bytesUp, snap.bytesDown, now) }
-        let connected = server.connectedAddresses // from the snapshot above
+        defer { lastSample = (snap.totals.bytesUp, snap.totals.bytesDown, now) }
+        let connected = snap.connected
         if connected != wireGuardConnected { wireGuardConnected = connected }
+        if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
         claimReady(connected: connected)
         rememberHosts(connected: connected)
         guard let last = lastSample else { return } // the first sample has nothing to compare with
         let seconds = now.timeIntervalSince(last.at)
         guard seconds > 0 else { return }
-        upSpeed = Self.bps(snap.bytesUp, last.up, seconds)
-        downSpeed = Self.bps(snap.bytesDown, last.down, seconds)
+        upSpeed = Self.bps(snap.totals.bytesUp, last.up, seconds)
+        downSpeed = Self.bps(snap.totals.bytesDown, last.down, seconds)
     }
 
     /// A device that connected with the QR code is listed, and the code changes for the next one.
@@ -542,8 +545,7 @@ final class HotspotSession {
             watchedConnected = []
             return
         }
-        _ = server.snapshot() // refreshes connectedAddresses
-        watchedConnected = server.connectedAddresses
+        watchedConnected = server.snapshot().connected
         claimReady(connected: watchedConnected)
         rememberHosts(connected: watchedConnected)
     }
