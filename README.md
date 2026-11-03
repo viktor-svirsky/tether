@@ -164,7 +164,8 @@ Sources/ConfigPage.swift     the page on the hotspot that hands out the next dev
 Sources/Notices.swift        what to tell in a notification and when (tested on the Mac), and SettingsView.swift the Settings sheet
 Sources/KeepAlive.swift      silent audio to stay alive in the background
 Sources/Shortcuts.swift      the Start Tether and Is Tether Sharing? actions for Shortcuts and Siri
-Sources/DemoMode.swift       fake app states for the UI tests (Debug builds only)
+Sources/DemoMode.swift       the UI tests' demo states, run through the real session (Debug builds only)
+Sources/Fakes.swift          the stand-in server, page and sound the unit tests and demos share (Debug builds only)
 Tests/                       unit tests, run on the Mac
 UITests/                     UI tests for every screen, run on the iOS Simulator
 scripts/screenshots.sh       makes the three screenshots above, on an iPhone simulator

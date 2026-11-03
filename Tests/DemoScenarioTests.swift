@@ -2,7 +2,9 @@ import XCTest
 @testable import TetherCore
 
 /// Each demo runs the real session against the fakes, so what a UI test sees is what the session
-/// publishes. These hold every demo to what its screen shows.
+/// publishes. These check what each demo's session publishes: the hotspot, the connected iPad, the
+/// speeds, the problems and the QR code. The expiry warning and Local Network are Model's own, set
+/// from the demo in Model.init, and the UI tests check those screens.
 @MainActor
 final class DemoScenarioTests: XCTestCase {
     private let waiting: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting]
