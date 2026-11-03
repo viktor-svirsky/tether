@@ -137,12 +137,12 @@ func without(p, hole netip.Prefix) []netip.Prefix {
 	return append([]netip.Prefix{lo}, without(hi, hole)...)
 }
 
+// Stats are the server's counters and the devices with a recent handshake. statsMessage in
+// boundary.go is what Swift gets.
 type Stats struct {
-	Up   uint64 `json:"up"`
-	Down uint64 `json:"down"`
-	// Connected holds the tunnel addresses with a recent handshake, so the app can say which
-	// WireGuard device is set up and working, also before it sent any traffic.
-	Connected []string `json:"connected"`
+	Up        uint64
+	Down      uint64
+	Connected []string // tunnel addresses
 }
 
 type Server struct {

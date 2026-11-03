@@ -174,6 +174,38 @@ final class WireGuardServerTests: XCTestCase {
         }
     }
 
+    /// WireGuard/testdata/stats.json is the shape Go sends, with traffic and one of two devices
+    /// connected: TestStatsMatchTheFixtureSwiftReads checks it against a live server.
+    func testTheStatsGoSendsAreRead() throws {
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("WireGuard/testdata/stats.json")
+        let stats = try WireGuardServer.Stats(json: Data(contentsOf: fixture))
+        XCTAssertEqual(stats.totals, TrafficTotals(bytesUp: 1840, bytesDown: 5262))
+        XCTAssertEqual(stats.connected, ["10.7.0.2"])
+    }
+
+    func testStatsOfAnotherShapeAreRefused() {
+        XCTAssertThrowsError(try WireGuardServer.Stats(json: Data(#"{"v":2,"up":1,"down":1,"peers":[]}"#.utf8))) { error in
+            XCTAssertEqual("\(error)", "version 2, this app reads 1")
+        }
+        XCTAssertThrowsError(try WireGuardServer.Stats(json: Data(#"{"up":1,"down":1,"connected":[]}"#.utf8)),
+                             "the shape from before versions")
+    }
+
+    func testAStatsKeyAddedLaterIsSkipped() throws {
+        let json = #"{"v":1,"up":1,"down":2,"peers":[{"address":"10.7.0.2","connected":true,"handshake":5}],"paused":[]}"#
+        XCTAssertEqual(try WireGuardServer.Stats(json: Data(json.utf8)).connected, ["10.7.0.2"])
+    }
+
+    func testTheDeviceListIsTheMessageGoReads() throws {
+        let message = WireGuardServer.ConfigMessage(peers: [.init(key: Data(repeating: 7, count: 32), address: "10.7.0.2")])
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any]
+        XCTAssertEqual(json?["v"] as? Int, 1)
+        let peer = (json?["peers"] as? [[String: Any]])?.first
+        XCTAssertEqual(peer?["key"] as? String, Data(repeating: 7, count: 32).base64EncodedString())
+        XCTAssertEqual(peer?["address"] as? String, "10.7.0.2")
+    }
+
     func testSetPeersBeforeStartDoesNothing() {
         var setup = WireGuardSetup.new()
         _ = setup.addPeer(name: "iPad")

@@ -122,7 +122,7 @@ final class Model: ObservableObject {
         #endif
         notifier = Notifier(defaults: noticeDefaults)
         poster = NoticePoster(center: noticeCenter)
-        session = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(),
+        session = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(log: Self.append),
                                  keepAlive: KeepAlive(log: Self.append), page: ConfigPageServer(),
                                  sceneActive: UIApplication.shared.applicationState != .background,
                                  hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,

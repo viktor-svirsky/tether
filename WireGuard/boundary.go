@@ -1,0 +1,141 @@
+package main
+
+// The messages between WireGuardServer.swift and the server, as JSON, and the plain Go functions
+// behind the C exports in exports.go, which only convert strings. Tests call these, since a test
+// file can't import "C".
+//
+// Each message carries "v", the version of its shape. Adding a key doesn't change it: both sides
+// skip keys they don't know. Removing a key or changing what one means does, and each side refuses
+// a version it doesn't know rather than reading it wrong.
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/netip"
+	"sort"
+)
+
+const messageVersion = 1
+
+// configMessage is the devices Swift lets in, see TetherWGConfigure.
+type configMessage struct {
+	V     int          `json:"v"`
+	Peers []configPeer `json:"peers"`
+}
+
+type configPeer struct {
+	Key     []byte `json:"key"` // 32 bytes, base64 in the JSON
+	Address string `json:"address"`
+}
+
+// statsMessage is what TetherWGStats returns. testdata/stats.json is an example, and
+// WireGuardServerTests reads it, so a change here shows up on the Swift side.
+type statsMessage struct {
+	V    int    `json:"v"`
+	Up   uint64 `json:"up"`
+	Down uint64 `json:"down"`
+	// Peers holds every device the server lets in, in address order.
+	Peers []peerStats `json:"peers"`
+}
+
+type peerStats struct {
+	Address string `json:"address"`
+	// Connected: a recent handshake, so the device is set up and working, also before it sent anything.
+	Connected bool `json:"connected"`
+}
+
+// parseConfig reads a configMessage. A key that isn't 32 bytes, an address that isn't one, or a
+// key or address used twice is an error, so a device can't be shown as set up while the server
+// leaves it out.
+func parseConfig(js string) ([]Peer, error) {
+	var m configMessage
+	if err := json.Unmarshal([]byte(js), &m); err != nil {
+		return nil, fmt.Errorf("device list: %w", err)
+	}
+	if m.V != messageVersion {
+		return nil, fmt.Errorf("device list version %d, this server reads %d", m.V, messageVersion)
+	}
+	peers := make([]Peer, 0, len(m.Peers))
+	seenKeys := map[[32]byte]bool{}
+	seenAddrs := map[netip.Addr]bool{}
+	for i, p := range m.Peers {
+		if len(p.Key) != 32 {
+			return nil, fmt.Errorf("device %d: its key is %d bytes, not 32", i+1, len(p.Key))
+		}
+		a, err := netip.ParseAddr(p.Address)
+		if err != nil {
+			return nil, fmt.Errorf("device %d: %w", i+1, err)
+		}
+		var key [32]byte
+		copy(key[:], p.Key)
+		if seenKeys[key] || seenAddrs[a] {
+			return nil, fmt.Errorf("device %d repeats a key or address", i+1)
+		}
+		seenKeys[key], seenAddrs[a] = true, true
+		peers = append(peers, Peer{PublicKey: key, Address: a})
+	}
+	return peers, nil
+}
+
+// configure lets in exactly the devices in a configMessage. With no server it only checks the
+// message: WireGuardServer.swift sends the devices again with each start.
+func configure(js string) error {
+	peers, err := parseConfig(js)
+	if err != nil {
+		return err
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if server == nil {
+		return nil
+	}
+	return server.SetPeers(peers)
+}
+
+// statsJSON is the running server's statsMessage, and false when no server runs.
+func statsJSON() (string, bool) {
+	mu.Lock()
+	defer mu.Unlock()
+	if server == nil {
+		return "", false
+	}
+	b, err := json.Marshal(server.statsMessage())
+	if err != nil {
+		return "", false // plain numbers and strings, so it can't fail
+	}
+	return string(b), true
+}
+
+func (s *Server) statsMessage() statsMessage {
+	st := s.Stats()
+	connected := map[string]bool{}
+	for _, a := range st.Connected {
+		connected[a] = true
+	}
+	m := statsMessage{V: messageVersion, Up: st.Up, Down: st.Down, Peers: []peerStats{}}
+	for _, a := range s.addresses() {
+		m.Peers = append(m.Peers, peerStats{Address: a, Connected: connected[a]})
+	}
+	return m
+}
+
+// addresses are the tunnel addresses of the devices the server lets in, in order.
+func (s *Server) addresses() []string {
+	s.mu.Lock()
+	ips := make([]netip.Addr, 0, len(s.peers))
+	for _, a := range s.peers {
+		ips = append(ips, a)
+	}
+	s.mu.Unlock()
+	sort.Slice(ips, func(i, j int) bool { return ips[i].Less(ips[j]) })
+	out := make([]string, len(ips))
+	for i, a := range ips {
+		out[i] = a.String()
+	}
+	return out
+}
+
+// recovered is the error a recovered panic becomes, see survive.
+func recovered(r any) string {
+	return fmt.Sprint("wireguard: ", r)
+}

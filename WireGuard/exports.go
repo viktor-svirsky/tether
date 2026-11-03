@@ -1,7 +1,8 @@
 package main
 
 // The C API WireGuardServer.swift calls. One server at a time. Strings Go returns are malloc'd and
-// the caller frees them with TetherWGFree. Keys are 32 raw bytes.
+// the caller frees them with TetherWGFree. The server key is 32 raw bytes. The device list and the
+// stats are JSON messages with a version, see boundary.go, which holds the work these only wrap.
 
 /*
 #include <stdlib.h>
@@ -10,11 +11,8 @@ package main
 import "C"
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/netip"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"unsafe"
 )
@@ -35,7 +33,7 @@ func cerr(err error) *C.char {
 // the whole app, not just the WireGuard server. Call it deferred, with the result to set.
 func survive(result **C.char) {
 	if r := recover(); r != nil {
-		*result = C.CString(fmt.Sprint("wireguard: ", r))
+		*result = C.CString(recovered(r))
 	}
 }
 
@@ -81,58 +79,16 @@ func TetherWGStop() {
 	s.Close()
 }
 
-// TetherWGSetPeers replaces the devices. keys holds count public keys back to back, addresses is
-// their tunnel addresses separated by newlines, in the same order.
+// TetherWGConfigure lets in exactly the devices in a JSON configMessage. Returns nil, or an error
+// message.
 //
-//export TetherWGSetPeers
-func TetherWGSetPeers(keys *C.uint8_t, addresses *C.char, count C.int) (result *C.char) {
+//export TetherWGConfigure
+func TetherWGConfigure(message *C.char) (result *C.char) {
 	defer survive(&result)
-	mu.Lock()
-	defer mu.Unlock()
-	if count > 0 && (keys == nil || addresses == nil) {
-		return C.CString("no keys or addresses")
+	if message == nil {
+		return C.CString("no device list")
 	}
-	if server == nil {
-		return nil
-	}
-	var raw []byte
-	if count > 0 {
-		raw = unsafe.Slice((*byte)(keys), int(count)*32)
-	}
-	peers, err := parsePeers(raw, C.GoString(addresses))
-	if err != nil {
-		return cerr(err)
-	}
-	return cerr(server.SetPeers(peers))
-}
-
-// parsePeers pairs 32-byte keys with newline-separated addresses. A count that doesn't match is an
-// error, so a device can't be shown as set up while the server leaves it out.
-func parsePeers(keys []byte, addresses string) ([]Peer, error) {
-	var lines []string
-	if addresses != "" {
-		lines = strings.Split(addresses, "\n")
-	}
-	if len(keys) != 32*len(lines) {
-		return nil, fmt.Errorf("%d keys but %d addresses", len(keys)/32, len(lines))
-	}
-	peers := make([]Peer, 0, len(lines))
-	seenKeys := map[[32]byte]bool{}
-	seenAddrs := map[netip.Addr]bool{}
-	for i, line := range lines {
-		a, err := netip.ParseAddr(line)
-		if err != nil {
-			return nil, err
-		}
-		var key [32]byte
-		copy(key[:], keys[i*32:])
-		if seenKeys[key] || seenAddrs[a] {
-			return nil, fmt.Errorf("device %d repeats a key or address", i+1)
-		}
-		seenKeys[key], seenAddrs[a] = true, true
-		peers = append(peers, Peer{PublicKey: key, Address: a})
-	}
-	return peers, nil
+	return cerr(configure(C.GoString(message)))
 }
 
 // TetherWGFreeMemory gives memory the GC has freed back to iOS. Swift calls it on a memory warning.
@@ -140,17 +96,21 @@ func parsePeers(keys []byte, addresses string) ([]Peer, error) {
 //export TetherWGFreeMemory
 func TetherWGFreeMemory() { debug.FreeOSMemory() }
 
-// TetherWGStats returns the counters as JSON, or nil when the server isn't running.
+// TetherWGStats returns a JSON statsMessage, or nil when the server isn't running.
 //
 //export TetherWGStats
-func TetherWGStats() *C.char {
-	mu.Lock()
-	defer mu.Unlock()
-	if server == nil {
+func TetherWGStats() (result *C.char) {
+	// A panic that leaves here would end the whole app, see survive. Swift reads nil as no stats.
+	defer func() {
+		if recover() != nil {
+			result = nil
+		}
+	}()
+	js, ok := statsJSON()
+	if !ok {
 		return nil
 	}
-	b, _ := json.Marshal(server.Stats())
-	return C.CString(string(b))
+	return C.CString(js)
 }
 
 //export TetherWGFree

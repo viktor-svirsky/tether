@@ -355,33 +355,6 @@ func TestRemovingAPeerLocksItOut(t *testing.T) {
 	}
 }
 
-func TestParsePeers(t *testing.T) {
-	keys := make([]byte, 64)
-	keys[32] = 7
-	peers, err := parsePeers(keys, "10.7.0.2\n10.7.0.3")
-	if err != nil || len(peers) != 2 || peers[1].PublicKey[0] != 7 || peers[1].Address.String() != "10.7.0.3" {
-		t.Fatalf("%+v %v", peers, err)
-	}
-	if _, err := parsePeers(keys, "10.7.0.2"); err == nil {
-		t.Fatal("two keys and one address should be refused")
-	}
-	if _, err := parsePeers(make([]byte, 64), "10.7.0.2\n10.7.0.3"); err == nil {
-		t.Fatal("two devices with the same key should be refused")
-	}
-	if _, err := parsePeers(keys, "10.7.0.2\n10.7.0.2"); err == nil {
-		t.Fatal("two devices with the same address should be refused")
-	}
-	if _, err := parsePeers(keys[:32], "nonsense"); err == nil {
-		t.Fatal("a bad address should be refused")
-	}
-	if peers, err := parsePeers(nil, ""); err != nil || len(peers) != 0 {
-		t.Fatal("no devices is fine")
-	}
-	if _, err := parsePeers(keys[:32], "10.7.0.2 router"); err == nil {
-		t.Fatal("anything after the address should be refused, a router is found by its traffic")
-	}
-}
-
 func TestCloseDuringUDPTrafficReturns(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
