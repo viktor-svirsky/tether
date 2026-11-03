@@ -20,6 +20,9 @@ struct AddDeviceProgress: Equatable {
     let tunnel: Step
 
     var finished: Bool { tunnel == .done }
+    /// The sheet keeps the screen on until then: the page hands out the config only while Tether is
+    /// on screen, and a locked iPhone isn't.
+    var keepsScreenAwake: Bool { !finished }
 
     init(ready: WireGuardSetup.Peer.ID?, peers: [WireGuardSetup.Peer], connected: Set<String>, hotspotOn: Bool) {
         device = ready.flatMap { id in peers.first { $0.id == id } }

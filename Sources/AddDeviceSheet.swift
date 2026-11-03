@@ -111,6 +111,9 @@ struct AddDeviceSheet: View {
             .onChange(of: model.wireGuardReady?.id) { _, new in
                 if self.progress.device == nil { readyID = new }
             }
+            .onAppear { UIApplication.shared.isIdleTimerDisabled = self.progress.keepsScreenAwake }
+            .onChange(of: progress.keepsScreenAwake) { _, awake in UIApplication.shared.isIdleTimerDisabled = awake }
+            .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         }
     }
 

@@ -55,6 +55,14 @@ final class AddDeviceProgressTests: XCTestCase {
         XCTAssertNil(p.device)
     }
 
+    /// The screen stays on while a device is being added, so the iPhone doesn't lock while the
+    /// person walks to the laptop and the page stops handing out the config (#44). Not after it connects.
+    func testTheScreenStaysAwakeUntilTheDeviceConnects() {
+        XCTAssertTrue(progress().keepsScreenAwake)
+        XCTAssertTrue(progress(peers: [laptop], hotspotOn: true).keepsScreenAwake, "waiting for its tunnel")
+        XCTAssertFalse(progress(peers: [laptop], connected: [laptop.address], hotspotOn: true).keepsScreenAwake)
+    }
+
     /// Removed while the sheet is open, it isn't added any more.
     func testARemovedDeviceGoesBackToTheStart() {
         XCTAssertEqual(progress(peers: [ipad], hotspotOn: true).config, .toDo)
