@@ -7,6 +7,7 @@
 //   MainView.swift      MainView (the main screen), StatusCard, and the speeds
 //   DevicesView.swift   Add a device on the main screen, and a device's own screen
 //   AddDeviceSheet.swift the steps to add a device, with the QR code for it
+//   AddDeviceProgress.swift  how far adding a device has got, for the sheet, Foundation only
 //   ConfigPage.swift    the page on the hotspot that hands out the next device's config, Foundation only
 //   ConfigPageServer.swift  serves that page on the hotspot address
 //   AppExpiry.swift     when a sideloaded build stops opening, and the warning before it

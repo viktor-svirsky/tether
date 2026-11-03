@@ -12,7 +12,7 @@
 
 Lots of plans give the iPhone itself plenty of data, then cap, slow down or block Personal Hotspot. Tether makes every connection again on the iPhone itself, so your laptop's traffic counts as the phone's own. Windows, Mac, Linux, Android, iPad or a travel router: if it runs WireGuard, it works.
 
-<img src="docs/sharing.png" width="260" alt="Tether sharing with an iPad and a Windows PC, with the speed and the list of devices"> <img src="docs/add-device.png" width="260" alt="Tether's Add a device sheet: three steps on a line, the first ticked, and a QR code"> <img src="docs/notifications.png" width="260" alt="Tether's Notifications screen with a switch for each kind">
+<img src="docs/sharing.png" width="260" alt="Tether sharing with an iPad and a Windows PC, with the speed and the list of devices"> <img src="docs/add-device.png" width="260" alt="Tether's Add a device sheet: three steps on a line, the first ticked, and a QR code"> <img src="docs/notifications.png" width="260" alt="Tether's Settings sheet with a switch for each kind of notification">
 
 ## What you get
 
@@ -28,7 +28,7 @@ A device without WireGuard can still join the hotspot, but its traffic goes stra
 
 1. [Install Tether on your iPhone](#install-tether-on-your-iphone) with SideStore or AltStore, which you set up from a Windows PC or a Mac. Or build it yourself on a Mac. Already have SideStore or AltStore? [Add Tether in one tap](https://viktor-svirsky.github.io/tether/add/) from your iPhone.
 2. Turn on Personal Hotspot, open Tether and tap Add a device. It walks you through three steps.
-3. On the other device, install the free WireGuard app and join the hotspot. A Windows, Mac or Linux laptop downloads its config from `http://172.20.10.1`. An iPad or phone scans the code. Then turn the tunnel on ([details](#connect-a-device-with-wireguard)).
+3. On the other device, install the free WireGuard app and join the hotspot. A Windows, Mac or Linux laptop downloads its config from the address Add a device shows, usually `http://172.20.10.1`. An iPad or phone scans the code. Then turn the tunnel on ([details](#connect-a-device-with-wireguard)).
 
 That's it. The device shows up in Tether as connected.
 
@@ -114,8 +114,10 @@ This works for an iPad, an iPhone, a Mac, a Windows or Linux laptop, an Android 
 Tap Add a device on Tether's main screen. It shows three steps on a line that tick off by themselves: join the iPhone's hotspot on the device, give it the config, and turn its tunnel on. Pick iPhone or iPad for a QR code, or Computer for the page's address and the file. The code works while Add a device is open and for 10 minutes after it closes, so a photo of it or a file kept from earlier doesn't connect later. Opening Add a device after that shows a new code. The first time a device connects with it, or downloads it from Tether's page, the device shows up in the Devices list by itself, as Device, Device 2 and so on, and the next device gets a new code. A scanned code only counts once its tunnel is on, so steps 2 and 3 tick together then. Tap a device to see if it is connected, remove it, or tap its name at the top to rename it.
 
 - **iPad or iPhone:** install the free [WireGuard](https://apps.apple.com/app/id1441195209) app, then + > Create from QR code and scan the code in Add a device. Edit the tunnel and turn On-Demand on for Wi-Fi, only for your iPhone's hotspot name, then join the hotspot. The tunnel turns itself on at the hotspot and off everywhere else.
-- **Windows, Mac, Linux or Android:** join the hotspot, open Add a device in Tether on the iPhone, and open `http://172.20.10.1` in a browser. Type the `http://`, since some browsers try https first and fail. Download the config there and import it into WireGuard (Import Tunnel(s) from File on a Mac or Windows, `wg-quick up` on Linux). Each download gets a key of its own, so open the page on each device. The page hands out a config only while Tether is on screen and Add a device is open or closed less than 10 minutes ago, the same as the QR code, so Add a device keeps the screen on until the device connects. On a Mac, Share the file in Add a device with AirDrop works too. Add a device shows the page's address as a link, with a button that copies it. On a carrier that gives the iPhone IPv6 only, T-Mobile in the US among them, the hotspot gives devices no IPv4, so the address is the iPhone's IPv6 one instead, like `http://[2607:fb91::1]`. The iPhone only gets that address once a device is on the hotspot, so there the code, the file and the address show up after the device joins. The address comes from the carrier for each cellular session, so it can change after a restart or airplane mode. Tether keeps using the same one while the iPhone has it, also after Tether is relaunched. A device whose config points at an old one can't connect, and its row in Devices says so: remove it and add it again, and delete its old tunnel in WireGuard.
+- **Windows, Mac, Linux or Android:** join the hotspot, open Add a device in Tether on the iPhone, and open `http://172.20.10.1` in a browser. Type the `http://`, since some browsers try https first and fail. Download the config there and import it into WireGuard (Import Tunnel(s) from File on a Mac or Windows, `wg-quick up` on Linux). Each download gets a key of its own, so open the page on each device. The page hands out a config only while Tether is on screen and Add a device is open or closed less than 10 minutes ago, so Add a device keeps the screen on until the device connects. On a Mac, Share the file in Add a device with AirDrop works too. Add a device shows the page's address as a link, with a button that copies it.
 - **Travel router** (a UniFi Travel Router, a GL.iNet): add a WireGuard client in the router's VPN settings from the shared file, connect the router to the iPhone by USB or the hotspot, and turn its VPN on. Some routers send their clients' traffic from the clients' own addresses instead of their tunnel address. Tether notices that by itself and lets the router's clients through, and its traffic covers every device behind it. On other networks, turn the router's VPN off.
+
+On a carrier that gives the iPhone IPv6 only, T-Mobile in the US among them, the hotspot gives devices no IPv4, so the address is the iPhone's IPv6 one instead, like `http://[2607:fb91::1]`. The iPhone only gets that address once a device is on the hotspot, so there the code, the file and the address show up after the device joins. The address comes from the carrier for each cellular session, so it can change after a restart or airplane mode. Tether keeps using the same one while the iPhone has it, also after Tether is relaunched. A device whose config points at an old one can't connect, and its row in Devices says so: remove it and add it again, and delete its old tunnel in WireGuard.
 
 Each device has its own key. It works until you remove the device in Tether, which locks it out without touching the others. Only the code for the next device stops working by itself.
 
@@ -165,7 +167,7 @@ Sources/Shortcuts.swift      the Start Tether and Is Tether Sharing? actions for
 Sources/DemoMode.swift       fake app states for the UI tests (Debug builds only)
 Tests/                       unit tests, run on the Mac
 UITests/                     UI tests for every screen, run on the iOS Simulator
-scripts/screenshots.sh       makes the two screenshots above, on an iPhone simulator
+scripts/screenshots.sh       makes the three screenshots above, on an iPhone simulator
 docs/index.html              the landing page at viktor-svirsky.github.io/tether, served by GitHub Pages from docs/
 docs/add/index.html          the one-tap "Add to SideStore/AltStore" page, served by GitHub Pages from docs/
 ```
