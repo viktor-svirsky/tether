@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: A question, or help setting up
+    url: https://github.com/viktor-svirsky/tether/discussions/categories/q-a
+    about: How to install or connect a device, or whether Tether works on your carrier. Something broken goes in a bug report.
+  - name: An idea
+    url: https://github.com/viktor-svirsky/tether/discussions/categories/ideas
+    about: A feature you'd like, or a way you use Tether that it could do better.

@@ -148,6 +148,7 @@ iOS has no automation for "Personal Hotspot turned on", so let one shortcut turn
 - **The traffic leaves as your iPhone's.** If your iPhone runs a VPN, shared traffic goes through that VPN too.
 - **Your carrier can still notice.** Tether hides where the traffic comes from, not what it is. A Mac's software updates or an iPad's apps still look like a Mac or an iPad to a carrier that looks closely. Many carrier contracts don't allow tethering workarounds, and a carrier can slow down or close a line that breaks them. Check yours. Using Tether is your call and your risk.
 - **Not for the App Store.** Apple doesn't allow the silent-audio trick, so you sign and install Tether yourself.
+- **Questions and ideas** go in [Discussions](https://github.com/viktor-svirsky/tether/discussions): how to set something up, whether your carrier works, a feature you'd like. Something broken goes in a [bug report](https://github.com/viktor-svirsky/tether/issues/new?template=bug.yml).
 
 ## For developers
 
