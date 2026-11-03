@@ -6,6 +6,7 @@ protocol WireGuardServing: AnyObject {
     var running: Bool { get }
     /// From the last `snapshot()`.
     var connectedAddresses: Set<String> { get }
+    /// Applies the setup's devices as `setPeers` does, and is left stopped when they're refused.
     func start(host: String, setup: WireGuardSetup, port: UInt16) throws
     func stop()
     func setPeers(_ setup: WireGuardSetup) throws

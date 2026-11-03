@@ -396,32 +396,23 @@ final class HotspotSessionTests: XCTestCase {
 
     // MARK: Devices
 
-    func testADeviceListTheServerRefusesRestartsIt() throws {
+    /// The server refuses a list by what's in it, so starting it again with the same list is refused
+    /// too: it stays stopped and says why, rather than running without the change.
+    func testADeviceListTheServerRefusesLeavesItStoppedUntilTheNextRound() throws {
         makeSession()
         address = hotspot
         session.syncWithHotspot()
         let peer = try XCTUnwrap(devices.connectReady())
-        server.setPeersError = FakeServer.Failure()
+        let other = try XCTUnwrap(devices.connectReady())
+        server.refusedAddress = other.address
         session.removeWireGuardDevice(peer.id)
-        XCTAssertEqual(server.starts, [hotspot, hotspot], "started again with the saved devices")
-        XCTAssertFalse(server.lastSetup?.serverPeers.contains(peer) ?? true, "the removed device isn't let in")
-        XCTAssertTrue(server.running)
-        XCTAssertNil(session.wireGuardProblem)
-    }
-
-    func testARestartThatFailsLeavesTheServerStoppedUntilTheNextRound() throws {
-        makeSession()
-        address = hotspot
-        session.syncWithHotspot()
-        let peer = try XCTUnwrap(devices.connectReady())
-        server.setPeersError = FakeServer.Failure()
-        server.startError = FakeServer.Failure()
-        session.removeWireGuardDevice(peer.id)
+        XCTAssertEqual(server.starts, [hotspot, hotspot], "tried again with the saved devices")
         XCTAssertFalse(server.running, "a removed device is never let in")
-        XCTAssertEqual(session.wireGuardProblem, couldntStart)
-        server.startError = nil
+        XCTAssertEqual(session.wireGuardProblem, "It couldn't start: \(FakeServer.Refused())")
+        server.refusedAddress = nil
         session.syncWithHotspot()
         XCTAssertTrue(server.running)
+        XCTAssertFalse(server.lastSetup?.serverPeers.contains(peer) ?? true, "the removed device isn't let in")
         XCTAssertNil(session.wireGuardProblem)
     }
 
@@ -1106,18 +1097,27 @@ final class HotspotSessionTests: XCTestCase {
     }
 }
 
-/// The WireGuard server, with errors to order and the counters and handshakes a test sets.
+/// The WireGuard server, with errors to order and the counters and handshakes a test sets. It keeps
+/// the real one's contract (see `WireGuardServing`): `start` applies the devices too, and is left
+/// stopped when they're refused.
 @MainActor
 final class FakeServer: WireGuardServing {
     struct Failure: Error, CustomStringConvertible {
         var description: String { "port in use" }
     }
 
+    /// Like what the real server says about a list it refuses.
+    struct Refused: Error, CustomStringConvertible {
+        var description: String { "the device list repeats a key or address" }
+    }
+
     private(set) var running = false
     private(set) var connectedAddresses: Set<String> = []
-    /// Thrown by every start while set.
+    /// Thrown by every start while set, before the devices are applied.
     var startError: Error?
-    var setPeersError: Error?
+    /// Every list with a device on this tunnel address is refused, by `setPeers` and so by `start`:
+    /// the real server refuses a list by what's in it, so trying the same list again doesn't help.
+    var refusedAddress: String?
     /// What the next snapshot reports, while running.
     var connected: Set<String> = []
     var totals = TrafficTotals()
@@ -1129,7 +1129,12 @@ final class FakeServer: WireGuardServing {
         starts.append(host)
         if let startError { throw startError }
         running = true
-        lastSetup = setup
+        do {
+            try setPeers(setup)
+        } catch {
+            running = false
+            throw error
+        }
     }
 
     func stop() {
@@ -1139,7 +1144,7 @@ final class FakeServer: WireGuardServing {
 
     func setPeers(_ setup: WireGuardSetup) throws {
         guard running else { return }
-        if let setPeersError { throw setPeersError }
+        if let refusedAddress, setup.serverPeers.contains(where: { $0.address == refusedAddress }) { throw Refused() }
         lastSetup = setup
     }
 

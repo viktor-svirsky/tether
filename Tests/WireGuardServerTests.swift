@@ -144,11 +144,12 @@ final class WireGuardServerTests: XCTestCase {
         b.address = a.address
         setup.peers.append(b)
         XCTAssertThrowsError(try server.start(host: "127.0.0.1", setup: setup, port: freePort()))
-        XCTAssertFalse(server.running, "the watcher in Model retries only a server that isn't running")
+        XCTAssertFalse(server.running, "HotspotSession's watcher retries only a server that isn't running")
     }
 
-    /// What Model counts on when the server refuses a new list: it keeps running with the old one,
-    /// so Model starts it again with the saved setup.
+    /// A refused list leaves the server running with the old one, which may still let in a removed
+    /// device. So HotspotSession starts it again with the saved setup: a list it accepts runs, and one
+    /// it refuses leaves it stopped (see `testAStartWhosePeersFailIsUndone`).
     func testARefusedListKeepsTheServerRunningAndAStartWithTheSavedSetupWorks() throws {
         var saved = WireGuardSetup.new()
         _ = saved.addPeer(name: "iPad")
