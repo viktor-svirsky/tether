@@ -2,9 +2,12 @@
 
 [![CI](https://github.com/viktor-svirsky/tether/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/viktor-svirsky/tether/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/viktor-svirsky/tether)](https://github.com/viktor-svirsky/tether/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/viktor-svirsky/tether/total)](https://github.com/viktor-svirsky/tether/releases)
+[![Add to SideStore or AltStore](https://img.shields.io/badge/SideStore%20%7C%20AltStore-add%20source-0069b8)](https://viktor-svirsky.github.io/tether/add/)
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-blue)
 [![License: MIT](https://img.shields.io/github/license/viktor-svirsky/tether)](LICENSE)
 [![Website](https://img.shields.io/badge/website-viktor--svirsky.github.io%2Ftether-0069b8)](https://viktor-svirsky.github.io/tether/)
+[![Discussions](https://img.shields.io/github/discussions/viktor-svirsky/tether)](https://github.com/viktor-svirsky/tether/discussions)
 
 <img src="Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png" width="96" alt="Tether icon">
 
@@ -148,6 +151,7 @@ iOS has no automation for "Personal Hotspot turned on", so let one shortcut turn
 - **The traffic leaves as your iPhone's.** If your iPhone runs a VPN, shared traffic goes through that VPN too.
 - **Your carrier can still notice.** Tether hides where the traffic comes from, not what it is. A Mac's software updates or an iPad's apps still look like a Mac or an iPad to a carrier that looks closely. Many carrier contracts don't allow tethering workarounds, and a carrier can slow down or close a line that breaks them. Check yours. Using Tether is your call and your risk.
 - **Not for the App Store.** Apple doesn't allow the silent-audio trick, so you sign and install Tether yourself.
+- **Questions and ideas** go in [Discussions](https://github.com/viktor-svirsky/tether/discussions): how to set something up, whether your carrier works, a feature you'd like. Something broken goes in a [bug report](https://github.com/viktor-svirsky/tether/issues/new?template=bug.yml).
 
 ## For developers
 
