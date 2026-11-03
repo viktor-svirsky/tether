@@ -114,6 +114,7 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(server.starts, [v6])
         XCTAssertEqual(page.starts, ["\(v6):80"])
         XCTAssertEqual(session.deviceHost, v6)
+        session.openAddWindow()
         let ready = try XCTUnwrap(session.wireGuardReady)
         XCTAssertTrue(try XCTUnwrap(session.wireGuardConfig(for: ready)).contains("Endpoint = [\(v6)]:51820\n"))
         XCTAssertTrue(body(page.ask(.config, from: "2607:fb91:88a2:e822:1868:49e0:74e1:bee3")).contains("Endpoint = [\(v6)]:51820\n"))
@@ -297,8 +298,10 @@ final class HotspotSessionTests: XCTestCase {
     }
 
     func testABackgroundRoundClaimsTheReadyDevice() throws {
-        makeSession(sceneActive: false)
+        makeSession()
         address = hotspot
+        session.openAddWindow()
+        session.leftScreen() // the sheet still open, the 10 minutes run from here
         session.watch()
         let ready = try XCTUnwrap(session.wireGuardReady)
         server.connected = [ready.address]
@@ -313,6 +316,7 @@ final class HotspotSessionTests: XCTestCase {
         makeSession(sceneActive: true)
         address = hotspot
         session.watch()
+        session.openAddWindow()
         let ready = try XCTUnwrap(session.wireGuardReady)
         server.connected = [ready.address]
         session.watch()
@@ -449,6 +453,7 @@ final class HotspotSessionTests: XCTestCase {
         makeSession()
         address = hotspot
         session.syncWithHotspot()
+        session.openAddWindow()
         XCTAssertTrue(body(page.ask(.page)).contains("href=\"/Tether.conf\""))
         let ready = try XCTUnwrap(session.wireGuardReady)
         let first = page.ask(.config)
@@ -470,6 +475,7 @@ final class HotspotSessionTests: XCTestCase {
         makeSession()
         address = hotspot
         session.syncWithHotspot()
+        session.openAddWindow()
         let ready = try XCTUnwrap(session.wireGuardReady)
         _ = page.ask(.config)
         let next = session.wireGuardReady
@@ -485,6 +491,7 @@ final class HotspotSessionTests: XCTestCase {
         makeSession()
         address = hotspot
         session.syncWithHotspot()
+        session.openAddWindow()
         session.leftScreen()
         let ready = session.wireGuardReady
         XCTAssertTrue(body(page.ask(.page)).contains("Open Tether on the iPhone"))
@@ -502,6 +509,7 @@ final class HotspotSessionTests: XCTestCase {
         makeSession(log: { logged.append($0) })
         address = hotspot
         session.syncWithHotspot()
+        session.openAddWindow()
         let ready = session.wireGuardReady
         secrets.savesFail = true
         let config = page.ask(.config)
@@ -517,6 +525,7 @@ final class HotspotSessionTests: XCTestCase {
         makeSession()
         address = hotspot
         session.syncWithHotspot()
+        session.openAddWindow()
         let first = page.ask(.config, from: "172.20.10.2")
         now = now.addingTimeInterval(59)
         XCTAssertEqual(page.ask(.configHead, from: "172.20.10.2"), first.forHead)
@@ -533,6 +542,7 @@ final class HotspotSessionTests: XCTestCase {
         makeSession()
         address = hotspot
         session.syncWithHotspot()
+        session.openAddWindow()
         let first = page.ask(.config)
         session.removeWireGuardDevice(try XCTUnwrap(session.wireGuardPeers.first).id)
         XCTAssertNotEqual(page.ask(.config).body, first.body)
@@ -542,6 +552,7 @@ final class HotspotSessionTests: XCTestCase {
         makeSession()
         address = hotspot
         session.syncWithHotspot()
+        session.openAddWindow()
         let ready = session.wireGuardReady
         let head = page.ask(.configHead)
         XCTAssertEqual(head.status, .ok)
@@ -574,6 +585,191 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(page.ask(.notGet), ConfigPage.notGet)
         XCTAssertEqual(page.ask(.malformed), ConfigPage.malformed)
         XCTAssertTrue(session.wireGuardPeers.isEmpty)
+    }
+
+    // MARK: The add window
+
+    /// The keys the server lets in now.
+    private var letIn: [Data] { server.lastSetup?.serverPeers.map(\.publicKey) ?? [] }
+
+    /// A photo of the QR code, or a .conf from days ago, connects only while Add a device is open (#29).
+    func testAtLaunchTheCodeIsntLetIn() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertEqual(server.lastSetup?.serverPeers, [], "the devices only, and there are none yet")
+        server.connected = [ready.address] // an old read, say: it can't have connected
+        session.sampleTraffic()
+        XCTAssertTrue(session.wireGuardPeers.isEmpty, "not listed")
+        XCTAssertEqual(session.wireGuardReady, ready)
+    }
+
+    /// Each time Add a device opens after the window closed there's a new code, so a code from an
+    /// earlier time never works again, after a relaunch too. It's saved before it's let in.
+    func testOpeningAddADeviceLetsInANewCode() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        let before = try XCTUnwrap(session.wireGuardReady)
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertNotEqual(ready.publicKey, before.publicKey)
+        XCTAssertEqual(server.lastSetup?.serverPeers, [ready.peer])
+        XCTAssertEqual(WireGuardDevices(secrets: secrets).setup.ready, ready, "saved")
+    }
+
+    func testTheCodeWorksTenMinutesAfterTheSheetClosesThenGoes() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        now = minutes(5)
+        session.closeAddWindow()
+        now = minutes(14.9)
+        session.syncWithHotspot()
+        XCTAssertEqual(letIn, [ready.publicKey])
+        now = minutes(15)
+        session.syncWithHotspot()
+        XCTAssertEqual(letIn, [], "off the server")
+        session.openAddWindow()
+        let next = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertNotEqual(next.publicKey, ready.publicKey, "a new code replaces it")
+        XCTAssertEqual(letIn, [next.publicKey])
+    }
+
+    /// The sampler checks too, every second on screen.
+    func testOnScreenTheSamplerClosesTheWindow() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        session.closeAddWindow()
+        now = minutes(10)
+        session.sampleTraffic()
+        XCTAssertEqual(letIn, [])
+    }
+
+    /// A device that scanned the code and isn't connected yet still can when the sheet opens again.
+    func testReopeningWithinTheTenMinutesKeepsTheCode() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        session.closeAddWindow()
+        now = minutes(9)
+        session.openAddWindow()
+        XCTAssertEqual(session.wireGuardReady, ready)
+        XCTAssertEqual(letIn, [ready.publicKey])
+    }
+
+    /// A sheet left open in the background isn't on screen: the 10 minutes run from leaving it.
+    func testLeavingTheScreenWithTheSheetOpenStartsTheTenMinutes() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        now = minutes(1)
+        session.leftScreen()
+        now = minutes(10.9)
+        session.watch()
+        XCTAssertEqual(letIn, [ready.publicKey])
+        now = minutes(11)
+        session.watch()
+        XCTAssertEqual(letIn, [], "off the server")
+        session.cameOnScreen() // the sheet still open
+        let next = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertNotEqual(next.publicKey, ready.publicKey)
+        XCTAssertEqual(letIn, [next.publicKey])
+    }
+
+    func testThePageHandsOutTheConfigOnlyWhileTheWindowIsOpen() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertEqual(page.ask(.page), ConfigPage.page(.openAddDevice))
+        let closed = page.ask(.config)
+        XCTAssertEqual(closed.status, .notFound)
+        XCTAssertFalse(body(closed).contains("PrivateKey"))
+        XCTAssertTrue(session.wireGuardPeers.isEmpty)
+        session.openAddWindow()
+        XCTAssertEqual(page.ask(.page), ConfigPage.page(.ready))
+        session.closeAddWindow()
+        now = minutes(9.9)
+        XCTAssertEqual(page.ask(.config, from: "172.20.10.3").status, .ok)
+        now = minutes(10)
+        let late = page.ask(.config, from: "172.20.10.4")
+        XCTAssertEqual(late.status, .notFound, "by the clock, before the watcher's next round")
+        XCTAssertFalse(body(late).contains("PrivateKey"))
+        XCTAssertEqual(session.wireGuardPeers.count, 1)
+    }
+
+    func testAClaimedDeviceKeepsWorkingAfterTheWindowCloses() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [ready.address]
+        session.sampleTraffic()
+        XCTAssertEqual(session.wireGuardPeers.map(\.id), [ready.id])
+        session.closeAddWindow()
+        now = minutes(10)
+        session.syncWithHotspot()
+        XCTAssertEqual(letIn, [ready.publicKey], "the device, not the next code")
+    }
+
+    /// A device whose first handshake came after the last read, in the background where reads are
+    /// 15 seconds apart, is listed as the window closes, not locked out.
+    func testADeviceThatConnectedJustBeforeTheWindowClosesIsListed() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        session.leftScreen()
+        session.watch()
+        now = minutes(9.9)
+        server.connected = [ready.address]
+        now = minutes(10)
+        session.watch()
+        XCTAssertEqual(session.wireGuardPeers.map(\.id), [ready.id])
+        XCTAssertEqual(letIn, [ready.publicKey], "the device, not the next code")
+    }
+
+    /// A new code that can't be saved leaves no code rather than the old one, and the old one stays
+    /// off the server after a relaunch too, where the Keychain still has it.
+    func testACodeThatCantBeReplacedIsntLetIn() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        let old = try XCTUnwrap(session.wireGuardReady)
+        secrets.savesFail = true
+        session.openAddWindow()
+        XCTAssertNil(session.wireGuardReady)
+        XCTAssertNotNil(session.wireGuardReadyProblem)
+        XCTAssertEqual(letIn, [])
+        session.syncWithHotspot() // tries again
+        XCTAssertEqual(letIn, [])
+        XCTAssertEqual(page.ask(.config).status, .notFound)
+
+        let relaunched = FakeServer()
+        let again = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: relaunched, keepAlive: FakeSound(),
+                                   page: FakePage(), sceneActive: true, hotspotAddress: { [unowned self] in address },
+                                   now: { [unowned self] in now })
+        again.syncWithHotspot()
+        XCTAssertEqual(again.wireGuardReady, old, "still the saved one")
+        XCTAssertEqual(relaunched.lastSetup?.serverPeers, [])
+        again.openAddWindow()
+        XCTAssertEqual(relaunched.lastSetup?.serverPeers, [])
+        secrets.savesFail = false
+        again.syncWithHotspot()
+        let next = try XCTUnwrap(again.wireGuardReady)
+        XCTAssertNotEqual(next.publicKey, old.publicKey)
+        XCTAssertEqual(relaunched.lastSetup?.serverPeers, [next.peer], "a new one, once it's saved")
     }
 
     // MARK: The keep-alive sound
@@ -661,6 +857,7 @@ final class HotspotSessionTests: XCTestCase {
     /// Model relies on this to redraw, as `@Published` would: each change is announced while the old value is still there.
     func testEveryChangeIsAnnouncedBeforeItHappens() throws {
         makeSession(locked: true)
+        session.openAddWindow()
         var announced: [String] = []
         session.willChange = { [unowned self] in
             announced.append("\(session.running) \(session.wireGuardProblem ?? "-") \(session.wireGuardPeers.count)")

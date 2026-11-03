@@ -258,6 +258,16 @@ final class Model: ObservableObject {
         session.removeWireGuardDevice(id)
     }
 
+    /// See `HotspotSession.openAddWindow`.
+    func openAddWindow() {
+        session.openAddWindow()
+    }
+
+    /// See `HotspotSession.closeAddWindow`.
+    func closeAddWindow() {
+        session.closeAddWindow()
+    }
+
     var deviceHost: String? { session.deviceHost }
 
     func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String? {

@@ -5,6 +5,8 @@ import SwiftUI
 /// off by itself: join the hotspot, give it the config, turn its tunnel on. It follows the code that
 /// was ready when it opened, see `AddDeviceProgress`. The page and the connected list keep up only
 /// while Tether is on screen, so in the background the steps wait, and they catch up when it's back.
+/// The code works only while the sheet is on screen and for 10 minutes after, see
+/// `HotspotSession.addWindowOpen`, so opening it after that shows a new code.
 struct AddDeviceSheet: View {
     @ObservedObject var model: Model
     @Environment(\.dismiss) private var dismiss
@@ -111,9 +113,16 @@ struct AddDeviceSheet: View {
             .onChange(of: model.wireGuardReady?.id) { _, new in
                 if self.progress.device == nil { readyID = new }
             }
-            .onAppear { UIApplication.shared.isIdleTimerDisabled = self.progress.keepsScreenAwake }
+            // The demos that open on the sheet open the window the same way.
+            .onAppear {
+                model.openAddWindow()
+                UIApplication.shared.isIdleTimerDisabled = self.progress.keepsScreenAwake
+            }
             .onChange(of: progress.keepsScreenAwake) { _, awake in UIApplication.shared.isIdleTimerDisabled = awake }
-            .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+            .onDisappear {
+                model.closeAddWindow()
+                UIApplication.shared.isIdleTimerDisabled = false
+            }
         }
     }
 
@@ -158,6 +167,10 @@ struct AddDeviceSheet: View {
         } else if model.wireGuardReady != nil {
             note("It shows up here once the device is on the hotspot.")
                 .accessibilityIdentifier("add.joinFirst")
+        } else if let problem = model.wireGuardReadyProblem {
+            // A new code for this time couldn't be saved, and the old one no longer works.
+            note(problem)
+                .accessibilityIdentifier("add.codeProblem")
         }
     }
 

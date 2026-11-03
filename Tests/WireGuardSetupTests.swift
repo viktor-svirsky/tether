@@ -174,6 +174,42 @@ final class WireGuardSetupTests: XCTestCase {
         XCTAssertTrue(devices.setup.peers.isEmpty)
     }
 
+    func testReplacingTheReadyDeviceSavesANewKey() throws {
+        let secrets = InMemorySecrets()
+        let devices = WireGuardDevices(secrets: secrets)
+        let old = try XCTUnwrap(devices.setup.ready)
+        XCTAssertTrue(devices.replaceReady())
+        let new = try XCTUnwrap(devices.setup.ready)
+        XCTAssertNotEqual(new.publicKey, old.publicKey)
+        XCTAssertNotEqual(new.privateKey, old.privateKey)
+        XCTAssertEqual(WireGuardDevices(secrets: secrets).setup.ready, new, "saved")
+    }
+
+    /// The old code is gone even when the new one can't be saved, until a later try saves one.
+    func testAReplacementThatCantBeSavedLeavesNoReadyDevice() throws {
+        let secrets = FlakySecrets()
+        let devices = WireGuardDevices(secrets: secrets)
+        let old = try XCTUnwrap(devices.setup.ready)
+        secrets.savesFail = true
+        XCTAssertFalse(devices.replaceReady())
+        XCTAssertNil(devices.setup.ready)
+        XCTAssertNotNil(devices.readyError)
+        XCTAssertTrue(devices.setup.serverPeers.isEmpty)
+        secrets.savesFail = false
+        XCTAssertTrue(devices.prepareReady())
+        let new = try XCTUnwrap(devices.setup.ready)
+        XCTAssertNotEqual(new.publicKey, old.publicKey)
+        XCTAssertNil(devices.readyError)
+    }
+
+    func testNothingIsReplacedBeforeTheSetupIsLoaded() {
+        let secrets = FlakySecrets()
+        secrets.failing = true
+        let devices = WireGuardDevices(secrets: secrets)
+        XCTAssertFalse(devices.replaceReady())
+        XCTAssertEqual(secrets.saves, 0)
+    }
+
     // MARK: private keys: only the ready device keeps one, for its QR code
 
     func testAClaimedDeviceKeepsNoPrivateKey() throws {

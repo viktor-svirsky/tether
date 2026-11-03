@@ -82,12 +82,12 @@ struct WireGuardSetup: Codable, Equatable {
     /// The devices someone has used, in the order they first connected.
     var peers: [Peer]
     /// The device behind the QR code in the Add a device sheet: a key nobody has used yet. The server lets
-    /// it in, and the first time it connects it joins `peers`, without its private key, and a new
-    /// one takes its place. Nil only in a setup saved before there was one, or with all 253
-    /// addresses taken.
+    /// it in while Add a device is open (see `HotspotSession.addWindowOpen`), and the first time it
+    /// connects it joins `peers`, without its private key, and a new one takes its place. Nil only in a
+    /// setup saved before there was one, or with all 253 addresses taken.
     var ready: Ready?
 
-    /// Everyone the server lets in: the devices, and whoever scans the QR code next.
+    /// Everyone the server can let in: the devices, and whoever scans the QR code next.
     var serverPeers: [Peer] { peers + (ready.map { [$0.peer] } ?? []) }
 
     var serverPublicKey: Data { Self.publicKey(of: serverPrivateKey) }
@@ -332,6 +332,17 @@ final class WireGuardDevices {
         setup = next
         readyError = nil
         return true
+    }
+
+    /// A new ready device in place of the one there is, so the old code never works again. The old one
+    /// goes even when the new one can't be saved: then there's none until `prepareReady()` saves one
+    /// (see `readyError`). The Keychain still has the old one then, so it comes back at the next launch,
+    /// where `HotspotSession` replaces it before letting it in. False when nothing new was saved.
+    @discardableResult
+    func replaceReady() -> Bool {
+        guard loaded else { return false }
+        setup.ready = nil
+        return prepareReady()
     }
 
     /// See `WireGuardSetup.claimReady`. False too when it couldn't be saved, and then nothing changes,

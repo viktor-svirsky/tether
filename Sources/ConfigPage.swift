@@ -115,6 +115,9 @@ enum ConfigPage {
         case ready
         /// Tether isn't on screen, so it hands nothing out.
         case openTether
+        /// Add a device isn't open on the iPhone, and didn't close in the last 10 minutes, see
+        /// `HotspotSession.addWindowOpen`.
+        case openAddDevice
         /// On screen, but there's no config for a new device: Tether's screen says why.
         case noConfig
     }
@@ -143,6 +146,10 @@ enum ConfigPage {
         case .openTether:
             """
             <p>Open Tether on the iPhone and keep it on screen, then reload this page.</p>
+            """
+        case .openAddDevice:
+            """
+            <p>In Tether on the iPhone, open Add a device, then reload this page.</p>
             """
         case .noConfig:
             """

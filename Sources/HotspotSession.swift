@@ -57,7 +57,8 @@ final class HotspotSession {
     var upSpeed = 0.0 { willSet { willChange() } }
     /// The devices that have connected, in the order they first did.
     private(set) var wireGuardPeers: [WireGuardSetup.Peer] = [] { willSet { willChange() } }
-    /// Behind the QR code in the Add a device sheet, see `WireGuardSetup.ready`. Only ever a saved one.
+    /// Behind the QR code in the Add a device sheet, see `WireGuardSetup.ready`. Only ever a saved one,
+    /// and let in only while the add window is open, see `addWindowOpen`.
     private(set) var wireGuardReady: WireGuardSetup.Ready? { willSet { willChange() } }
     /// Why there's no QR code while the devices that have one still connect: making the next one couldn't be saved.
     private(set) var wireGuardReadyProblem: String? { willSet { willChange() } }
@@ -106,6 +107,15 @@ final class HotspotSession {
     /// The config last downloaded from the page. The same device asking again soon gets the same
     /// one: a browser or download manager that fetches twice mustn't list a second device.
     private var lastDownload: (client: String, at: Date, response: ConfigPage.Response)?
+    /// How long the code still works after the Add a device sheet closes, or Tether leaves the screen with it open.
+    static let addWindowAfterClose: TimeInterval = 10 * 60
+    /// The Add a device sheet is presented. It holds the add window open only while Tether is on screen.
+    private var addSheetShown = false
+    /// When the add window closes, once the sheet has closed or Tether has left the screen with it.
+    /// Nil at launch, so the window starts closed.
+    private var addWindowEnds: Date?
+    /// The ready device is on the server: the add window was open at the last `followAddWindow()`.
+    private var readyLetIn = false
 
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
@@ -139,6 +149,7 @@ final class HotspotSession {
     /// it appears and stops it when it goes away or changes, so it never listens anywhere else.
     func syncWithHotspot() {
         checkSetup()
+        followAddWindow()
         let ipv6Only = carrierIPv6Only()
         if ipv6Only != onIPv6OnlyCarrier { onIPv6OnlyCarrier = ipv6Only }
         let hotspot = hotspotAddress()
@@ -187,7 +198,10 @@ final class HotspotSession {
     private func checkSetup() {
         if !devices.loaded, !devices.needsReset {
             devices.load() // the Keychain can be locked until the first unlock after a restart
-            if devices.loaded { publishSetup() } // not every round while it's locked, which redraws the screen
+            if devices.loaded {
+                readyLetIn = false // a code read from the store is replaced before it's let in, see followAddWindow
+                publishSetup() // not every round while it's locked, which redraws the screen
+            }
         } else if devices.prepareReady() { // a QR code that couldn't be saved before
             wireGuardPeersChanged()
         }
@@ -204,7 +218,7 @@ final class HotspotSession {
     private func startWireGuard(on hotspot: String) {
         guard devices.loaded else { return } // the setup's problem shows already
         do {
-            try server.start(host: hotspot, setup: devices.setup, port: WireGuardSetup.port)
+            try server.start(host: hotspot, setup: serverSetup, port: WireGuardSetup.port)
             page.start(host: hotspot, port: ConfigPage.port)
             startProblem = nil
             showProblem()
@@ -253,8 +267,62 @@ final class HotspotSession {
 
     func leftScreen() {
         sceneActive = false
+        if addSheetShown { addWindowEnds = now().addingTimeInterval(Self.addWindowAfterClose) }
         lastSample = nil // or the first speed back on screen averages the whole time away
         watchedConnected = wireGuardConnected // not a list from an earlier time away, until the next round reads
+    }
+
+    /// The Add a device sheet came on screen. Its code works from now on, see `addWindowOpen`.
+    func openAddWindow() {
+        addSheetShown = true
+        followAddWindow()
+    }
+
+    /// The Add a device sheet went away. Its code works 10 more minutes, see `addWindowOpen`.
+    func closeAddWindow() {
+        addSheetShown = false
+        // Off screen, the 10 minutes already run from leaving it.
+        if sceneActive { addWindowEnds = now().addingTimeInterval(Self.addWindowAfterClose) }
+        followAddWindow()
+    }
+
+    /// When the code behind Add a device works: while the sheet is on screen, and for 10 minutes after
+    /// it closes or Tether leaves the screen. So a photo of the code, or a .conf from days ago, doesn't
+    /// connect later. A device that used the code is listed and works any time.
+    var addWindowOpen: Bool {
+        if addSheetShown, sceneActive { return true }
+        return addWindowEnds.map { now() < $0 } ?? false
+    }
+
+    /// Puts the ready device on the server when the add window opens and takes it off when it closes.
+    /// A window that opens from closed gets a new code first, so a code from an earlier window never
+    /// works again, after a relaunch too, where the window starts closed. If the new code can't be
+    /// saved there's none until the watcher saves one, never the old one. Checked on every watcher
+    /// round, sample and page request, and when the sheet comes or goes.
+    private func followAddWindow() {
+        let open = addWindowOpen
+        // A setup that isn't read yet would bring back the saved code, so the new one waits for it.
+        guard open != readyLetIn, !open || devices.loaded else { return }
+        // A device whose first handshake came since the last read is listed before its code goes.
+        if !open, running, server.running {
+            _ = server.snapshot() // refreshes connectedAddresses
+            claimReady(connected: server.connectedAddresses)
+        }
+        readyLetIn = open
+        if open {
+            log("WireGuard: Add a device opened, a new code for the next device")
+            devices.replaceReady()
+        } else {
+            log("WireGuard: Add a device closed 10 minutes ago, its code no longer works")
+        }
+        wireGuardPeersChanged()
+    }
+
+    /// What the server lets in: the saved devices, and the ready one only while the add window is open.
+    private var serverSetup: WireGuardSetup {
+        var setup = devices.setup
+        if !readyLetIn { setup.ready = nil }
+        return setup
     }
 
     /// For the Shortcuts actions. Off screen the sampler doesn't run, so the connected devices are read now.
@@ -336,12 +404,14 @@ final class HotspotSession {
         log("config page: \(problem)")
     }
 
-    /// The config page's answer. It hands out the config only while Tether is on screen, the same as
-    /// the QR code, and a download adds the device: it's listed, and the next device gets a new key,
-    /// so two devices that download never share one. A device that never connects shows as Not
-    /// connected, and can be removed like any other. A HEAD adds nothing.
+    /// The config page's answer. It hands out the config only while the add window is open and Tether
+    /// is on screen, the same as the QR code, and a download adds the device: it's listed, and the next
+    /// device gets a new key, so two devices that download never share one. A device that never
+    /// connects shows as Not connected, and can be removed like any other. A HEAD adds nothing.
     func pageResponse(_ request: ConfigPage.Request, from client: String) -> ConfigPage.Response {
-        let state: ConfigPage.State = !sceneActive ? .openTether : wireGuardReady == nil ? .noConfig : .ready
+        followAddWindow() // by the clock, not only at the watcher's last round
+        let state: ConfigPage.State = !readyLetIn ? .openAddDevice : !sceneActive ? .openTether
+            : wireGuardReady == nil ? .noConfig : .ready
         let repeated = lastDownload.flatMap { $0.client == client && now().timeIntervalSince($0.at) < 60 ? $0.response : nil }
         switch request {
         case .page:
@@ -390,14 +460,14 @@ final class HotspotSession {
         }
     }
 
-    /// The server lets in exactly the saved devices. If it refuses the new list, it starts again with
-    /// the saved setup, and a start that fails leaves it stopped: a removed device is never let in, the
-    /// problem shows, and the watcher tries again.
+    /// The server lets in exactly the saved devices, and the ready one while the add window is open. If
+    /// it refuses the new list, it starts again with the saved setup, and a start that fails leaves it
+    /// stopped: a removed device is never let in, the problem shows, and the watcher tries again.
     private func wireGuardPeersChanged() {
         devices.prepareReady() // a removal on a full subnet makes room for the QR code
         publishSetup()
         do {
-            try server.setPeers(devices.setup)
+            try server.setPeers(serverSetup)
         } catch {
             log("WireGuard devices: \(error), restarting")
             if running, let boundHost { startWireGuard(on: boundHost) }
@@ -409,6 +479,7 @@ final class HotspotSession {
     /// the QR code is listed here, and the code changes for the next one.
     /// `snapshot()` reads a small JSON from Go, which is fine to do on the main actor.
     func sampleTraffic() {
+        followAddWindow()
         let now = self.now()
         guard running else {
             // A new session starts with zero speeds and nobody connected.
@@ -431,9 +502,10 @@ final class HotspotSession {
     }
 
     /// A device that connected with the QR code is listed, and the code changes for the next one.
-    /// Not saved means not claimed: the next check tries again.
+    /// Not saved means not claimed: the next check tries again. A code that isn't on the server can't
+    /// have connected, whatever an older read says.
     private func claimReady(connected: Set<String>) {
-        guard let ready = wireGuardReady, connected.contains(ready.address),
+        guard readyLetIn, let ready = wireGuardReady, connected.contains(ready.address),
               devices.claimReady(address: ready.address) else { return }
         log("WireGuard: a new device connected with the QR code")
         wireGuardPeersChanged()
