@@ -15,6 +15,7 @@
 //   Notices.swift       what to tell in a notification and when, and asking for permission, Foundation only
 //   SettingsView.swift  the Settings sheet behind the gear, and the system's notification center
 //   DemoMode.swift      fake app state for the UI tests, Debug builds only
+//   Fakes.swift         the stand-in server, page and sound the tests and demos share, Debug builds only
 //   Shortcuts.swift     the Shortcuts actions; ShortcutReply.swift has what they say, Foundation only
 //   WireGuardSetup.swift  the hotspot address, WireGuard keys, devices and client configs, Foundation only
 //   WireGuardServer.swift  runs the WireGuard server (WireGuard/, Go)
