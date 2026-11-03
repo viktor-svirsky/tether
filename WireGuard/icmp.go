@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -36,6 +37,8 @@ type pinger struct {
 	once  sync.Once
 	conn  *icmp.PacketConn // nil when it couldn't be opened
 	queue chan []byte
+	// bound is the interface conn is pinned to, 0 for none, see pinPing. Only sendPings uses it.
+	bound int
 	// running counts the two goroutines, for Close to wait for.
 	running sync.WaitGroup
 
@@ -145,11 +148,35 @@ func (s *Server) sendPing(p []byte) {
 		return
 	}
 	to := s.toNet(netip.AddrPortFrom(dst, 0)).Addr()
+	s.pinPing(to)
 	if _, err := s.pings.conn.WriteTo(b, &net.UDPAddr{IP: to.AsSlice()}); err != nil {
 		s.pings.take(id, dst)
 		return
 	}
 	s.count(true, len(m.Payload())) // the data, as UDP and TCP count theirs
+}
+
+// pinPing pins the socket for a ping to dst, see pin.go. One socket sends every device's pings, so
+// it's pinned again when a ping needs another interface than the last. A reply still arrives on any
+// interface, so one on its way from before isn't lost.
+func (s *Server) pinPing(dst netip.Addr) {
+	index := s.pin.index(dst)
+	if index == s.pings.bound {
+		return
+	}
+	sc, ok := s.pings.conn.IPv4PacketConn().PacketConn.(syscall.Conn)
+	if !ok {
+		return
+	}
+	rc, err := sc.SyscallConn()
+	if err != nil {
+		return
+	}
+	rc.Control(func(fd uintptr) {
+		if pinSocket(int(fd), false, index) == nil {
+			s.pings.bound = index
+		}
+	})
 }
 
 // receivePings hands each reply to the device whose request it answers, until the socket closes.

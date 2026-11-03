@@ -33,7 +33,8 @@ type cone struct {
 	// and on macOS and iOS that port can be another app's IPv4 one, which then gets every reply.
 	conn *net.UDPConn
 	// conn64 reaches IPv4 hosts through the carrier's NAT64 when there's no IPv4 route. Opened by
-	// the first packet that needs it, under lock, and nil until then.
+	// the first packet that needs it, under lock, and nil until then. Its packets are pinned to the
+	// IPv6 default route's interface, conn's to the IPv4 one's, see pin.go.
 	conn64 *net.UDPConn
 	// out is never closed, so a late packet from handleUDP can't panic. done ends send instead.
 	out  chan outgoing

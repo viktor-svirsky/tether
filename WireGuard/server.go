@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/netip"
 	"os"
@@ -158,6 +159,8 @@ type Server struct {
 	sendTo  func(c *net.UDPConn, payload []byte, to netip.AddrPort) error
 	// nat64 reaches IPv4 addresses from an iPhone that has no IPv4 route, see nat64.go.
 	nat64 nat64
+	// pin is the interface the iPhone's own sockets leave on, see pin.go.
+	pin pinner
 	// pings are the devices' echo requests waiting for their replies, see icmp.go.
 	pings pinger
 	// ctx ends with Close, and the dials still being made end with it.
@@ -245,22 +248,15 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		maxDials: maxDials,
 		maxConns: maxConns,
 		maxPings: maxPings,
-		// Go's default keepalive probes every idle connection every 15 s, which keeps the cellular
-		// radio awake. Probing is still needed: when the device closes first, forwardTCP half-closes
-		// and waits for the remote, so a remote that silently went away would hold it forever.
-		dial: (&net.Dialer{Timeout: dialTimeout, KeepAliveConfig: net.KeepAliveConfig{
-			Enable: true, Idle: 10 * time.Minute, Interval: 30 * time.Second, Count: 4,
-		}}).DialContext,
-		toNet:   func(a netip.AddrPort) netip.AddrPort { return a },
-		fromNet: func(a netip.AddrPort) netip.AddrPort { return a },
-		sendTo: func(c *net.UDPConn, payload []byte, to netip.AddrPort) error {
-			_, err := c.WriteToUDPAddrPort(payload, to)
-			return err
-		},
-		stop:  make(chan struct{}),
-		found: make(chan struct{}, 1),
-		shake: make(chan struct{}, 1),
+		toNet:    func(a netip.AddrPort) netip.AddrPort { return a },
+		fromNet:  func(a netip.AddrPort) netip.AddrPort { return a },
+		stop:     make(chan struct{}),
+		found:    make(chan struct{}, 1),
+		shake:    make(chan struct{}, 1),
 	}
+	s.dial = newDialer(&s.pin).DialContext
+	s.sendTo = s.pin.sendTo
+	s.pin.logf = log.New(os.Stdout, "wireguard: ", log.Ldate|log.Ltime).Printf
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.stack = stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
@@ -311,6 +307,16 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	s.stopped.Add(1)
 	go s.refreshHandshakes()
 	return s, nil
+}
+
+// newDialer makes the iPhone-side TCP connections, pinned by p. Go's default keepalive probes every
+// idle connection every 15 s, which keeps the cellular radio awake. Probing is still needed: when
+// the device closes first, forwardTCP half-closes and waits for the remote, so a remote that
+// silently went away would hold it forever.
+func newDialer(p *pinner) *net.Dialer {
+	return &net.Dialer{Timeout: dialTimeout, Control: p.control, KeepAliveConfig: net.KeepAliveConfig{
+		Enable: true, Idle: 10 * time.Minute, Interval: 30 * time.Second, Count: 4,
+	}}
 }
 
 // Close stops the server. Once it returns, no connection or UDP socket of a device's is left open
