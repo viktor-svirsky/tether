@@ -178,7 +178,9 @@ type Server struct {
 	found   chan struct{} // asks the refresher to look at candidate
 	shake   chan struct{} // asks the refresher to read the handshakes now, see noticeHandshake
 	stopped sync.WaitGroup
-	reading sync.Mutex
+	// closeOnce makes Close safe to call twice: close(stop) would panic.
+	closeOnce sync.Once
+	reading   sync.Mutex
 	// applying keeps changes to wireguard-go's peers in order: SetPeers from Swift, and the
 	// refresher making a newly found router.
 	applying sync.Mutex
@@ -315,8 +317,10 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 
 // Close stops the server. Once it returns, no connection or UDP socket of a device's is left open
 // on the iPhone's side: the open ones are closed here, the ones being made are refused and waited
-// for, and their dials end at once.
-func (s *Server) Close() {
+// for, and their dials end at once. Calling it again does nothing.
+func (s *Server) Close() { s.closeOnce.Do(s.close) }
+
+func (s *Server) close() {
 	close(s.stop)
 	s.stopped.Wait()
 	s.mu.Lock()

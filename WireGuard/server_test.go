@@ -90,7 +90,14 @@ func newDeviceVia(t *testing.T, s *Server, host netip.Addr, serverPub, priv [32]
 	if err := dev.Up(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(dev.Close)
+	// wireguard-go's netTun.Close can race a WriteNotify still sending the device's reply to a late
+	// packet (#69). So the server goes first, and Down stops the device's packet routines, the ones
+	// that hand packets to its netstack, before the TUN closes.
+	t.Cleanup(func() {
+		s.Close()
+		dev.Down()
+		dev.Close()
+	})
 	return &client{tnet, dev}
 }
 
