@@ -314,23 +314,6 @@ struct StatusOrb: View {
     }
 }
 
-#Preview("Sharing") {
-    let model = Model()
-    model.running = true
-    model.wireGuardConnected = ["10.7.0.2"]
-    return StatusCard(model: model).padding()
-}
-
-#Preview("Hotspot on, no device") {
-    let model = Model()
-    model.running = true
-    return StatusCard(model: model).padding()
-}
-
-#Preview("Waiting") {
-    StatusCard(model: Model()).padding()
-}
-
 #Preview("Main screen") {
     MainView()
 }

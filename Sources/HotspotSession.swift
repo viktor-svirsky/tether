@@ -52,10 +52,10 @@ final class HotspotSession {
     /// Called before anything below that the screen shows changes, as `@Published` does.
     var willChange: () -> Void = {}
 
-    var running = false { willSet { willChange() } }
+    private(set) var running = false { willSet { willChange() } }
     /// Download and upload speed now, in bits per second. Zero until there are two samples to compare.
-    var downSpeed = 0.0 { willSet { willChange() } }
-    var upSpeed = 0.0 { willSet { willChange() } }
+    private(set) var downSpeed = 0.0 { willSet { willChange() } }
+    private(set) var upSpeed = 0.0 { willSet { willChange() } }
     /// The devices that have connected, in the order they first did.
     private(set) var wireGuardPeers: [WireGuardSetup.Peer] = [] { willSet { willChange() } }
     /// Behind the QR code in the Add a device sheet, see `WireGuardSetup.ready`. Only ever a saved one,
@@ -70,7 +70,7 @@ final class HotspotSession {
     private(set) var wireGuardProblem: String? { willSet { willChange() } }
     /// The tunnel addresses of the WireGuard devices that are connected. Read with every sample
     /// while the app is on screen.
-    var wireGuardConnected: Set<String> = [] { willSet { willChange() } }
+    private(set) var wireGuardConnected: Set<String> = [] { willSet { willChange() } }
     /// Each device's numbers by tunnel address, read with the speeds. With the hotspot off, what they used.
     private(set) var wireGuardPeerStats: [String: PeerStats] = [:] { willSet { willChange() } }
     /// Who was connected at the last read, for the notifications: the sampler's on screen, the

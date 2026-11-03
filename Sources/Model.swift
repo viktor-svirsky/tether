@@ -36,22 +36,10 @@ final class Model: ObservableObject {
     static let shared = Model()
 
     // These forward to the session, which announces each change through `objectWillChange`.
-    var running: Bool {
-        get { session.running }
-        set { session.running = newValue }
-    }
-    var downSpeed: Double {
-        get { session.downSpeed }
-        set { session.downSpeed = newValue }
-    }
-    var upSpeed: Double {
-        get { session.upSpeed }
-        set { session.upSpeed = newValue }
-    }
-    var wireGuardConnected: Set<String> {
-        get { session.wireGuardConnected }
-        set { session.wireGuardConnected = newValue }
-    }
+    var running: Bool { session.running }
+    var downSpeed: Double { session.downSpeed }
+    var upSpeed: Double { session.upSpeed }
+    var wireGuardConnected: Set<String> { session.wireGuardConnected }
     var wireGuardPeers: [WireGuardSetup.Peer] { session.wireGuardPeers }
     var wireGuardPeerStats: [String: PeerStats] { session.wireGuardPeerStats }
     var wireGuardReady: WireGuardSetup.Ready? { session.wireGuardReady }
@@ -62,13 +50,13 @@ final class Model: ObservableObject {
     var wireGuardNeedsReset: Bool { session.wireGuardNeedsReset }
 
     /// iOS blocks Tether's replies to the devices, see `LocalNetworkCheck`. Checked while on screen.
-    @Published var localNetworkDenied = false
+    @Published private(set) var localNetworkDenied = false
     private let localNetwork = LocalNetworkCheck()
     /// The hotspot was up at the watcher's last round, so the check runs again when it comes up.
     private var hotspotWasUp = false
 
     /// When this build stops opening, from its provisioning profile. Nil without one.
-    var expires: Date? = AppExpiry.installed { didSet { refreshExpiryWarning() } }
+    private(set) var expires: Date? = AppExpiry.installed { didSet { refreshExpiryWarning() } }
     /// "Tether stops opening in 2 days ...", in the last three days before `expires`. Refreshed by
     /// the 1 s sampler, so it appears on time even on a screen where nothing else changes.
     @Published private(set) var expiryWarning: String?

@@ -1023,16 +1023,13 @@ final class HotspotSessionTests: XCTestCase {
         session.removeWireGuardDevice(peer.id)
         XCTAssertTrue(announced.contains("true - 1"), "the devices")
         XCTAssertTrue(session.wireGuardPeers.isEmpty)
-        let changes: [(String, () -> Void)] = [
-            ("downSpeed", { self.session.downSpeed = 1 }),
-            ("upSpeed", { self.session.upSpeed = 1 }),
-            ("wireGuardConnected", { self.session.wireGuardConnected = ["10.7.0.2"] }),
-        ]
-        for (name, change) in changes {
-            announced = []
-            change()
-            XCTAssertEqual(announced.count, 1, name)
-        }
+        // The speeds, the connected devices and their stats change with a sample, each announced.
+        announced = []
+        now = now.addingTimeInterval(1)
+        server.totals = TrafficTotals(bytesUp: 1000, bytesDown: 1000)
+        server.connected = ["10.7.0.99"] // nobody's, so nothing else changes
+        session.sampleTraffic()
+        XCTAssertEqual(announced.count, 4, "down, up, the connected devices and their stats")
     }
 
     // MARK: Speeds
