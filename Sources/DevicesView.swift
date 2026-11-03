@@ -121,15 +121,14 @@ struct DeviceView: View {
     }
 }
 
-/// "Connected" or "Not connected". The text keeps the normal colours, since green text on the
-/// grouped background fails the contrast audit. The icon carries the green.
+/// "Connected" or "Not connected". The text keeps the label colour in both states, since green or
+/// grey text on the grouped background fails the contrast audit. The icon tells them apart.
 struct ConnectedLabel: View {
     let connected: Bool
 
     var body: some View {
         Label {
             Text(connected ? "Connected" : "Not connected")
-                .foregroundStyle(connected ? .primary : .secondary)
         } icon: {
             Image(systemName: connected ? "checkmark.circle.fill" : "circle.dashed")
                 .foregroundStyle(connected ? .green : .secondary)

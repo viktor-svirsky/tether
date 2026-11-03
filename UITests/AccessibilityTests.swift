@@ -135,6 +135,19 @@ final class AccessibilityTests: TetherUITestCase {
         try audit(types: structuralAudit)
     }
 
+    /// A device that isn't connected says so in text that passes, in both appearances (#32). The
+    /// other device test opens the iPad, which is connected.
+    func testAnUnconnectedDeviceScreenPassesTheAccessibilityAudit() throws {
+        for appearance in [XCUIDevice.Appearance.light, .dark] {
+            XCUIDevice.shared.appearance = appearance
+            launch(.sharing)
+            openDevice("Windows PC")
+            XCTAssertEqual(staticText("device.status").label, "Not connected")
+            try audit()
+            app.terminate()
+        }
+    }
+
     func testDeviceScreenPassesTheAccessibilityAudit() throws {
         launch(.sharing)
         openDevice("iPad")
