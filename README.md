@@ -29,7 +29,7 @@ A device without WireGuard can still join the hotspot, but its traffic goes stra
 
 ## Quick start
 
-1. [Install Tether on your iPhone](#install-tether-on-your-iphone) with SideStore or AltStore, which you set up from a Windows PC or a Mac. Or build it yourself on a Mac. Already have SideStore or AltStore? [Add Tether in one tap](https://viktor-svirsky.github.io/tether/add/) from your iPhone.
+1. [Install Tether on your iPhone](#install-tether-on-your-iphone) with SideStore or AltStore, which you set up from a Windows PC or a Mac. Or build it yourself on a Mac. Already have SideStore, AltStore or Feather? [Add Tether in one tap](https://viktor-svirsky.github.io/tether/add/) from your iPhone.
 2. Turn on Personal Hotspot, open Tether and tap Add a device. It walks you through three steps.
 3. On the other device, install the free WireGuard app and join the hotspot. A Windows, Mac or Linux laptop downloads its config from the address Add a device shows, usually `http://172.20.10.1`. An iPad or phone scans the code. Then turn the tunnel on ([details](#connect-a-device-with-wireguard)).
 
