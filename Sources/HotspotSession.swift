@@ -63,13 +63,13 @@ final class HotspotSession {
     private(set) var wireGuardReady: WireGuardSetup.Ready? { willSet { willChange() } }
     /// Why there's no QR code while the devices that have one still connect: making the next one couldn't be saved.
     private(set) var wireGuardReadyProblem: String? { willSet { willChange() } }
-    /// A rename or removal that couldn't be saved, shown on that device's screen until a change saves.
+    /// A rename, removal, pause or resume that couldn't be saved, shown on that device's screen until a change saves.
     private(set) var wireGuardDeviceProblem: DeviceProblem? { willSet { willChange() } }
     /// Why WireGuard isn't running, shown on the main screen: the saved setup's problem from launch on,
     /// hotspot or not, or why the server didn't start on the hotspot.
     private(set) var wireGuardProblem: String? { willSet { willChange() } }
     /// The tunnel addresses of the WireGuard devices that are connected. Read with every sample
-    /// while the app is on screen.
+    /// while the app is on screen. A paused device isn't, even with its tunnel up, see `unpaused`.
     private(set) var wireGuardConnected: Set<String> = [] { willSet { willChange() } }
     /// Each device's numbers by tunnel address, read with the speeds. With the hotspot off, what they used.
     private(set) var wireGuardPeerStats: [String: PeerStats] = [:] { willSet { willChange() } }
@@ -105,6 +105,9 @@ final class HotspotSession {
     private var sampler = TrafficSampler()
     /// Who was connected at the watcher's last read in the background, see `readInBackground`.
     private var watchedConnected: Set<String> = []
+    /// Whose tunnel was up at the last read, the sampler's or the watcher's, paused devices too, so a
+    /// resume shows at once.
+    private var tunnelsUp: Set<String> = []
     private var boundHost: String?
     /// The carrier gives this iPhone IPv6 only, see `deviceHost`.
     private var onIPv6OnlyCarrier: Bool { willSet { willChange() } }
@@ -347,7 +350,7 @@ final class HotspotSession {
     func shortcutState() -> ShortcutReply.State {
         var connected = wireGuardConnected
         if running, server.running {
-            connected = server.snapshot().connected
+            connected = unpaused(server.snapshot().connected)
         }
         return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem,
                                    idleStopped: idleStopped != nil)
@@ -385,13 +388,45 @@ final class HotspotSession {
         return removed
     }
 
+    /// Paused, a device stays on the server, so its tunnel stays up, but nothing gets through until
+    /// it's resumed. A pause that couldn't be saved changes nothing, and its screen says so.
+    func pauseWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
+        pause(id, .byYou, problem: "The device couldn't be paused.")
+    }
+
+    func resumeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
+        pause(id, nil, problem: "The device couldn't be resumed.")
+    }
+
+    private func pause(_ id: WireGuardSetup.Peer.ID, _ pause: WireGuardSetup.Pause?, problem: String) {
+        let saved = devices.pause(id, pause)
+        if !saved { log("WireGuard: the \(pause == nil ? "resume" : "pause") couldn't be saved, nothing changed") }
+        showDeviceProblem(saved ? nil : DeviceProblem(device: id, text: problem))
+        wireGuardPeersChanged()
+        publishConnected()
+    }
+
+    /// The devices the notifications follow, see `Notifier`. A paused one neither connects nor
+    /// disconnects, so pausing one tells nothing, and doesn't ask for permission to.
+    var notifiedPeers: [WireGuardSetup.Peer] { wireGuardPeers.filter { $0.paused == nil } }
+
+    /// Who is connected, from who has a tunnel up: a paused device's tunnel can be up, but nothing gets through.
+    private func unpaused(_ connected: Set<String>) -> Set<String> {
+        connected.subtracting(devices.setup.peers.filter { $0.paused != nil }.map(\.address))
+    }
+
+    private func publishConnected() {
+        let connected = unpaused(tunnelsUp)
+        if connected != wireGuardConnected { wireGuardConnected = connected }
+    }
+
     /// It names its device, so another device's screen doesn't show it.
     struct DeviceProblem: Equatable {
         let device: WireGuardSetup.Peer.ID
         let text: String
     }
 
-    /// The last rename or removal decides: one that saves clears it, one that doesn't names itself.
+    /// The last change to a device decides: one that saves clears it, one that doesn't names itself.
     private func showDeviceProblem(_ problem: DeviceProblem?) {
         if problem != wireGuardDeviceProblem { wireGuardDeviceProblem = problem }
     }
@@ -500,6 +535,7 @@ final class HotspotSession {
             sampler.reset()
             if downSpeed != 0 { downSpeed = 0 }
             if upSpeed != 0 { upSpeed = 0 }
+            tunnelsUp = []
             if !wireGuardConnected.isEmpty { wireGuardConnected = [] }
             let peers = server.snapshot().peers // a stopped server answers with what each device used
             if peers != wireGuardPeerStats { wireGuardPeerStats = peers }
@@ -508,7 +544,8 @@ final class HotspotSession {
         }
         let snap = server.snapshot()
         let connected = snap.connected
-        if connected != wireGuardConnected { wireGuardConnected = connected }
+        tunnelsUp = connected
+        publishConnected()
         if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
         if snap.stale != staleConfig { staleConfig = snap.stale }
         absorb(connected: connected)
@@ -519,7 +556,7 @@ final class HotspotSession {
 
     /// What each read of who is connected does, on screen (the sampler) or off (the watcher): a
     /// device that connected with the QR code is listed, and each connected device's config is
-    /// known to point where Tether listens.
+    /// known to point where Tether listens. Paused devices too: their tunnels reach Tether.
     private func absorb(connected: Set<String>) {
         claimReady(connected: connected)
         rememberHosts(connected: connected)
@@ -550,10 +587,13 @@ final class HotspotSession {
     private func readInBackground() {
         guard running else {
             watchedConnected = []
+            tunnelsUp = []
             return
         }
-        watchedConnected = server.snapshot().connected
-        absorb(connected: watchedConnected)
+        let connected = server.snapshot().connected
+        tunnelsUp = connected
+        watchedConnected = unpaused(connected)
+        absorb(connected: connected)
     }
 }
 

@@ -75,9 +75,9 @@ struct WireGuardProblemSection: View {
     }
 }
 
-/// One device: whether it's connected, and removing it. Tapping the title renames it. A rename or
-/// removal that couldn't be saved says so at the top, and so does a config that points at an old
-/// address of this iPhone.
+/// One device: whether it's connected or paused, pausing and resuming it, and removing it. Tapping
+/// the title renames it. A change that couldn't be saved says so at the top, and so does a config
+/// that points at an old address of this iPhone.
 struct DeviceView: View {
     @ObservedObject var model: Model
     let peer: WireGuardSetup.Peer
@@ -86,8 +86,8 @@ struct DeviceView: View {
 
     /// The saved device, so a new name shows at once.
     private var current: WireGuardSetup.Peer { model.wireGuardPeers.first { $0.id == peer.id } ?? peer }
-    private var connected: Bool { model.wireGuardConnected.contains(peer.address) }
-    /// A rename or removal of this device that couldn't be saved.
+    private var status: DeviceStatus { DeviceStatus(current, connected: model.wireGuardConnected) }
+    /// A change to this device that couldn't be saved.
     private var problem: String? { model.wireGuardDeviceProblem.flatMap { $0.device == peer.id ? $0.text : nil } }
 
     var body: some View {
@@ -107,9 +107,18 @@ struct DeviceView: View {
                 }
             }
             Section {
-                ConnectedLabel(connected: connected)
-                    .accessibilityIdentifier("device.status")
+                VStack(alignment: .leading, spacing: 4) {
+                    DeviceStatusLabel(status: status, text: status.title)
+                        .accessibilityIdentifier("device.status")
+                    if let detail = status.detail {
+                        // The label colour, like the status: grey text on the card fails the contrast audit.
+                        Text(detail)
+                            .font(.subheadline)
+                            .accessibilityIdentifier("device.statusDetail")
+                    }
+                }
             }
+            pauseSection
             Section {
                 Button("Remove device", role: .destructive) { confirmRemove = true }
                     .accessibilityIdentifier("device.remove")
@@ -129,6 +138,35 @@ struct DeviceView: View {
     }
 }
 
+extension DeviceView {
+    /// Under the status: Pause, or Resume once it's paused, filled since it's the main action then.
+    @ViewBuilder private var pauseSection: some View {
+        if current.paused == nil {
+            Section {
+                Button("Pause") { model.pauseWireGuardDevice(peer.id) }
+                    .accessibilityIdentifier("device.pause")
+            } footer: {
+                Text("Pause stops it from connecting until you resume it.")
+            }
+        } else {
+            Section {
+                Button { model.resumeWireGuardDevice(peer.id) } label: {
+                    Text("Resume")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.filledButton)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+                .accessibilityIdentifier("device.resume")
+            }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
+        }
+    }
+}
+
 /// Under a device's row on the main screen: its config points at an old address of this iPhone,
 /// see `HotspotSession.needsNewConfig`. The text keeps the label colour, since orange or grey text on
 /// the grouped background fails the contrast audit. The icon carries the orange.
@@ -143,17 +181,26 @@ struct OldAddressLabel: View {
     }
 }
 
-/// "Connected" or "Not connected". The text keeps the label colour in both states, since green or
-/// grey text on the grouped background fails the contrast audit. The icon tells them apart.
-struct ConnectedLabel: View {
-    let connected: Bool
+/// "Connected", "Not connected" or "Paused", see `DeviceStatus`. The text keeps the label colour in
+/// every state, since green, orange or grey text on the grouped background fails the contrast audit.
+/// The icon tells them apart. It sits beside the text rather than in a Label, whose text element
+/// spans the icon too, so the audit read the orange icon on the card as text that fails. VoiceOver
+/// skips it, since the word says the same. `text` is the row's word, or the screen's title.
+struct DeviceStatusLabel: View {
+    let status: DeviceStatus
+    var text: String? = nil
 
     var body: some View {
-        Label {
-            Text(connected ? "Connected" : "Not connected")
-        } icon: {
-            Image(systemName: connected ? "checkmark.circle.fill" : "circle.dashed")
-                .foregroundStyle(connected ? .green : .secondary)
+        HStack(spacing: 8) {
+            Group {
+                switch status {
+                case .connected: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                case .notConnected: Image(systemName: "circle.dashed").foregroundStyle(.secondary)
+                case .paused: Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
+                }
+            }
+            .accessibilityHidden(true)
+            Text(text ?? status.label)
         }
     }
 }

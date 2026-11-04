@@ -53,12 +53,13 @@ final class WireGuardServer {
 
     /// Lets in exactly the devices in `setup`. A removed device's open connections finish on their own,
     /// and what it used is dropped, as on the server. A saved device the server doesn't let in now keeps it.
+    /// A paused device stays, and keeps what it used: the server closes its connections and lets nothing through.
     func setPeers(_ setup: WireGuardSetup) throws {
         guard running else { return }
         let peers = setup.serverPeers
         guard peers.allSatisfy({ $0.publicKey.count == 32 }) else { throw Failure(message: "a device key isn't 32 bytes") }
         // No router mark: the server finds a router by its clients' traffic, see noticeRouter in server.go.
-        let message = ConfigMessage(peers: peers.map { ConfigMessage.Peer(key: $0.publicKey, address: $0.address) })
+        let message = ConfigMessage(peers)
         let json = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
         let error = json.withCString { TetherWGConfigure(UnsafeMutablePointer(mutating: $0)) }
         if let message = take(error) { throw Failure(message: message) }
@@ -110,6 +111,7 @@ final class WireGuardServer {
         struct Peer: Encodable {
             let key: Data // base64 in the JSON
             let address: String
+            var paused = false // added later, so the version stays
         }
     }
 
@@ -225,4 +227,11 @@ private func take(_ p: UnsafeMutablePointer<CChar>?) -> String? {
     guard let p else { return nil }
     defer { TetherWGFree(p) }
     return String(cString: p)
+}
+
+extension WireGuardServer.ConfigMessage {
+    /// The devices the server lets in, paused or not.
+    init(_ peers: [WireGuardSetup.Peer]) {
+        self.init(peers: peers.map { Peer(key: $0.publicKey, address: $0.address, paused: $0.paused != nil) })
+    }
 }

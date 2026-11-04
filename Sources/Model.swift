@@ -10,6 +10,7 @@
 //   DevicesView.swift   Add a device on the main screen, and a device's own screen
 //   AddDeviceSheet.swift the steps to add a device, with the QR code for it
 //   AddDeviceProgress.swift  how far adding a device has got, for the sheet, Foundation only
+//   DeviceStatus.swift  what a device's row and screen say: connected, not, or paused, Foundation only
 //   ConfigPage.swift    the page on the hotspot that hands out the next device's config, Foundation only
 //   ConfigPageHandler.swift  what the page answers to each request, Foundation only
 //   ConfigPageServer.swift  serves that page on the hotspot address
@@ -232,7 +233,7 @@ final class Model: ObservableObject {
     /// would have told asks for permission.
     private func notify() {
         let notices = notifier.check(Notifier.Round(now: Date(), onScreen: session.sceneActive, hotspot: session.running,
-                                                    sharing: session.sharing, devices: session.wireGuardPeers,
+                                                    sharing: session.sharing, devices: session.notifiedPeers,
                                                     connected: session.connectedNow, expires: expires,
                                                     idleStopped: session.idleStopped))
         if notifier.wouldTell { askForNotices() }
@@ -307,6 +308,15 @@ final class Model: ObservableObject {
 
     func renameWireGuardDevice(_ id: WireGuardSetup.Peer.ID, to name: String) {
         session.renameWireGuardDevice(id, to: name)
+    }
+
+    /// See `HotspotSession.pauseWireGuardDevice`.
+    func pauseWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
+        session.pauseWireGuardDevice(id)
+    }
+
+    func resumeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
+        session.resumeWireGuardDevice(id)
     }
 
     /// See `HotspotSession.removeWireGuardDevice`.

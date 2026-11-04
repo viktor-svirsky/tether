@@ -100,10 +100,12 @@ func init() {
 	debug.SetMemoryLimit(192 << 20)
 }
 
-// Peer is one device: its public key and its address inside the tunnel.
+// Peer is one device: its public key, its address inside the tunnel, and whether it is paused.
 type Peer struct {
 	PublicKey [32]byte
 	Address   netip.Addr
+	// Paused keeps it on the server, handshake and all, and refuses its traffic, see ownerLocked.
+	Paused bool
 }
 
 // routedNets are the addresses a router may send from besides its own: the private ranges a travel
@@ -185,10 +187,11 @@ type Server struct {
 	// refresher making a newly found router.
 	applying sync.Mutex
 
-	mu    sync.Mutex
-	peers map[[32]byte]netip.Addr // public key -> tunnel address
-	keys  map[netip.Addr][32]byte // tunnel address -> public key
-	names map[string]netip.Addr   // wireguard-go's name for a peer -> tunnel address, see peerName
+	mu     sync.Mutex
+	peers  map[[32]byte]netip.Addr // public key -> tunnel address
+	keys   map[netip.Addr][32]byte // tunnel address -> public key
+	names  map[string]netip.Addr   // wireguard-go's name for a peer -> tunnel address, see peerName
+	paused map[[32]byte]bool       // the keys whose traffic is refused, see ownerLocked
 	// logNames is names for keep, which reads it without s.mu, so a line wireguard-go logs inside
 	// a call made with s.mu held can't wait on it. Each one is a new map, never changed after.
 	logNames atomic.Value
@@ -368,10 +371,16 @@ func (s *Server) close() {
 // SetPeers makes the allowed devices exactly these. Only the ones that changed are touched, so a
 // device added or removed doesn't drop everyone else's session. A removed device's open
 // connections are closed, so a device that gets its tunnel address later can't receive them.
+// A paused device stays in wireguard-go, so its session and handshake go on, but its traffic is
+// refused (see ownerLocked) and its open connections are closed, the way a removed device's are.
 func (s *Server) SetPeers(peers []Peer) error {
 	want := map[[32]byte]netip.Addr{}
+	paused := map[[32]byte]bool{}
 	for _, p := range peers {
 		want[p.PublicKey] = p.Address
+		if p.Paused {
+			paused[p.PublicKey] = true
+		}
 	}
 	s.applying.Lock()
 	defer s.applying.Unlock()
@@ -383,8 +392,29 @@ func (s *Server) SetPeers(peers []Peer) error {
 			router = netip.Addr{}
 		}
 	}
+	// Paused before wireguard-go has the change, so a device added paused gets no traffic through
+	// meanwhile. track refuses a connection being made from now on, since it reads ownerLocked.
+	wasPaused := s.paused
+	s.paused = paused
+	var closing []io.Closer
+	for key, addr := range s.peers {
+		if paused[key] && !wasPaused[key] {
+			for c := range s.flows[addr] {
+				closing = append(closing, c)
+			}
+		}
+	}
 	s.mu.Unlock()
-	return s.apply(want, router)
+	for _, c := range closing {
+		c.Close()
+	}
+	if err := s.apply(want, router); err != nil {
+		s.mu.Lock()
+		s.paused = wasPaused
+		s.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // makeRouter gives the private ranges to the device at addr. It takes them from the router before
@@ -402,7 +432,8 @@ func (s *Server) makeRouter(addr netip.Addr) {
 	known := false
 	for key, a := range s.peers {
 		want[key] = a
-		known = known || a == addr
+		// A device paused since it was picked isn't made the router, see noticeRouter.
+		known = known || (a == addr && !s.paused[key])
 	}
 	at, shook := s.shaken[s.router]
 	taken := s.router.IsValid() && s.router != addr && s.routed && shook && s.now().Sub(at) < onlineWithin
@@ -461,7 +492,8 @@ func (s *Server) noticeRouter(format string, args ...any) {
 	name := fmt.Sprint(args[0])
 	s.mu.Lock()
 	addr := s.names[name]
-	if !addr.IsValid() || addr == s.router || (addr == s.refused && s.now().Sub(s.refusedAt) < handshakeEvery) {
+	// A paused device's traffic is refused, so it can't carry a client's flow, and mustn't take the role.
+	if !addr.IsValid() || addr == s.router || s.paused[s.keys[addr]] || (addr == s.refused && s.now().Sub(s.refusedAt) < handshakeEvery) {
 		s.mu.Unlock()
 		return
 	}
@@ -662,7 +694,8 @@ var tunnelNet = netip.MustParsePrefix("10.7.0.0/24")
 // router's for a device behind it. wireguard-go only takes routedNets sources from the router, so
 // no other device can send as one of its clients. Invalid when nobody may send from src: a device
 // just removed, or a tunnel address no device has, which the router's ranges cover too. A flow from
-// one would go to the device that gets that address later.
+// one would go to the device that gets that address later. Invalid too for a paused device and a
+// paused router's clients, so every way in (TCP, UDP, ping and their replies) refuses them here.
 func (s *Server) owner(src netip.Addr) netip.Addr {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -670,6 +703,14 @@ func (s *Server) owner(src netip.Addr) netip.Addr {
 }
 
 func (s *Server) ownerLocked(src netip.Addr) netip.Addr {
+	owner := s.unpausedOwnerLocked(src)
+	if owner.IsValid() && s.paused[s.keys[owner]] {
+		return netip.Addr{}
+	}
+	return owner
+}
+
+func (s *Server) unpausedOwnerLocked(src netip.Addr) netip.Addr {
 	for _, addr := range s.peers {
 		if addr == src {
 			return src

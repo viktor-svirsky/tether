@@ -55,6 +55,16 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
+// A paused device is sent with "paused": true. One without the key, from before there was one, isn't.
+func TestParseConfigReadsPaused(t *testing.T) {
+	js := fmt.Sprintf(`{"v":1,"peers":[{"key":%q,"address":"10.7.0.2","paused":true},{"key":%q,"address":"10.7.0.3"}]}`,
+		base64.StdEncoding.EncodeToString(key(1)), base64.StdEncoding.EncodeToString(key(2)))
+	peers, err := parseConfig(js)
+	if err != nil || len(peers) != 2 || !peers[0].Paused || peers[1].Paused {
+		t.Fatalf("%+v %v", peers, err)
+	}
+}
+
 // exported makes s the server the exports use, for one test.
 func exported(t *testing.T, s *Server) {
 	mu.Lock()

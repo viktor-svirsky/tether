@@ -86,7 +86,7 @@ struct MainView: View {
                                     deviceRow {
                                         Text(peer.name)
                                         if !textSize.isAccessibilitySize { Spacer() }
-                                        ConnectedLabel(connected: model.wireGuardConnected.contains(peer.address))
+                                        DeviceStatusLabel(status: DeviceStatus(peer, connected: model.wireGuardConnected))
                                             .font(.subheadline)
                                     }
                                     if model.needsNewConfig(peer) { OldAddressLabel().font(.footnote) }

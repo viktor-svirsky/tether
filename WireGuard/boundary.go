@@ -26,6 +26,8 @@ type configMessage struct {
 type configPeer struct {
 	Key     []byte `json:"key"` // 32 bytes, base64 in the JSON
 	Address string `json:"address"`
+	// Paused is added later, so a message without it lets the device in as before.
+	Paused bool `json:"paused"`
 }
 
 // statsMessage is what TetherWGStats returns. testdata/stats.json is an example, and
@@ -91,7 +93,7 @@ func parseConfig(js string) ([]Peer, error) {
 			return nil, fmt.Errorf("device %d repeats a key or address", i+1)
 		}
 		seenKeys[key], seenAddrs[a] = true, true
-		peers = append(peers, Peer{PublicKey: key, Address: a})
+		peers = append(peers, Peer{PublicKey: key, Address: a, Paused: p.Paused})
 	}
 	return peers, nil
 }

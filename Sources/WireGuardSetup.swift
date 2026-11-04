@@ -35,8 +35,13 @@ struct WireGuardSetup: Codable, Equatable {
         /// config, or when it last connected. Nil for a device saved before Tether kept it, until it
         /// connects. See `HotspotSession.needsNewConfig`.
         var host: String?
+        /// Why it can't connect until it's resumed, nil when it can. It stays on the server, so its
+        /// tunnel stays up, but the server lets none of its traffic through. A setup saved before
+        /// there was pausing has none. A release before it, installed over this one, drops it, and the
+        /// device connects again there.
+        var paused: Pause?
 
-        private enum SavedKeys: String, CodingKey { case id, name, privateKey, publicKey, address, host }
+        private enum SavedKeys: String, CodingKey { case id, name, privateKey, publicKey, address, host, paused }
 
         func encode(to encoder: Encoder) throws {
             try encode(to: encoder, privateKey: Data())
@@ -51,6 +56,29 @@ struct WireGuardSetup: Codable, Equatable {
             try container.encode(publicKey, forKey: .publicKey)
             try container.encode(address, forKey: .address)
             try container.encodeIfPresent(host, forKey: .host)
+            try container.encodeIfPresent(paused, forKey: .paused)
+        }
+    }
+
+    /// Why a device is paused, saved as `{"why": "you"}`. Each reason has its own words, see
+    /// `DeviceStatus`. A reason this version doesn't know, from a newer one, reads as paused by you,
+    /// so the device stays paused and can be resumed here. Saved again, it's saved as that.
+    enum Pause: Codable, Hashable {
+        /// Paused on its screen, until it's resumed there.
+        case byYou
+
+        private enum CodingKeys: String, CodingKey { case why }
+
+        /// Whatever was saved, so a newer version's shape never makes the setup unreadable.
+        init(from decoder: Decoder) throws {
+            self = .byYou
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .byYou: try container.encode("you", forKey: .why)
+            }
         }
     }
 
@@ -145,6 +173,12 @@ struct WireGuardSetup: Codable, Equatable {
 
     mutating func removePeer(_ id: Peer.ID) {
         peers.removeAll { $0.id == id }
+    }
+
+    /// Pauses the device, or resumes it with nil, see `Peer.paused`.
+    mutating func pausePeer(_ id: Peer.ID, _ pause: Pause?) {
+        guard let i = peers.firstIndex(where: { $0.id == id }) else { return }
+        peers[i].paused = pause
     }
 
     /// The devices at these tunnel addresses reach Tether at `host`, see `Peer.host`.
@@ -396,6 +430,13 @@ final class WireGuardDevices {
             setup = before
             return false
         }
+    }
+
+    /// See `WireGuardSetup.pausePeer`. False when it couldn't be saved, and then nothing changes, since
+    /// it wouldn't hold after a relaunch.
+    @discardableResult
+    func pause(_ id: WireGuardSetup.Peer.ID, _ pause: WireGuardSetup.Pause?) -> Bool {
+        change { $0.pausePeer(id, pause) }
     }
 
     /// False when the change couldn't be saved. Then the device stays, here and on the server, since
