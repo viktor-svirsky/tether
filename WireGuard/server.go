@@ -185,11 +185,14 @@ type Server struct {
 	// refresher making a newly found router.
 	applying sync.Mutex
 
-	mu     sync.Mutex
-	peers  map[[32]byte]netip.Addr // public key -> tunnel address
-	keys   map[netip.Addr][32]byte // tunnel address -> public key
-	names  map[string]netip.Addr   // wireguard-go's name for a peer -> tunnel address, see peerName
-	router netip.Addr              // the router's tunnel address, invalid without one
+	mu    sync.Mutex
+	peers map[[32]byte]netip.Addr // public key -> tunnel address
+	keys  map[netip.Addr][32]byte // tunnel address -> public key
+	names map[string]netip.Addr   // wireguard-go's name for a peer -> tunnel address, see peerName
+	// logNames is names for keep, which reads it without s.mu, so a line wireguard-go logs inside
+	// a call made with s.mu held can't wait on it. Each one is a new map, never changed after.
+	logNames atomic.Value
+	router   netip.Addr // the router's tunnel address, invalid without one
 	// routed says a flow from one of the router's clients has started since it got the role. The
 	// log line that makes a router doesn't say which address was dropped, so a device can get the
 	// role with a packet from an address no client has, like a tunnel address that isn't its own.
@@ -302,7 +305,7 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	s.stack.SetTransportProtocolHandler(tcp.ProtocolNumber, s.handleTCP)
 	s.stack.SetTransportProtocolHandler(udp.ProtocolNumber, s.handleUDP)
 
-	logger := &device.Logger{Verbosef: s.notice, Errorf: device.NewLogger(device.LogLevelError, "wireguard: ").Errorf}
+	logger := &device.Logger{Verbosef: s.notice, Errorf: s.noticeError}
 	s.dev = device.NewDevice(s.tun, &hostBind{host: host}, logger)
 	if err := s.dev.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\n", hex.EncodeToString(privateKey[:]), port)); err != nil {
 		s.dev.Close()
@@ -417,7 +420,8 @@ func (s *Server) makeRouter(addr netip.Addr) {
 }
 
 // notice is wireguard-go's verbose logger. A few of the things it says matter here, see
-// noticeHandshake, noticeRouter and noticeStale. The rest is dropped.
+// noticeHandshake, noticeRouter and noticeStale, and the lines that say something go into the
+// log Settings shares, see keep.
 func (s *Server) notice(format string, args ...any) {
 	if heard := s.heard.Load(); heard != nil {
 		(*heard)(fmt.Sprintf(format, args...))
@@ -425,6 +429,7 @@ func (s *Server) notice(format string, args ...any) {
 	s.noticeHandshake(format)
 	s.noticeRouter(format, args...)
 	s.noticeStale(format, args...)
+	s.keep("", format, args)
 }
 
 // noticeHandshake has the refresher read the handshakes a second after the server answers one.
@@ -478,6 +483,7 @@ func (s *Server) setPeersLocked(peers map[[32]byte]netip.Addr) {
 		s.keys[addr] = key
 		s.names[peerName(key)] = addr
 	}
+	s.logNames.Store(s.names)
 }
 
 // peerName is how wireguard-go names a peer in its log: the start and end of its public key.

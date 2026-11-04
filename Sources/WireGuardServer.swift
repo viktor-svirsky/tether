@@ -142,14 +142,19 @@ final class WireGuardServer {
             }
         }
 
+        /// Refuses a message of a version this app doesn't read, before anything else is read from it.
+        static func checkVersion(_ json: Data) throws {
+            let version = try JSONDecoder().decode(Version.self, from: json).v
+            guard version == WireGuardServer.messageVersion else { throw OtherVersion(version: version) }
+        }
+
         struct OtherVersion: Error, CustomStringConvertible {
             let version: Int
             var description: String { "version \(version), this app reads \(WireGuardServer.messageVersion)" }
         }
 
         static func read(_ json: Data) throws -> ServerSnapshot {
-            let version = try JSONDecoder().decode(Version.self, from: json).v
-            guard version == WireGuardServer.messageVersion else { throw OtherVersion(version: version) }
+            try checkVersion(json)
             let m = try JSONDecoder().decode(Message.self, from: json)
             var peers: [String: PeerStats] = [:]
             for p in m.peers {
@@ -162,6 +167,45 @@ final class WireGuardServer {
                 StaleConfig.Kind(rawValue: s.kind).map { StaleConfig(kind: $0, at: Date(timeIntervalSince1970: TimeInterval(s.at))) }
             }
             return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, stale: stale)
+        }
+    }
+}
+
+extension WireGuardServer {
+    /// The Go server's lines since the last call, for the shared log, see golog.go. It works with no
+    /// server running, so a server that stopped leaves its last lines. A message this app can't read
+    /// becomes a line that says so.
+    nonisolated static func takeLog() -> [DebugLog.Line] {
+        guard let json = take(TetherWGLog()) else { return [] }
+        do {
+            return try ServerLog.read(Data(json.utf8))
+        } catch {
+            return [DebugLog.Line(at: Date(), text: "go: the server's log can't be read: \(error)")]
+        }
+    }
+
+    /// What TetherWGLog returns, see logMessage in golog.go. WireGuard/testdata/log.json is an example
+    /// Go's tests check against the real thing.
+    enum ServerLog {
+        private struct Message: Decodable {
+            let lines: [Line]
+            let dropped: Int
+
+            struct Line: Decodable {
+                let at: Int64 // Unix milliseconds
+                let text: String
+            }
+        }
+
+        /// Each line marked as the server's with "go:", after a line for any it lost.
+        static func read(_ json: Data) throws -> [DebugLog.Line] {
+            try Stats.checkVersion(json)
+            let m = try JSONDecoder().decode(Message.self, from: json)
+            var lines = m.lines.map { DebugLog.Line(at: Date(timeIntervalSince1970: TimeInterval($0.at) / 1000), text: "go: \($0.text)") }
+            if m.dropped > 0 {
+                lines.insert(DebugLog.Line(at: lines.first?.at ?? Date(), text: "go: \(m.dropped) earlier lines were lost"), at: 0)
+            }
+            return lines
         }
     }
 }

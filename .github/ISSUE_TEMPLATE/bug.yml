@@ -22,6 +22,12 @@ body:
         - Something else (say which above)
     validations:
       required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Tether's log
+      description: In Tether, tap the gear, then Share the log, and save the file. Drag it in here. It says what Tether did lately, with your keys and full addresses left out.
+      placeholder: Drop Tether log.txt here
   - type: input
     id: version
     attributes:

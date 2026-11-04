@@ -1,9 +1,11 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
 
 /// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle, a
 /// switch for each kind of notification, a button for the permission before Tether asked for it
-/// itself, the way to Settings when iOS has Tether's notifications off, and what this build is.
+/// itself, the way to Settings when iOS has Tether's notifications off, the log to share for a bug
+/// report, and what this build is.
 struct SettingsView: View {
     @ObservedObject var model: Model
     @Environment(\.dismiss) private var dismiss
@@ -15,19 +17,12 @@ struct SettingsView: View {
         _idleStopAfter = AppStorage(wrappedValue: .default, IdleStop.After.key, store: model.settingsDefaults)
     }
 
-    /// "1.1.0 (66)": the version people see, and the build number from the commit count.
-    private var version: String {
-        let info = Bundle.main.infoDictionary
-        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
-        let build = info?["CFBundleVersion"] as? String ?? "?"
-        return "\(short) (\(build))"
-    }
-
     var body: some View {
         NavigationStack {
             List {
                 sharing
                 notices
+                help
                 about
             }
             .navigationTitle("Settings")
@@ -52,9 +47,25 @@ struct SettingsView: View {
         }
     }
 
+    private var help: some View {
+        Section {
+            ShareLink(item: LogFile(), preview: SharePreview("Tether log")) {
+                Label("Share the log", systemImage: "square.and.arrow.up")
+            }
+            .accessibilityIdentifier("settings.log")
+            Link("Help and source code", destination: URL(string: "https://github.com/viktor-svirsky/tether")!)
+                .accessibilityIdentifier("settings.help")
+        } header: {
+            Text("Help")
+        } footer: {
+            Text("The log is a text file of what Tether did lately, for a bug report. Keys and full addresses are left out.")
+                .accessibilityIdentifier("settings.logFooter")
+        }
+    }
+
     @ViewBuilder private var about: some View {
         Section("About") {
-            LabeledContent("Version", value: version)
+            LabeledContent("Version", value: Model.version)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("settings.version")
             if let expires = model.expires {
@@ -62,8 +73,6 @@ struct SettingsView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("settings.expires")
             }
-            Link("Help and source code", destination: URL(string: "https://github.com/viktor-svirsky/tether")!)
-                .accessibilityIdentifier("settings.help")
             LabeledContent("License", value: "MIT")
         }
     }
@@ -112,6 +121,14 @@ struct SettingsView: View {
             Text("Only while Tether is in the background. On screen, the screen shows it.")
                 .accessibilityIdentifier("notices.footer")
         }
+    }
+}
+
+/// The log as a file to share, see `DebugLog`. It's written when the share sheet asks for it, so it
+/// has the lines up to then.
+private struct LogFile: Transferable {
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .plainText) { _ in SentTransferredFile(try Model.writeLog()) }
     }
 }
 

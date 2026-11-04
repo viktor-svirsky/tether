@@ -1,16 +1,12 @@
 import XCTest
 
 /// The Settings sheet behind the gear (the notification switches and About), and one notice posted in the background.
+/// Its Help section is in SettingsHelpTests.
 /// When to post is covered by the unit tests (NotifierTests), since a demo launch connects no device.
 final class NotificationsTests: TetherUITestCase {
     override func tearDown() {
         XCUIDevice.shared.appearance = .light
         super.tearDown()
-    }
-
-    private func openSettings() {
-        element("settings.open").tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5), "the Settings sheet did not open")
     }
 
     private func toggle(_ kind: String) -> XCUIElement {

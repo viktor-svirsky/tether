@@ -20,6 +20,8 @@
 //     LocalNetworkIntroView.swift is that screen
 //   Notices.swift       what to tell in a notification and when, and asking for permission, Foundation only
 //   SettingsView.swift  the Settings sheet behind the gear, and the system's notification center
+//   DebugLog.swift      the log Settings shares, kept in a file, Foundation only
+//   LogRedaction.swift  what each line of that log leaves out, Foundation only
 //   DemoMode.swift      fake app state for the UI tests, Debug builds only
 //   Fakes.swift         the stand-in server, page and sound the tests and demos share, Debug builds only
 //   Shortcuts.swift     the Shortcuts actions; ShortcutReply.swift has what they say, Foundation only
@@ -84,6 +86,31 @@ final class Model: ObservableObject {
 
     private let session: HotspotSession
     private static let logger = Logger(subsystem: "com.vsvirskyi.phoneshare", category: "tether")
+    /// The log Settings shares, with the Go server's lines. A demo launch has its own, emptied at launch.
+    nonisolated static let debugLog: DebugLog = {
+        #if DEBUG
+        if let demo = DemoState.fromLaunchArguments() { return demo.debugLog() }
+        #endif
+        return DebugLog(directory: DebugLog.defaultDirectory, source: WireGuardServer.takeLog)
+    }()
+
+    /// "1.1.0 (66)": the version people see, and the build number from the commit count.
+    nonisolated static var version: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(short) (\(build))"
+    }
+
+    /// The log to share, as a file: what this build, iOS and iPhone are, then the lines.
+    nonisolated static func writeLog() throws -> URL {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        var system = utsname()
+        uname(&system)
+        let model = withUnsafeBytes(of: system.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        let header = "Tether \(version), iOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion), \(model)"
+        return try debugLog.writeExport(header: header, to: FileManager.default.temporaryDirectory)
+    }
 
     #if DEBUG
     /// Set in a demo launch (`-TetherDemo`, see DemoMode.swift). Nothing real runs then.
@@ -112,6 +139,7 @@ final class Model: ObservableObject {
     #endif
 
     init() {
+        Self.append("Tether \(Self.version) launched")
         #if DEBUG
         let demo = DemoState.fromLaunchArguments()
         let secrets: SecretStore = demo?.secrets() ?? KeychainSecrets()
@@ -153,6 +181,7 @@ final class Model: ObservableObject {
         watcher = Task { [weak self] in
             while !Task.isCancelled {
                 self?.session.watch()
+                Self.debugLog.takeSource() // the Go server's lines, also when Tether has nothing to say
                 self?.checkLocalNetworkWhenTheHotspotComesUp()
                 self?.notify()
                 // The slack lets iOS wake the app for this together with other timers.
@@ -377,8 +406,9 @@ final class Model: ObservableObject {
         }
     }
 
-    /// Internal log, read in Console.app. Nothing in the app shows it.
+    /// Internal log, read in Console.app, and the log Settings shares.
     private static func append(_ s: String) {
         logger.info("\(s, privacy: .public)")
+        debugLog.append(s)
     }
 }

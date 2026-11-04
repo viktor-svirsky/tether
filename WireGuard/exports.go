@@ -1,8 +1,9 @@
 package main
 
 // The C API WireGuardServer.swift calls. One server at a time. Strings Go returns are malloc'd and
-// the caller frees them with TetherWGFree. The server key is 32 raw bytes. The device list and the
-// stats are JSON messages with a version, see boundary.go, which holds the work these only wrap.
+// the caller frees them with TetherWGFree. The server key is 32 raw bytes. The device list, the
+// stats and the log are JSON messages with a version, see boundary.go and golog.go, which hold the
+// work these only wrap.
 
 /*
 #include <stdlib.h>
@@ -108,6 +109,24 @@ func TetherWGStats() (result *C.char) {
 		}
 	}()
 	js, ok := statsJSON()
+	if !ok {
+		return nil
+	}
+	return C.CString(js)
+}
+
+// TetherWGLog returns a JSON logMessage of the server's lines since the last call, or nil when there
+// are none. It works with no server running, so the lines of one that stopped aren't lost.
+//
+//export TetherWGLog
+func TetherWGLog() (result *C.char) {
+	// A panic that leaves here would end the whole app, see survive. Dropped like TetherWGStats'.
+	defer func() {
+		if recover() != nil {
+			result = nil
+		}
+	}()
+	js, ok := logJSON()
 	if !ok {
 		return nil
 	}

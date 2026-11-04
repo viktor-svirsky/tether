@@ -59,4 +59,12 @@ final class DemoScenarioTests: XCTestCase {
         let pc = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "Windows PC" })
         XCTAssertTrue(session.needsNewConfig(pc))
     }
+
+    /// A demo's log is its own, emptied at each launch, so the app's log never gets a demo's lines.
+    func testADemoKeepsItsOwnLogEmptiedAtEachLaunch() {
+        let log = DemoState(.sharing).debugLog()
+        log.append("from a demo")
+        XCTAssertTrue(log.export(header: "").contains("from a demo"))
+        XCTAssertTrue(DemoState(.sharing).debugLog().export(header: "").hasSuffix("Nothing logged yet.\n"))
+    }
 }

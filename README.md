@@ -147,11 +147,11 @@ iOS has no automation for "Personal Hotspot turned on", so let one shortcut turn
 - **A device can't connect?** Check Settings > Privacy & Security > Local Network: Tether has to be on there, or iOS blocks its replies to your devices. The first time you open Tether, it says what it needs this for. When iOS asks, tap Allow. When it's off, Tether's main screen and Add a device say so, with the way to turn it on. If you reinstalled Tether with another certificate, it made new keys, so add the device again with a new code. When a device keeps trying with a config that no longer works (its code expired before it first connected, you removed it, or Tether made new keys), the main screen says so: delete its tunnel in WireGuard and add it again.
 - **It only listens on the hotspot**, never on other Wi-Fi networks. WireGuard only lets in devices you added.
 - **Devices reach what the iPhone reaches**, private networks included. With a VPN on the iPhone, your devices use it too, so its networks are open to them and to everyone behind a travel router you added.
-- **The main screen** shows whether Tether is sharing, Add a device, your devices with Connected or Not connected, and the current download and upload speed. The gear opens Settings: when to stop sharing while idle, the notification switches, the version, and when this build stops opening. To stop sharing, turn off Personal Hotspot.
+- **The main screen** shows whether Tether is sharing, Add a device, your devices with Connected or Not connected, and the current download and upload speed. The gear opens Settings: when to stop sharing while idle, the notification switches, Share the log, the version, and when this build stops opening. To stop sharing, turn off Personal Hotspot.
 - **The traffic leaves as your iPhone's.** If your iPhone runs a VPN, shared traffic goes through that VPN too.
 - **Your carrier can still notice.** Tether hides where the traffic comes from, not what it is. A Mac's software updates or an iPad's apps still look like a Mac or an iPad to a carrier that looks closely. Many carrier contracts don't allow tethering workarounds, and a carrier can slow down or close a line that breaks them. Check yours. Using Tether is your call and your risk.
 - **Not for the App Store.** Apple doesn't allow the silent-audio trick, so you sign and install Tether yourself.
-- **Questions and ideas** go in [Discussions](https://github.com/viktor-svirsky/tether/discussions): how to set something up, whether your carrier works, a feature you'd like. Something broken goes in a [bug report](https://github.com/viktor-svirsky/tether/issues/new?template=bug.yml).
+- **Questions and ideas** go in [Discussions](https://github.com/viktor-svirsky/tether/discussions): how to set something up, whether your carrier works, a feature you'd like. Something broken goes in a [bug report](https://github.com/viktor-svirsky/tether/issues/new?template=bug.yml). Attach the log to it: Settings > Share the log saves a text file of what Tether did lately, with your keys and full addresses left out.
 
 ## For developers
 
@@ -167,6 +167,7 @@ Sources/Model.swift          runs the session on timers and feeds the screens
 Sources/MainView.swift       the main screen; AddDeviceSheet.swift has the steps and the QR code, DevicesView.swift the device screen
 Sources/ConfigPage.swift     the page on the hotspot that hands out the next device's config; ConfigPageServer.swift serves it
 Sources/Notices.swift        what to tell in a notification and when (tested on the Mac), and SettingsView.swift the Settings sheet
+Sources/DebugLog.swift       the log Settings shares, with the Go server's lines, and LogRedaction.swift what it leaves out (tested on the Mac)
 Sources/KeepAlive.swift      silent audio to stay alive in the background
 Sources/Shortcuts.swift      the Start Tether and Is Tether Sharing? actions for Shortcuts and Siri
 Sources/DemoMode.swift       the UI tests' demo states, run through the real session (Debug builds only)

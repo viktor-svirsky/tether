@@ -152,6 +152,13 @@ struct DemoState {
         return UserDefaults(suiteName: "TetherDemo")!
     }
 
+    /// The log Settings shares, in its own folder, emptied at each launch. Never the app's.
+    func debugLog() -> DebugLog {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TetherDemoLog")
+        try? FileManager.default.removeItem(at: directory)
+        return DebugLog(directory: directory, source: { [] })
+    }
+
     /// Nil for `notifying`, which uses the real one.
     @MainActor
     func noticeCenter() -> NoticeCenter? {

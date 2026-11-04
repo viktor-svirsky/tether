@@ -204,23 +204,7 @@ final class WireGuardServerTests: XCTestCase {
     func testAKnockReachesTheSnapshotAndGoesWithTheServer() async throws {
         let port = try start()
         XCTAssertNil(server.snapshot().stale)
-        // A handshake initiation is type 1 and 148 bytes long. Zeroes for the rest fail the mac1 check.
-        var initiation = [UInt8](repeating: 0, count: 148)
-        initiation[0] = 1
-        let fd = socket(AF_INET, SOCK_DGRAM, 0)
-        defer { Darwin.close(fd) }
-        var to = sockaddr_in()
-        to.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); to.sin_family = sa_family_t(AF_INET)
-        to.sin_port = port.bigEndian
-        to.sin_addr.s_addr = inet_addr("127.0.0.1")
-        for _ in 0..<2 {
-            let sent = withUnsafePointer(to: &to) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    sendto(fd, initiation, initiation.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-                }
-            }
-            XCTAssertEqual(sent, initiation.count)
-        }
+        knock(port, times: 2)
         // wireguard-go reads handshakes on its own goroutines.
         var stale: StaleConfig?
         for _ in 0..<100 where stale == nil {
@@ -230,6 +214,73 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertEqual(stale?.kind, .server)
         server.stop()
         XCTAssertNil(server.snapshot().stale, "a stopped server knows of no knock")
+    }
+
+    /// Junk handshakes, as a config made for other server keys sends: a handshake initiation is type 1
+    /// and 148 bytes long, and zeroes for the rest fail wireguard-go's mac1 check.
+    private func knock(_ port: UInt16, times: Int) {
+        var initiation = [UInt8](repeating: 0, count: 148)
+        initiation[0] = 1
+        send(initiation, to: port, times: times)
+    }
+
+    private func send(_ packet: [UInt8], to port: UInt16, times: Int) {
+        let fd = socket(AF_INET, SOCK_DGRAM, 0)
+        defer { Darwin.close(fd) }
+        var to = sockaddr_in()
+        to.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); to.sin_family = sa_family_t(AF_INET)
+        to.sin_port = port.bigEndian
+        to.sin_addr.s_addr = inet_addr("127.0.0.1")
+        for _ in 0..<times {
+            let sent = withUnsafePointer(to: &to) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    sendto(fd, packet, packet.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            XCTAssertEqual(sent, packet.count)
+        }
+    }
+
+    /// The server's own lines come back through the C API for the shared log, with their times, and
+    /// they're taken once. See golog.go. A packet of a type WireGuard doesn't have is a line no other
+    /// test makes: one that came in the last minute would be counted, not kept.
+    func testTheServersLinesComeBackThroughTheCAPI() async throws {
+        let port = try start()
+        _ = WireGuardServer.takeLog()
+        let before = Date()
+        var packet = [UInt8](repeating: 0, count: 32)
+        packet[0] = 9
+        send(packet, to: port, times: 1)
+        let unknown = "go: Received message with unknown type"
+        var lines: [DebugLog.Line] = []
+        for _ in 0..<100 where !lines.contains(where: { $0.text == unknown }) {
+            try await Task.sleep(for: .milliseconds(20))
+            lines += WireGuardServer.takeLog()
+        }
+        let knocked = try XCTUnwrap(lines.first { $0.text == unknown }, "\(lines)")
+        XCTAssertGreaterThanOrEqual(knocked.at.timeIntervalSince(before), -0.01)
+        XCTAssertLessThanOrEqual(knocked.at.timeIntervalSinceNow, 0.01)
+        XCTAssertFalse(lines.contains { $0.text.contains("Routine:") }, "the goroutines' noise is left out")
+        XCTAssertFalse(WireGuardServer.takeLog().contains(knocked), "taken once")
+    }
+
+    /// WireGuard/testdata/log.json is the shape Go sends: TestLogMatchesTheFixtureSwiftReads checks it
+    /// against the live log.
+    func testTheLogGoSendsIsRead() throws {
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("WireGuard/testdata/log.json")
+        XCTAssertEqual(try WireGuardServer.ServerLog.read(Data(contentsOf: fixture)), [
+            DebugLog.Line(at: Date(timeIntervalSince1970: 1_793_786_553.12), text: "go: 3 earlier lines were lost"),
+            DebugLog.Line(at: Date(timeIntervalSince1970: 1_793_786_553.12), text: "go: Interface state was Down, requested Up, now Up"),
+            DebugLog.Line(at: Date(timeIntervalSince1970: 1_793_786_554), text: "go: device 10.7.0.2 - Received handshake initiation"),
+        ])
+    }
+
+    func testALogOfAnotherShapeIsRefused() {
+        XCTAssertThrowsError(try WireGuardServer.ServerLog.read(Data(#"{"v":2,"lines":[]}"#.utf8))) { error in
+            XCTAssertEqual("\(error)", "version 2, this app reads 1")
+        }
+        XCTAssertThrowsError(try WireGuardServer.ServerLog.read(Data(#"{"v":1,"text":"x"}"#.utf8)))
     }
 
     func testStatsOfAnotherShapeAreRefused() {

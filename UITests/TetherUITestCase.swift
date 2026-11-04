@@ -209,6 +209,12 @@ class TetherUITestCase: XCTestCase {
         XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5), "the sheet did not open", file: file, line: line)
     }
 
+    /// From the main screen to the Settings sheet, through the gear.
+    func openSettings(file: StaticString = #filePath, line: UInt = #line) {
+        element("settings.open").tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5), "the Settings sheet did not open", file: file, line: line)
+    }
+
     /// From the main screen to one device's screen, through its row in the Devices section.
     func openDevice(_ name: String) {
         reveal(element("device.\(name)")).tap()
@@ -333,7 +339,7 @@ class TetherUITestCase: XCTestCase {
     /// Their tests read the real contrast from the pixels instead, see `textContrast`.
     static let filledButtons: Set<String> = ["intro.continue"]
     /// Tether's elements that use only `.secondary` text, the plain button tint or the system's red for a destructive button.
-    static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.hint", "add.airdrop", "notices.footer", "sharing.footer"]
+    static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.hint", "add.airdrop", "notices.footer", "sharing.footer", "settings.logFooter"]
 
     /// The audit without contrast, for a screen that is scrolled (see `audit`).
     var structuralAudit: XCUIAccessibilityAuditType {
