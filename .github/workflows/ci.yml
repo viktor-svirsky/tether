@@ -36,6 +36,7 @@ jobs:
         run: |
           python3 scripts/test_make_source.py
           scripts/test-next-version.sh
+          scripts/test-which-release.sh
       # Every test at full size, then the race detector on the ones that fit its speed.
       - name: WireGuard server tests
         run: go -C WireGuard test ./...

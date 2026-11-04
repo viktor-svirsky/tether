@@ -41,14 +41,23 @@ refused() {
 
 commit one
 ok "version=1.0.0 previous= " patch
-refused refs/heads/main "bump is patch, minor or major, not huge" huge
+refused refs/heads/main "bump is patch, minor, major or release-X.Y, not huge" huge
+ok "version=1.6.0 previous= " release-1.6
 git tag v1.0.0
 refused refs/heads/main "nothing changed since v1.0.0" patch
 commit two
 ok "version=1.0.1 previous=v1.0.0 " patch
 ok "version=1.1.0 previous=v1.0.0 " minor
 ok "version=2.0.0 previous=v1.0.0 " major
-refused refs/heads/main "bump is patch, minor or major, not huge" huge
+refused refs/heads/main "bump is patch, minor, major or release-X.Y, not huge" huge
+# Main moved to a release branch: its own version, and only one after the last release.
+ok "version=1.1.0 previous=v1.0.0 " release-1.1
+ok "version=1.6.0 previous=v1.0.0 " release-1.6
+ok "version=2.0.0 previous=v1.0.0 " release-2.0
+refused refs/heads/main "release-1.0 isn't after v1.0.0" release-1.0
+refused refs/heads/main "release-0.9 isn't after v1.0.0" release-0.9
+refused refs/heads/main "bump is patch, minor, major or release-X.Y, not release-1" release-1
+refused refs/heads/main "bump is patch, minor, major or release-X.Y, not release-1.6.1" release-1.6.1
 git tag v1.9.9-test
 ok "version=1.0.1 previous=v1.0.0 " patch
 refused refs/heads/feature "release from main, not refs/heads/feature" patch
