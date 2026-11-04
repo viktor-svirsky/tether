@@ -52,6 +52,8 @@ struct AddDeviceSheet: View {
                                 title: "Turn its tunnel on", id: "add.step3") {
                             switch (progress.tunnel, progress.device) {
                             case (.done, _): note("Connected")
+                            // The sheet covers the status card, and this is where a device would wait forever.
+                            case _ where model.localNetworkDenied: localNetworkWarning
                             case (.waiting, let device?): note("Waiting for \(device.name) to connect")
                             default: note("This ticks off by itself when it connects.")
                             }
@@ -136,6 +138,16 @@ struct AddDeviceSheet: View {
         case .done: .done
         case .waiting: .waiting
         case .toDo: number == current ? .current : .later
+        }
+    }
+
+    private var localNetworkWarning: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Local Network is off for Tether")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(LocalNetworkWarning.text)
+                .accessibilityIdentifier("add.localNetwork.title")
+            LocalNetworkWarning(id: "add.localNetwork")
         }
     }
 
