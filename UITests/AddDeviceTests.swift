@@ -2,6 +2,9 @@ import XCTest
 
 /// Adding a device: the button on the main screen and the sheet with its three steps on a line.
 final class AddDeviceTests: TetherUITestCase {
+    /// How long the code and the shared file work, under each.
+    static let windowNote = "Works while this screen is open, and for 10 minutes after you close it or leave Tether."
+
     func testBeforeAnyDeviceTheMainScreenOffersToAddOne() {
         launch(.waiting)
         XCTAssertEqual(reveal(element("add.open")).label, "Add a device")
@@ -29,6 +32,8 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertTrue(app.segmentedControls.buttons["iPhone or iPad"].isSelected, "a phone or tablet first")
         XCTAssertEqual(element("add.qr").label, "QR code for the next device")
         XCTAssertEqual(reveal(element("add.scan")).label, "In WireGuard, tap + and Create from QR code.")
+        // It stops working later (#29), and nothing else would say so (#91).
+        XCTAssertEqual(reveal(element("add.codeWindow")).label, Self.windowNote)
         assertNowhere(element("add.address"), element("add.share"), element("add.result"), element("add.done"), element("add.joinFirst"))
     }
 
@@ -41,11 +46,14 @@ final class AddDeviceTests: TetherUITestCase {
         let address = reveal(element("add.address"))
         XCTAssertEqual(address.label, "Page address")
         XCTAssertEqual(address.value as? String, "http://172.20.10.1")
-        XCTAssertEqual(address.elementType, .link, "a link, so it can be tapped")
+        // iOS 18 reports a SwiftUI Link as a button.
+        XCTAssertTrue([.link, .button].contains(address.elementType), "a link or a button, so it can be tapped")
         XCTAssertEqual(element("add.copy").label, "Copy the address")
         XCTAssertTrue(reveal(element("add.share")).label.contains("Share the file"))
         XCTAssertEqual(reveal(element("add.airdrop")).label, "AirDrop it to a Mac, then open it in WireGuard.")
-        assertNowhere(element("add.qr"))
+        // The file stops working like the code. A download from the page is listed at once, so it doesn't.
+        XCTAssertEqual(reveal(element("add.fileWindow")).label, Self.windowNote)
+        assertNowhere(element("add.qr"), element("add.codeWindow"))
     }
 
     func testWithTheHotspotOnTheFirstStepIsTicked() {
