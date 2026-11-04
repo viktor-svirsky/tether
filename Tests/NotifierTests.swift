@@ -27,9 +27,10 @@ final class NotifierTests: XCTestCase {
     /// One round in the background while sharing, unless said otherwise. Returns what it would post, as "title: body".
     @discardableResult
     private func round(at m: Double, _ connected: Set<String>, onScreen: Bool = false, hotspot: Bool = true, sharing: Bool = true,
-                       devices: [WireGuardSetup.Peer]? = nil, expires: Date? = nil) -> [String] {
+                       devices: [WireGuardSetup.Peer]? = nil, expires: Date? = nil, idleStopped: IdleStopped? = nil) -> [String] {
         notifier.check(Notifier.Round(now: minutes(m), onScreen: onScreen, hotspot: hotspot, sharing: sharing,
-                                      devices: devices ?? [ipad, pc, router], connected: connected, expires: expires))
+                                      devices: devices ?? [ipad, pc, router], connected: connected, expires: expires,
+                                      idleStopped: idleStopped))
             .map { "\($0.title): \($0.body)" }
     }
 
@@ -175,7 +176,7 @@ final class NotifierTests: XCTestCase {
     }
 
     func testTheSwitchesAreSavedUnderTheirOwnKeys() {
-        XCTAssertEqual(NoticeKind.allCases.map(\.key), ["notify.connected", "notify.disconnected", "notify.sharingStopped", "notify.closed", "notify.expiring"])
+        XCTAssertEqual(NoticeKind.allCases.map(\.key), ["notify.connected", "notify.disconnected", "notify.sharingStopped", "notify.idleStopped", "notify.closed", "notify.expiring"])
     }
 
     /// A device that's connected when Tether starts isn't news, on screen or off. The question
@@ -333,6 +334,28 @@ final class NotifierTests: XCTestCase {
     private func expiryRound(at now: Date, expires: Date, onScreen: Bool = false) -> [String] {
         notifier.check(Notifier.Round(now: now, onScreen: onScreen, hotspot: false, sharing: false, devices: [], connected: [], expires: expires))
             .map { "\($0.title): \($0.body)" }
+    }
+
+    // MARK: Stopping when idle
+
+    /// Sharing stopped after the set time with nobody connected (#76): told once, with the time.
+    func testSharingStoppedWhileIdleIsToldOnce() {
+        round(at: 0, [])
+        let stopped = IdleStopped(at: minutes(30), after: .thirtyMinutes)
+        XCTAssertEqual(round(at: 30, [], sharing: false, idleStopped: stopped),
+                       ["Sharing stopped while idle: No device was connected for 30 minutes. Open Tether to share again."])
+        XCTAssertEqual(round(at: 30.25, [], sharing: false, idleStopped: stopped), [], "once")
+        XCTAssertEqual(round(at: 40, [], sharing: false, idleStopped: stopped), [], "and not as a problem a minute later")
+        let again = IdleStopped(at: minutes(120), after: .oneHour)
+        XCTAssertEqual(round(at: 120, [], sharing: false, idleStopped: again),
+                       ["Sharing stopped while idle: No device was connected for 1 hour. Open Tether to share again."],
+                       "a later stop is told too")
+    }
+
+    func testSharingStoppedWhileIdleHasItsOwnSwitch() {
+        XCTAssertEqual(NoticeKind.idleStopped.label, "Sharing stops while idle")
+        defaults.set(false, forKey: NoticeKind.idleStopped.key)
+        XCTAssertEqual(round(at: 30, [], sharing: false, idleStopped: IdleStopped(at: minutes(30), after: .tenMinutes)), [])
     }
 
     func testTheBuildExpiringIsToldOnceADay() {

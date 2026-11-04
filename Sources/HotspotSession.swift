@@ -75,6 +75,8 @@ final class HotspotSession {
     private(set) var wireGuardPeerStats: [String: PeerStats] = [:] { willSet { willChange() } }
     /// The last config that knocked but no longer works, read with every sample, see `showsStaleConfig`.
     private(set) var staleConfig: StaleConfig? { willSet { willChange() } }
+    /// Sharing stopped after a time with no device connected, until Tether is opened or Start Tether runs.
+    private(set) var idleStopped: IdleStopped? { willSet { willChange() } }
     /// Who was connected at the last read, for the notifications: the sampler's on screen, the
     /// watcher's in the background. Nothing on screen shows the watcher's, so it isn't published.
     var connectedNow: Set<String> { sceneActive ? wireGuardConnected : watchedConnected }
@@ -90,6 +92,8 @@ final class HotspotSession {
     private let page: ConfigPageServing
     private let hotspotAddress: () -> String?
     private let carrierIPv6Only: () -> Bool
+    /// The setting in Settings > Sharing, read each round, so a change counts at once.
+    private let idleStopAfter: () -> IdleStop.After
     private let now: () -> Date
     private let log: @MainActor (String) -> Void
 
@@ -97,6 +101,7 @@ final class HotspotSession {
     /// A launch starts long past, so only opening Tether or Start Tether (`wake`) gives it the 10
     /// minutes. "Is Tether Sharing?" launches Tether in the background too, and only reports.
     private var waitingSince: Date? = .distantPast
+    private var idleStop = IdleStop()
     private var sampler = TrafficSampler()
     /// Who was connected at the watcher's last read in the background, see `readInBackground`.
     private var watchedConnected: Set<String> = []
@@ -116,7 +121,7 @@ final class HotspotSession {
 
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
-         now: @escaping () -> Date = Date.init,
+         idleStopAfter: @escaping () -> IdleStop.After = { .never }, now: @escaping () -> Date = Date.init,
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -125,6 +130,7 @@ final class HotspotSession {
         self.sceneActive = sceneActive
         self.hotspotAddress = hotspotAddress
         self.carrierIPv6Only = carrierIPv6Only
+        self.idleStopAfter = idleStopAfter
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
         self.log = log
@@ -140,6 +146,7 @@ final class HotspotSession {
         syncWithHotspot()
         // On screen the sampler does this every second.
         if !sceneActive { readInBackground() }
+        stopWhenIdle()
     }
 
     /// The hotspot interface exists only while Personal Hotspot is on. This starts WireGuard when
@@ -152,19 +159,15 @@ final class HotspotSession {
         let hotspot = hotspotAddress()
         if running, hotspot != boundHost {
             log("hotspot address gone or changed, stopping")
-            server.stop()
-            page.stop()
-            pageHandler.forget()
-            running = false
-            startProblem = nil // the next hotspot gets a new try
-            showProblem()
+            stopSharing()
         }
         // A WireGuard start that failed (keys locked after a restart, say) is tried again here.
         if running, !server.running, let boundHost { startWireGuard(on: boundHost) }
         // And a page that failed: the address may not have been ready for it yet.
         if running, server.running, !page.running, let boundHost { page.start(host: boundHost, port: ConfigPage.port) }
-        keepAliveWhileSharing(hotspot: hotspot != nil)
-        guard !running, let hotspot else { return }
+        // Stopped while idle, it waits to be opened, hotspot or not.
+        keepAliveWhileSharing(hotspot: hotspot != nil && idleStopped == nil)
+        guard !running, idleStopped == nil, let hotspot else { return }
         log("binding to \(hotspot)")
         boundHost = hotspot
         startWireGuard(on: hotspot)
@@ -174,6 +177,31 @@ final class HotspotSession {
         downSpeed = 0
         upSpeed = 0
         running = true
+    }
+
+    private func stopSharing() {
+        server.stop()
+        page.stop()
+        pageHandler.forget()
+        running = false
+        startProblem = nil // the next hotspot gets a new try
+        showProblem()
+    }
+
+    /// Stops sharing once no device has been connected in the background for the set time, see
+    /// `IdleStop`, and lets iOS suspend Tether at once, with no 10 minutes' wait. Opening Tether or
+    /// Start Tether shares again, see `wake`.
+    private func stopWhenIdle() {
+        let after = idleStopAfter()
+        let now = self.now()
+        guard idleStop.check(sharing: sharing, connected: !connectedNow.isEmpty, onScreen: sceneActive, after: after, now: now) else {
+            return
+        }
+        log("no device connected for \(after.spelledOut), stopping until Tether is opened")
+        idleStopped = IdleStopped(at: now, after: after)
+        stopSharing()
+        waitingSince = .distantPast // so the next rounds don't start the sound again, see keepAliveWhileSharing
+        keepAlive.stop()
     }
 
     /// Plays the silent sound while the hotspot is on, and for a while after it goes, see
@@ -245,11 +273,12 @@ final class HotspotSession {
     }
 
     /// The same as opening Tether, for Start Tether in Shortcuts: the 10 minutes' wait for the hotspot
-    /// starts again, and sharing starts now if the hotspot is on. True when the silent sound plays,
-    /// so iOS keeps Tether running after the action ends.
+    /// starts again, sharing stopped while idle starts again, and sharing starts now if the hotspot
+    /// is on. True when the silent sound plays, so iOS keeps Tether running after the action ends.
     @discardableResult
     func wake() -> Bool {
         if waitingSince != nil { waitingSince = now() }
+        if idleStopped != nil { idleStopped = nil }
         syncWithHotspot()
         return keepAlive.sounding
     }
@@ -320,7 +349,8 @@ final class HotspotSession {
         if running, server.running {
             connected = server.snapshot().connected
         }
-        return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem)
+        return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem,
+                                   idleStopped: idleStopped != nil)
     }
 
     var wireGuardNeedsReset: Bool { devices.needsReset }

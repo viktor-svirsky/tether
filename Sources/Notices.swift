@@ -2,7 +2,7 @@ import Foundation
 
 /// What Tether can tell in a notification. Each has its own switch, all on until turned off.
 enum NoticeKind: String, CaseIterable {
-    case connected, disconnected, sharingStopped, closed, expiring
+    case connected, disconnected, sharingStopped, idleStopped, closed, expiring
 
     /// The switch's label in Settings.
     var label: String {
@@ -10,6 +10,7 @@ enum NoticeKind: String, CaseIterable {
         case .connected: "A device connects"
         case .disconnected: "A device disconnects"
         case .sharingStopped: "Sharing stops with a problem"
+        case .idleStopped: "Sharing stops while idle"
         case .closed: "iOS stops Tether in the background"
         case .expiring: "Tether stops opening soon"
         }
@@ -64,6 +65,8 @@ struct Notifier {
         /// The tunnel addresses with a recent handshake.
         var connected: Set<String>
         var expires: Date? = nil
+        /// Sharing stopped after a time with no device connected, see `IdleStop`.
+        var idleStopped: IdleStopped? = nil
     }
 
     private struct Device {
@@ -81,6 +84,8 @@ struct Notifier {
     private var seen = false
     /// When sharing stopped. Nil while sharing.
     private var stoppedSince: Date?
+    /// The idle stop last told, so each is told once.
+    private var toldIdleStop: IdleStopped?
     /// The last round was on screen and saw something it would have told in the background. iOS
     /// shows the permission question only while Tether is on screen, so `Model` asks then.
     private(set) var wouldTell = false
@@ -100,6 +105,7 @@ struct Notifier {
         } else {
             notices += checkStopped(round)
         }
+        notices += checkIdleStop(round)
         notices += checkExpiry(round)
         seen = true
         return notices
@@ -190,6 +196,15 @@ struct Notifier {
         let who = names.count == 1 ? "\(names[0]) was" : names.count == 2 ? "\(names[0]) and \(names[1]) were" : "\(names.count) devices were"
         return [Notice(kind: .sharingStopped, id: "sharing", title: "Sharing stopped",
                        body: "WireGuard stopped while \(who) connected. Open Tether to see why.")]
+    }
+
+    /// Each idle stop once. It happens only in the background, since on screen nothing stops.
+    private mutating func checkIdleStop(_ round: Round) -> [Notice] {
+        guard let stopped = round.idleStopped, stopped != toldIdleStop else { return [] }
+        toldIdleStop = stopped
+        guard !round.onScreen, NoticeKind.idleStopped.isOn(in: defaults) else { return [] }
+        return [Notice(kind: .idleStopped, id: "idleStop", title: "Sharing stopped while idle",
+                       body: "No device was connected for \(stopped.after.spelledOut). Open Tether to share again.")]
     }
 
     /// Once a day within `AppExpiry.warnBefore`. A day the main screen showed the warning counts as told.

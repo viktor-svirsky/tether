@@ -17,6 +17,7 @@ final class HotspotSessionTests: XCTestCase {
     private var devices: WireGuardDevices!
     private var address: String?
     private var ipv6Only = false
+    private var idleAfter = IdleStop.After.never
     private var now = Date(timeIntervalSince1970: 1_800_000_000)
     private var session: HotspotSession!
 
@@ -32,7 +33,8 @@ final class HotspotSessionTests: XCTestCase {
         devices = WireGuardDevices(secrets: secrets)
         session = HotspotSession(devices: devices, server: server, keepAlive: sound, page: page,
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
-                                 carrierIPv6Only: { [unowned self] in ipv6Only }, now: { [unowned self] in now }, log: log)
+                                 carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
+                                 now: { [unowned self] in now }, log: log)
     }
 
     private func minutes(_ m: Double) -> Date { start.addingTimeInterval(m * 60) }
@@ -997,6 +999,116 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertTrue(session.wake())
         sound.silent = true // iOS refused the audio session, in the background say
         XCTAssertFalse(session.wake())
+    }
+
+    // MARK: Stopping when idle (#76)
+
+    /// Start Tether in the background, with the hotspot on, then a watcher round.
+    private func shareInTheBackground() {
+        makeSession(sceneActive: false)
+        address = hotspot
+        session.wake()
+        session.watch()
+    }
+
+    func testSharingStopsAfterTheIdleTimeInTheBackground() {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        now = minutes(9.9)
+        session.watch()
+        XCTAssertTrue(session.sharing)
+        now = minutes(10)
+        session.watch()
+        XCTAssertFalse(session.sharing)
+        XCTAssertFalse(server.running)
+        XCTAssertFalse(page.running)
+        XCTAssertFalse(sound.playing, "so iOS suspends Tether and the battery is spared")
+        XCTAssertEqual(session.idleStopped, IdleStopped(at: minutes(10), after: .tenMinutes))
+        XCTAssertFalse(session.shortcutState().running, "Is Tether Sharing? says no")
+        XCTAssertTrue(session.shortcutState().idleStopped, "and why")
+        // The hotspot is still on, but it stays stopped.
+        now = minutes(20)
+        session.watch()
+        XCTAssertFalse(server.running)
+        XCTAssertFalse(sound.playing)
+    }
+
+    func testOpeningTetherSharesAgain() {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        now = minutes(10)
+        session.watch()
+        session.cameOnScreen()
+        XCTAssertNil(session.idleStopped)
+        XCTAssertTrue(session.sharing)
+        XCTAssertTrue(server.running)
+        XCTAssertTrue(sound.playing)
+    }
+
+    func testStartTetherSharesAgain() {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        now = minutes(10)
+        session.watch()
+        XCTAssertTrue(session.wake())
+        XCTAssertNil(session.idleStopped)
+        XCTAssertTrue(server.running)
+        XCTAssertFalse(session.shortcutState().idleStopped)
+    }
+
+    /// Woken right after a stop, before any round saw sharing off, it still stops again later.
+    func testItStopsAgainAfterSharingAgain() {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        now = minutes(10)
+        session.watch()
+        now = minutes(11)
+        session.wake()
+        session.watch()
+        now = minutes(20.9)
+        session.watch()
+        XCTAssertTrue(session.sharing)
+        now = minutes(21)
+        session.watch()
+        XCTAssertFalse(session.sharing)
+        XCTAssertEqual(session.idleStopped, IdleStopped(at: minutes(21), after: .tenMinutes))
+    }
+
+    func testAConnectedDeviceKeepsItSharing() {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        server.connected = ["10.7.0.2"]
+        now = minutes(5)
+        session.watch()
+        now = minutes(60)
+        session.watch()
+        XCTAssertTrue(session.sharing)
+        server.connected = []
+        session.watch()
+        now = minutes(69.9)
+        session.watch()
+        XCTAssertTrue(session.sharing)
+        now = minutes(70)
+        session.watch()
+        XCTAssertFalse(session.sharing)
+    }
+
+    func testNeverStopsByDefault() {
+        shareInTheBackground()
+        now = minutes(24 * 60)
+        session.watch()
+        XCTAssertTrue(session.sharing)
+        XCTAssertNil(session.idleStopped)
+    }
+
+    func testOnScreenItNeverStops() {
+        idleAfter = .tenMinutes
+        makeSession(sceneActive: true)
+        address = hotspot
+        session.watch()
+        now = minutes(60)
+        session.watch()
+        XCTAssertTrue(session.sharing)
     }
 
     // MARK: What the screen sees

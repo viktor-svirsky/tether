@@ -145,8 +145,9 @@ struct DemoState {
         }
     }
 
-    /// The notification switches, all on at each launch, so one test's switch doesn't leak into the next. Never the app's own.
-    func noticeDefaults() -> UserDefaults {
+    /// The settings, the notification switches all on and no idle stop at each launch, so one test's
+    /// setting doesn't leak into the next. Never the app's own.
+    func settingsDefaults() -> UserDefaults {
         UserDefaults.standard.removePersistentDomain(forName: "TetherDemo")
         return UserDefaults(suiteName: "TetherDemo")!
     }

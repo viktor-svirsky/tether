@@ -236,7 +236,8 @@ class TetherUITestCase: XCTestCase {
     /// Any other element, an issue with no element, and every full contrast failure still fail the test.
     ///
     /// `types` defaults to everything but Dynamic Type and clipped text. Contrast reads the pixels, so it is only right for what
-    /// is fully on screen: after scrolling, use `structuralAudit` for the rest.
+    /// is fully on screen: a contrast issue on an element that isn't fully inside the window (a row under the home
+    /// indicator, say) is let through and listed. After scrolling, use `structuralAudit` for the rest.
     /// `underSheet`: a half-height sheet leaves the screen behind it visible and dimmed. Its text is hidden
     /// from VoiceOver on purpose while the sheet is open, and the audit reports it as "Potentially
     /// inaccessible text" with no element. Only that exact case is let through.
@@ -255,8 +256,11 @@ class TetherUITestCase: XCTestCase {
                 let systemStyled = Self.systemStyled.contains(element?.identifier ?? "")
                     || Self.filledButtons.contains(element?.identifier ?? "")
                     || (element?.elementType == .button && Self.systemButtons.contains(element?.label ?? ""))
+                let offScreen = issue.auditType == .contrast
+                    && element.map { !self.app.windows.firstMatch.frame.contains($0.frame) } ?? false
                 let known = (issue.compactDescription == "Contrast nearly passed" && (systemText || systemStyled))
                     || (underSheet && issue.compactDescription == "Potentially inaccessible text" && element == nil)
+                    || offScreen
                 if known {
                     allowed.append("\(issue.compactDescription): \(element?.label ?? "(no element)")")
                 } else {
@@ -329,7 +333,7 @@ class TetherUITestCase: XCTestCase {
     /// Their tests read the real contrast from the pixels instead, see `textContrast`.
     static let filledButtons: Set<String> = ["intro.continue"]
     /// Tether's elements that use only `.secondary` text, the plain button tint or the system's red for a destructive button.
-    static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.hint", "add.airdrop", "notices.footer"]
+    static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.hint", "add.airdrop", "notices.footer", "sharing.footer"]
 
     /// The audit without contrast, for a screen that is scrolled (see `audit`).
     var structuralAudit: XCUIAccessibilityAuditType {

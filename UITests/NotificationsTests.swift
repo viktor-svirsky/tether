@@ -20,13 +20,37 @@ final class NotificationsTests: TetherUITestCase {
     func testTheGearOpensASwitchForEachKindAllOn() {
         launch(.sharing)
         openSettings()
-        for kind in ["connected", "disconnected", "sharingStopped", "closed", "expiring"] {
+        for kind in ["connected", "disconnected", "sharingStopped", "idleStopped", "closed", "expiring"] {
             XCTAssertTrue(toggle(kind).waitForExistence(timeout: 5), kind)
             XCTAssertEqual(value(of: toggle(kind)), "1", kind)
         }
         XCTAssertEqual(toggle("connected").label, "A device connects")
         XCTAssertEqual(toggle("closed").label, "iOS stops Tether in the background")
+        XCTAssertEqual(toggle("idleStopped").label, "Sharing stops while idle")
         XCTAssertEqual(toggle("expiring").label, "Tether stops opening soon")
+    }
+
+    /// Settings > Sharing (#76): Never at first, the four choices, and the choice kept.
+    func testSharingStopsWhenIdleIsAMenu() throws {
+        launch(.sharing)
+        openSettings()
+        let menu = app.buttons["sharing.idleStop"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        XCTAssertTrue(menu.label.contains("Stop sharing when idle"), menu.label)
+        XCTAssertTrue(menu.label.contains("Never") || value(of: menu) == "Never", "Never at first: \(menu.label)")
+        XCTAssertEqual(label(of: "sharing.footer"), "Idle means no device is connected. Stopping saves battery. Open Tether to share again.")
+        try audit()
+        menu.tap()
+        for choice in ["Never", "After 10 min", "After 30 min", "After 1 hour"] {
+            XCTAssertTrue(app.buttons[choice].waitForExistence(timeout: 3), choice)
+        }
+        app.buttons["After 30 min"].tap()
+        waitUntilGone(app.buttons["After 1 hour"])
+        XCTAssertTrue(menu.label.contains("After 30 min") || value(of: menu) == "After 30 min", "kept: \(menu.label)")
+        app.buttons["settings.done"].tap()
+        XCTAssertTrue(element("status.title").waitForExistence(timeout: 5))
+        openSettings()
+        XCTAssertTrue(menu.label.contains("After 30 min") || value(of: menu) == "After 30 min", "kept after closing: \(menu.label)")
     }
 
     func testTheTitleIsNotAButton() {

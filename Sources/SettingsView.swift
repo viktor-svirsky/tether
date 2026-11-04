@@ -1,12 +1,19 @@
 import SwiftUI
 import UserNotifications
 
-/// The Settings sheet, opened with the gear on the main screen: a switch for each kind of
-/// notification, a button for the permission before Tether asked for it itself, the way to Settings
-/// when iOS has Tether's notifications off, and what this build is.
+/// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle, a
+/// switch for each kind of notification, a button for the permission before Tether asked for it
+/// itself, the way to Settings when iOS has Tether's notifications off, and what this build is.
 struct SettingsView: View {
     @ObservedObject var model: Model
     @Environment(\.dismiss) private var dismiss
+    /// Read by `HotspotSession` each watcher round, see `IdleStop`.
+    @AppStorage private var idleStopAfter: IdleStop.After
+
+    init(model: Model) {
+        self.model = model
+        _idleStopAfter = AppStorage(wrappedValue: .default, IdleStop.After.key, store: model.settingsDefaults)
+    }
 
     /// "1.1.0 (66)": the version people see, and the build number from the commit count.
     private var version: String {
@@ -19,6 +26,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                sharing
                 notices
                 about
             }
@@ -60,6 +68,21 @@ struct SettingsView: View {
         }
     }
 
+    private var sharing: some View {
+        Section {
+            Picker("Stop sharing when idle", selection: $idleStopAfter) {
+                ForEach(IdleStop.After.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("sharing.idleStop")
+        } header: {
+            Text("Sharing")
+        } footer: {
+            Text("Idle means no device is connected. Stopping saves battery. Open Tether to share again.")
+                .accessibilityIdentifier("sharing.footer")
+        }
+    }
+
     @ViewBuilder private var notices: some View {
         if model.noticePermission == .notAsked {
             Section {
@@ -81,7 +104,7 @@ struct SettingsView: View {
         }
         Section {
             ForEach(NoticeKind.allCases, id: \.self) { kind in
-                NoticeSwitch(kind: kind, store: model.noticeDefaults)
+                NoticeSwitch(kind: kind, store: model.settingsDefaults)
             }
         } header: {
             Text("Notify me when")

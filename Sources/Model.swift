@@ -75,8 +75,8 @@ final class Model: ObservableObject {
 
     /// For the Settings sheet, which refreshes it, see `refreshNoticePermission`.
     @Published private(set) var noticePermission: NoticePermission = .notAsked
-    /// Where the notification switches are saved. A demo launch has its own, emptied at launch.
-    let noticeDefaults: UserDefaults
+    /// Where Settings saves the notification switches and the idle stop. A demo launch has its own, emptied at launch.
+    let settingsDefaults: UserDefaults
     private var notifier: Notifier
     private var closedAlarm = ClosedAlarm()
     private let noticeCenter: NoticeCenter
@@ -115,19 +115,19 @@ final class Model: ObservableObject {
         #if DEBUG
         let demo = DemoState.fromLaunchArguments()
         let secrets: SecretStore = demo?.secrets() ?? KeychainSecrets()
-        noticeDefaults = demo?.noticeDefaults() ?? .standard
+        settingsDefaults = demo?.settingsDefaults() ?? .standard
         noticeCenter = demo?.noticeCenter() ?? SystemNoticeCenter(log: Self.append)
         #else
         let secrets: SecretStore = KeychainSecrets()
-        noticeDefaults = .standard
+        settingsDefaults = .standard
         noticeCenter = SystemNoticeCenter(log: Self.append)
         #endif
-        notifier = Notifier(defaults: noticeDefaults)
+        notifier = Notifier(defaults: settingsDefaults)
         poster = NoticePoster(center: noticeCenter)
         #if DEBUG
-        session = demo?.makeSession(log: Self.append) ?? Self.session(secrets: secrets)
+        session = demo?.makeSession(log: Self.append) ?? Self.session(secrets: secrets, settings: settingsDefaults)
         #else
-        session = Self.session(secrets: secrets)
+        session = Self.session(secrets: secrets, settings: settingsDefaults)
         #endif
         session.willChange = { [weak self] in self?.objectWillChange.send() }
         #if DEBUG
@@ -164,12 +164,13 @@ final class Model: ObservableObject {
     }
 
     /// The session with the real server, sound, page and hotspot.
-    private static func session(secrets: SecretStore) -> HotspotSession {
+    private static func session(secrets: SecretStore, settings: UserDefaults) -> HotspotSession {
         HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(log: Self.append),
                        keepAlive: KeepAlive(log: Self.append), page: ConfigPageServer(),
                        sceneActive: UIApplication.shared.applicationState != .background,
                        hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,
                        carrierIPv6Only: Interfaces.carrierIPv6Only,
+                       idleStopAfter: { IdleStop.After.saved(in: settings) },
                        log: Self.append)
     }
 
@@ -203,13 +204,22 @@ final class Model: ObservableObject {
     private func notify() {
         let notices = notifier.check(Notifier.Round(now: Date(), onScreen: session.sceneActive, hotspot: session.running,
                                                     sharing: session.sharing, devices: session.wireGuardPeers,
-                                                    connected: session.connectedNow, expires: expires))
+                                                    connected: session.connectedNow, expires: expires,
+                                                    idleStopped: session.idleStopped))
         if notifier.wouldTell { askForNotices() }
-        let alarm = closedAlarm.check(now: Date(), sharing: session.sharing, on: NoticeKind.closed.isOn(in: noticeDefaults))
+        let alarm = closedAlarm.check(now: Date(), sharing: session.sharing, on: NoticeKind.closed.isOn(in: settingsDefaults))
         if alarm != .none { poster.queue(alarm) }
-        guard !notices.isEmpty else { return }
         for notice in notices { Self.append("notice: \(notice.title)") }
-        Task { await poster.post(notices) }
+        guard alarm != .none || !notices.isEmpty else { return }
+        // An idle stop has just stopped the sound, and iOS suspends Tether soon after. Background time
+        // lets the notice and the alarm's change get out first: a "Tether stopped sharing" left waiting
+        // would show 3 minutes later.
+        let background = BackgroundTime()
+        Task {
+            await poster.post(notices)
+            await poster.alarmDone()
+            background.end()
+        }
     }
 
     /// Shows the system's question if it was never answered, see `NoticePoster`.
@@ -348,6 +358,23 @@ final class Model: ObservableObject {
             model.sampler?.cancel()
         }
         observe(UIApplication.didReceiveMemoryWarningNotification) { $0.session.freeMemory() }
+    }
+
+    /// Time iOS gives Tether to finish something before it suspends it. Ended once: when the work is
+    /// done, or when iOS says the time is up, since a task left running then gets the app killed.
+    @MainActor private final class BackgroundTime {
+        private var task: UIBackgroundTaskIdentifier = .invalid
+
+        init() {
+            // iOS calls this on the main thread.
+            task = UIApplication.shared.beginBackgroundTask { [weak self] in MainActor.assumeIsolated { self?.end() } }
+        }
+
+        func end() {
+            guard task != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(task)
+            task = .invalid
+        }
     }
 
     /// Internal log, read in Console.app. Nothing in the app shows it.

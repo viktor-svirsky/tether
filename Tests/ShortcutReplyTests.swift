@@ -17,6 +17,12 @@ final class ShortcutReplyTests: XCTestCase {
                        "Personal Hotspot is on, but WireGuard isn't running. Its keys can't be read yet. Unlock this iPhone once.")
     }
 
+    /// Stopped while idle, a device may be on the hotspot, but Tether waits to be opened (#76).
+    func testStatusSaysSharingStoppedWhileIdle() {
+        XCTAssertEqual(ShortcutReply.status(State(running: false, connected: 0, idleStopped: true)),
+                       "Tether stopped sharing while idle. Open it, or run Start Tether, to share again.")
+    }
+
     func testSharingNeedsWireGuardRunning() {
         XCTAssertTrue(State(running: true, connected: 0).sharing)
         XCTAssertFalse(State(running: true, connected: 0, problem: "Its keys can't be read yet.").sharing)
