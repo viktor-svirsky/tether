@@ -6,7 +6,7 @@ import SwiftUI
 /// was ready when it opened, see `AddDeviceProgress`. The page and the connected list keep up only
 /// while Tether is on screen, so in the background the steps wait, and they catch up when it's back.
 /// The code works only while the sheet is on screen and for 10 minutes after, see
-/// `HotspotSession.addWindowOpen`, so opening it after that shows a new code.
+/// `AddWindow`, so opening it after that shows a new code.
 struct AddDeviceSheet: View {
     @ObservedObject var model: Model
     @Environment(\.dismiss) private var dismiss
@@ -265,10 +265,10 @@ struct AddDeviceSheet: View {
         }
     }
 
-    /// How long the code and the shared file work, see `HotspotSession.addWindowOpen`. Not under the
+    /// How long the code and the shared file work, see `AddWindow`. Not under the
     /// page's address: a download from the page is listed at once, so it works on after that.
     private func windowNote(id: String) -> some View {
-        Text("Works while this screen is open, and for \(Int(HotspotSession.addWindowAfterClose / 60)) minutes after you close it or leave Tether.")
+        Text("Works while this screen is open, and for \(Int(AddWindow.afterClose / 60)) minutes after you close it or leave Tether.")
             // In the label colour, like the line above it: grey fails the contrast audit on this card.
             .font(.subheadline)
             .multilineTextAlignment(.center)

@@ -87,7 +87,7 @@ struct WireGuardSetup: Codable, Equatable {
     /// The devices someone has used, in the order they first connected.
     var peers: [Peer]
     /// The device behind the QR code in the Add a device sheet: a key nobody has used yet. The server lets
-    /// it in while Add a device is open (see `HotspotSession.addWindowOpen`), and the first time it
+    /// it in while Add a device is open (see `AddWindow`), and the first time it
     /// connects it joins `peers`, without its private key, and a new one takes its place. Nil only in a
     /// setup saved before there was one, or with all 253 addresses taken.
     var ready: Ready?

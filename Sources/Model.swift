@@ -2,6 +2,8 @@
 //   TetherApp.swift     the @main App only
 //   Model.swift         Model: what the screen and the Shortcuts actions see, and the timers
 //   HotspotSession.swift  the hotspot lifecycle Model runs, and Interfaces, Foundation only
+//   AddWindow.swift     when the code behind Add a device works, by the clock, Foundation only
+//   TrafficSampler.swift  the speeds from two reads of the counters, Foundation only
 //   Traffic.swift       the server's byte counters, Foundation only
 //   Format.swift        bytes and speeds as text
 //   MainView.swift      MainView (the main screen), StatusCard, and the speeds
@@ -9,6 +11,7 @@
 //   AddDeviceSheet.swift the steps to add a device, with the QR code for it
 //   AddDeviceProgress.swift  how far adding a device has got, for the sheet, Foundation only
 //   ConfigPage.swift    the page on the hotspot that hands out the next device's config, Foundation only
+//   ConfigPageHandler.swift  what the page answers to each request, Foundation only
 //   ConfigPageServer.swift  serves that page on the hotspot address
 //   AppExpiry.swift     when a sideloaded build stops opening, and the warning before it
 //   LocalNetwork.swift  whether iOS lets Tether answer the devices (Local Network access)
