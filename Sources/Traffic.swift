@@ -33,10 +33,26 @@ struct PeerStats: Equatable {
     var endpoint: String?
 }
 
-/// What the server reports at one moment: its totals, and each device by tunnel address.
+/// A device knocking with a config that no longer works, see stale.go: a device key the server
+/// doesn't let in (an expired code or a removed device), or a config for other server keys.
+struct StaleConfig: Equatable {
+    enum Kind: String { case device, server }
+    let kind: Kind
+    /// Its last handshake the server dropped.
+    let at: Date
+
+    /// How long it shows after its last handshake. A device that still tries sends one every 5 s.
+    static let shownFor: TimeInterval = 60
+
+    func shown(at now: Date) -> Bool { now.timeIntervalSince(at) < Self.shownFor }
+}
+
+/// What the server reports at one moment: its totals, each device by tunnel address, and the last
+/// config that knocked but no longer works.
 struct ServerSnapshot: Equatable {
     var totals = TrafficTotals()
     var peers: [String: PeerStats] = [:]
+    var stale: StaleConfig?
 
     var connected: Set<String> { Set(peers.filter(\.value.connected).keys) }
 }

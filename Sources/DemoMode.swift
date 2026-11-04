@@ -42,6 +42,8 @@ enum DemoScenario: String, CaseIterable {
     case notificationsScreen
     /// Like `sharing`, but iOS blocks Tether's replies: Local Network is off for Tether.
     case localNetworkDenied
+    /// Like `sharing`, and a device keeps trying to connect with a config that no longer works.
+    case staleConfig
     /// Like `noDevices`, opened on the Add a device sheet, for the screenshot.
     case addDeviceScreen
     /// Like `addDeviceScreen`, with Computer picked.
@@ -126,7 +128,7 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .localNetworkDenied, .oldAddress:
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .localNetworkDenied, .oldAddress, .staleConfig:
             var setup = WireGuardSetup.new()
             _ = setup.addPeer(name: "iPad")
             // A documentation address. The demo listens on 172.20.10.1, so it's an old one.
@@ -162,7 +164,7 @@ struct DemoState {
 
     /// The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states.
     var connected: Set<String> {
-        [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .oldAddress].contains(scenario) ? ["10.7.0.2"] : []
+        [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .oldAddress, .staleConfig].contains(scenario) ? ["10.7.0.2"] : []
     }
 
     /// When this build stops opening: two days on for `expiring`, never for the others.
@@ -184,6 +186,7 @@ struct DemoState {
                                      now: { clock.now }, log: log)
         session.syncWithHotspot()
         server.connected = connected
+        if scenario == .staleConfig { server.stale = StaleConfig(kind: .device, at: clock.now) }
         session.sampleTraffic()
         clock.now = clock.now.addingTimeInterval(1)
         server.totals = TrafficTotals(bytesUp: UInt64(upSpeed / 8), bytesDown: UInt64(downSpeed / 8))

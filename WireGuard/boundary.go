@@ -36,6 +36,15 @@ type statsMessage struct {
 	Down uint64 `json:"down"`
 	// Peers holds every device the server lets in, in address order.
 	Peers []peerStats `json:"peers"`
+	// Stale is the last config that knocked but no longer works, see stale.go.
+	Stale staleStats `json:"stale"`
+}
+
+// staleStats is a config that no longer works. Kind is staleDevice or staleServer, and "" with At 0
+// for none yet. At is when it last knocked, Unix seconds.
+type staleStats struct {
+	Kind string `json:"kind"`
+	At   int64  `json:"at"`
 }
 
 type peerStats struct {
@@ -140,6 +149,7 @@ func (s *Server) statsMessage() statsMessage {
 		p.Endpoint = s.endpoints[addr]
 		m.Peers = append(m.Peers, p)
 	}
+	m.Stale = s.knocks.stale
 	return m
 }
 

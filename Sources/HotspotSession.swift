@@ -73,6 +73,8 @@ final class HotspotSession {
     private(set) var wireGuardConnected: Set<String> = [] { willSet { willChange() } }
     /// Each device's numbers by tunnel address, read with the speeds. With the hotspot off, what they used.
     private(set) var wireGuardPeerStats: [String: PeerStats] = [:] { willSet { willChange() } }
+    /// The last config that knocked but no longer works, read with every sample, see `showsStaleConfig`.
+    private(set) var staleConfig: StaleConfig? { willSet { willChange() } }
     /// Who was connected at the last read, for the notifications: the sampler's on screen, the
     /// watcher's in the background. Nothing on screen shows the watcher's, so it isn't published.
     var connectedNow: Set<String> { sceneActive ? wireGuardConnected : watchedConnected }
@@ -487,6 +489,9 @@ final class HotspotSession {
         }
     }
 
+    /// A device is trying to connect with a config that no longer works (#89), by this session's clock.
+    var showsStaleConfig: Bool { staleConfig?.shown(at: now()) ?? false }
+
     /// Reads the server's counters, every second on screen: which devices are connected, and the
     /// speeds from how far the counters moved since the last sample. A device that connected with
     /// the QR code is listed here, and the code changes for the next one.
@@ -502,6 +507,7 @@ final class HotspotSession {
             if !wireGuardConnected.isEmpty { wireGuardConnected = [] }
             let peers = server.snapshot().peers // a stopped server answers with what each device used
             if peers != wireGuardPeerStats { wireGuardPeerStats = peers }
+            if staleConfig != nil { staleConfig = nil }
             return
         }
         let snap = server.snapshot()
@@ -509,6 +515,7 @@ final class HotspotSession {
         let connected = snap.connected
         if connected != wireGuardConnected { wireGuardConnected = connected }
         if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
+        if snap.stale != staleConfig { staleConfig = snap.stale }
         claimReady(connected: connected)
         rememberHosts(connected: connected)
         guard let last = lastSample else { return } // the first sample has nothing to compare with

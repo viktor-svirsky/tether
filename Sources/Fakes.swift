@@ -30,6 +30,8 @@ final class FakeServer: WireGuardServing {
     var connected: Set<String> = []
     var totals = TrafficTotals()
     var peerTraffic: [String: TrafficTotals] = [:]
+    /// Reported only while running, as the real server's knocks go with it.
+    var stale: StaleConfig?
     private(set) var starts: [String] = []
     private(set) var lastSetup: WireGuardSetup?
 
@@ -62,7 +64,7 @@ final class FakeServer: WireGuardServing {
         if running {
             for address in connected { peers[address, default: PeerStats()].connected = true }
         }
-        return ServerSnapshot(totals: totals, peers: peers)
+        return ServerSnapshot(totals: totals, peers: peers, stale: running ? stale : nil)
     }
 
     func freeMemory() {}

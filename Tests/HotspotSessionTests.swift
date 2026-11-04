@@ -1034,6 +1034,46 @@ final class HotspotSessionTests: XCTestCase {
 
     // MARK: Speeds
 
+    // MARK: A config that no longer works
+
+    /// A device knocking with a config that no longer works shows for a minute after its last
+    /// handshake (#89). It keeps trying every 5 s while it has something to send, so a minute is
+    /// "it's still trying", and once it gives up the line goes.
+    func testAStaleConfigShowsForAMinuteAfterItKnocks() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        XCTAssertFalse(session.showsStaleConfig)
+        server.stale = StaleConfig(kind: .device, at: now)
+        session.sampleTraffic()
+        XCTAssertEqual(session.staleConfig, StaleConfig(kind: .device, at: now))
+        XCTAssertTrue(session.showsStaleConfig)
+        now = now.addingTimeInterval(59)
+        XCTAssertTrue(session.showsStaleConfig)
+        now = now.addingTimeInterval(1)
+        XCTAssertFalse(session.showsStaleConfig, "a minute with no knock")
+        // Another knock brings it back.
+        server.stale = StaleConfig(kind: .server, at: now)
+        session.sampleTraffic()
+        XCTAssertTrue(session.showsStaleConfig)
+    }
+
+    /// A stopped server knows of no knock, and its last one goes with it.
+    func testAStaleConfigGoesWithTheHotspot() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        server.stale = StaleConfig(kind: .device, at: now)
+        session.sampleTraffic()
+        XCTAssertTrue(session.showsStaleConfig)
+        address = nil
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        XCTAssertNil(session.staleConfig)
+        XCTAssertFalse(session.showsStaleConfig)
+    }
+
     func testSpeedsAreBitsPerSecondBetweenTwoSamples() {
         makeSession()
         address = hotspot

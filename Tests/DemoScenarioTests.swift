@@ -10,7 +10,7 @@ final class DemoScenarioTests: XCTestCase {
     private let waiting: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro]
     /// The list shows both states: the iPad connected, the Windows PC not.
     private let iPadConnected: Set<DemoScenario> = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying,
-                                                    .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .oldAddress]
+                                                    .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .oldAddress, .staleConfig]
     private let noSpeed: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro, .noDevices, .wireGuardUnsaved,
                                               .addDeviceScreen, .addDeviceComputer]
 
@@ -45,6 +45,12 @@ final class DemoScenarioTests: XCTestCase {
             XCTAssertEqual(session.wireGuardProblem != nil, hasProblem, "\(scenario): \(session.wireGuardProblem ?? "no problem")")
             XCTAssertEqual(session.wireGuardNeedsReset, scenario == .wireGuardNeedsReset, "\(scenario)")
             XCTAssertEqual(session.wireGuardReady == nil, hasProblem || scenario == .qrCodeUnsaved, "\(scenario): the QR code")
+        }
+    }
+
+    func testOnlyTheStaleConfigDemoShowsOne() {
+        for scenario in DemoScenario.allCases {
+            XCTAssertEqual(DemoState(scenario).makeSession().showsStaleConfig, scenario == .staleConfig, "\(scenario)")
         }
     }
 

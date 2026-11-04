@@ -64,6 +64,18 @@ struct MainView: View {
                 // Above Add a device, so a reason it doesn't work and the way out are both here.
                 WireGuardProblemSection(model: model)
 
+                if model.staleConfigShown {
+                    Section {
+                        Label {
+                            Text("A device is trying to connect with a config that no longer works. Delete its tunnel in WireGuard and add it again.")
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("stale.warning")
+                    }
+                }
+
                 if !model.wireGuardPeers.isEmpty {
                     Section("Devices") {
                         ForEach(model.wireGuardPeers) { peer in

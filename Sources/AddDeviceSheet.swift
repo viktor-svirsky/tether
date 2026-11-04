@@ -54,6 +54,11 @@ struct AddDeviceSheet: View {
                             case (.done, _): note("Connected")
                             // The sheet covers the status card, and this is where a device would wait forever.
                             case _ where model.localNetworkDenied: localNetworkWarning
+                            case _ where model.staleConfigShown:
+                                Text("A device is trying to connect with a config that no longer works. If it's this one, delete its tunnel in WireGuard and give it the config again.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(LocalNetworkWarning.text)
+                                    .accessibilityIdentifier("add.stale")
                             case (.waiting, let device?): note("Waiting for \(device.name) to connect")
                             default: note("This ticks off by itself when it connects.")
                             }

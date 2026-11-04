@@ -54,6 +54,9 @@ final class Model: ObservableObject {
 
     /// iOS blocks Tether's replies to the devices, see `LocalNetworkCheck`. Checked while on screen.
     @Published private(set) var localNetworkDenied = false
+    /// A device is trying to connect with a config that no longer works, see `HotspotSession.showsStaleConfig`.
+    /// Its own, since it goes by the clock, a minute after the last knock, when nothing else changes.
+    @Published private(set) var staleConfigShown = false
     private let localNetwork = LocalNetworkCheck()
     /// The screen before iOS asks for Local Network access. Every check goes through it, see `LocalNetworkIntro`.
     @Published private(set) var showsLocalNetworkIntro = false
@@ -131,6 +134,7 @@ final class Model: ObservableObject {
             refreshExpiryWarning() // didSet doesn't run for a property set in its own class's init
             localNetworkDenied = demo.localNetworkDenied
             showsLocalNetworkIntro = demo.showsLocalNetworkIntro
+            staleConfigShown = session.showsStaleConfig
             if demo.scenario == .notifying { postDemoNoticeInBackground() }
             return // no watcher, sampler or scene observers
         }
@@ -310,6 +314,17 @@ final class Model: ObservableObject {
     func sampleTraffic() {
         refreshExpiryWarning()
         session.sampleTraffic()
+        refreshStaleConfig()
+    }
+
+    /// Logged once each time it shows, not at every knock.
+    private func refreshStaleConfig() {
+        let shown = session.showsStaleConfig
+        guard shown != staleConfigShown else { return }
+        staleConfigShown = shown
+        if shown, let stale = session.staleConfig {
+            Self.append("WireGuard: a device is trying to connect with a config that no longer works (\(stale.kind == .device ? "a device key Tether doesn't let in" : "made for other server keys"))")
+        }
     }
 
     private func observeScene() {

@@ -204,6 +204,7 @@ type Server struct {
 	refusedAt    time.Time
 	shaken       map[netip.Addr]time.Time              // tunnel address -> when its last handshake was
 	endpoints    map[netip.Addr]string                 // tunnel address -> where it last connected from, ip:port
+	knocks       knocks                                // handshakes from configs that no longer work, see stale.go
 	traffic      map[netip.Addr]*traffic               // each device's bytes, see trafficOfLocked
 	flows        map[netip.Addr]map[io.Closer]struct{} // open connections, to close a removed device's
 	cones        map[netip.AddrPort]*cone              // UDP, by device port, see udp.go
@@ -239,6 +240,7 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		names:     map[string]netip.Addr{},
 		shaken:    map[netip.Addr]time.Time{},
 		endpoints: map[netip.Addr]string{},
+		knocks:    newKnocks(),
 		traffic:   map[netip.Addr]*traffic{},
 		now:       time.Now,
 		flows:     map[netip.Addr]map[io.Closer]struct{}{},
@@ -414,14 +416,15 @@ func (s *Server) makeRouter(addr netip.Addr) {
 	}
 }
 
-// notice is wireguard-go's verbose logger. Two of the things it says matter here, see
-// noticeHandshake and noticeRouter. The rest is dropped.
+// notice is wireguard-go's verbose logger. A few of the things it says matter here, see
+// noticeHandshake, noticeRouter and noticeStale. The rest is dropped.
 func (s *Server) notice(format string, args ...any) {
 	if heard := s.heard.Load(); heard != nil {
 		(*heard)(fmt.Sprintf(format, args...))
 	}
 	s.noticeHandshake(format)
 	s.noticeRouter(format, args...)
+	s.noticeStale(format, args...)
 }
 
 // noticeHandshake has the refresher read the handshakes a second after the server answers one.

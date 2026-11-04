@@ -1,1 +1,1 @@
-{"v":1,"up":1840,"down":5262,"peers":[{"address":"10.7.0.2","connected":true,"up":1840,"down":5262,"handshake":1793718000,"endpoint":"172.20.10.3:51820"},{"address":"10.7.0.3","connected":false,"up":0,"down":0,"handshake":0,"endpoint":""}]}
+{"v":1,"up":1840,"down":5262,"peers":[{"address":"10.7.0.2","connected":true,"up":1840,"down":5262,"handshake":1793718000,"endpoint":"172.20.10.3:51820"},{"address":"10.7.0.3","connected":false,"up":0,"down":0,"handshake":0,"endpoint":""}],"stale":{"kind":"device","at":1793718030}}

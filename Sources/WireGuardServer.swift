@@ -71,10 +71,10 @@ final class WireGuardServer {
     }
 
     /// Counters that only grow, across restarts, the totals and each device's. Which devices are
-    /// connected, only while running.
+    /// connected, and the last config that knocked but no longer works, only while running.
     func snapshot() -> ServerSnapshot {
         let run = running ? currentRun() : ServerSnapshot()
-        return ServerSnapshot(totals: carried.apply(to: run.totals), peers: carriedDevices.apply(to: run.peers))
+        return ServerSnapshot(totals: carried.apply(to: run.totals), peers: carriedDevices.apply(to: run.peers), stale: run.stale)
     }
 
     /// This run's stats. Stats it can't read leave the last counters it read, so a stop still carries
@@ -125,6 +125,7 @@ final class WireGuardServer {
             let up: UInt64
             let down: UInt64
             let peers: [Peer]
+            let stale: Stale?
 
             struct Peer: Decodable {
                 let address: String
@@ -133,6 +134,11 @@ final class WireGuardServer {
                 let down: UInt64
                 let handshake: Int64 // Unix seconds, 0 for never
                 let endpoint: String // "" for never
+            }
+
+            struct Stale: Decodable {
+                let kind: String // "" for none yet
+                let at: Int64 // Unix seconds
             }
         }
 
@@ -151,16 +157,21 @@ final class WireGuardServer {
                                              lastHandshake: p.handshake > 0 ? Date(timeIntervalSince1970: TimeInterval(p.handshake)) : nil,
                                              endpoint: p.endpoint.isEmpty ? nil : p.endpoint)
             }
-            return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers)
+            // A kind this app doesn't know says nothing, like one that isn't there.
+            let stale = m.stale.flatMap { s in
+                StaleConfig.Kind(rawValue: s.kind).map { StaleConfig(kind: $0, at: Date(timeIntervalSince1970: TimeInterval(s.at))) }
+            }
+            return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, stale: stale)
         }
     }
 }
 
 private extension ServerSnapshot {
-    /// The same counters, with no device connected: what's known when a read fails.
+    /// The same counters, with no device connected or knocking: what's known when a read fails.
     var disconnected: ServerSnapshot {
         var s = self
         for address in s.peers.keys { s.peers[address]?.connected = false }
+        s.stale = nil
         return s
     }
 }

@@ -186,6 +186,50 @@ final class WireGuardServerTests: XCTestCase {
                                                           lastHandshake: Date(timeIntervalSince1970: 1_793_718_000),
                                                           endpoint: "172.20.10.3:51820"))
         XCTAssertEqual(stats.peers["10.7.0.3"], PeerStats(), "never connected: no handshake, no endpoint")
+        XCTAssertEqual(stats.stale, StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030)))
+    }
+
+    /// Go sends an empty kind until a config that no longer works knocks, see stale.go.
+    func testNoStaleConfigUntilOneKnocks() throws {
+        func stale(_ json: String) throws -> StaleConfig? {
+            try WireGuardServer.Stats.read(Data(#"{"v":1,"up":0,"down":0,"peers":[],\#(json)}"#.utf8)).stale
+        }
+        XCTAssertNil(try stale(#""stale":{"kind":"","at":0}"#))
+        XCTAssertEqual(try stale(#""stale":{"kind":"server","at":7}"#), StaleConfig(kind: .server, at: Date(timeIntervalSince1970: 7)))
+        XCTAssertNil(try stale(#""stale":{"kind":"router","at":7}"#), "a kind this app doesn't know says nothing")
+    }
+
+    /// A config made for other server keys knocks with handshakes that fail wireguard-go's mac1 check,
+    /// and so do junk handshakes. Two of them reach the snapshot, and they go with the server.
+    func testAKnockReachesTheSnapshotAndGoesWithTheServer() async throws {
+        let port = try start()
+        XCTAssertNil(server.snapshot().stale)
+        // A handshake initiation is type 1 and 148 bytes long. Zeroes for the rest fail the mac1 check.
+        var initiation = [UInt8](repeating: 0, count: 148)
+        initiation[0] = 1
+        let fd = socket(AF_INET, SOCK_DGRAM, 0)
+        defer { Darwin.close(fd) }
+        var to = sockaddr_in()
+        to.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); to.sin_family = sa_family_t(AF_INET)
+        to.sin_port = port.bigEndian
+        to.sin_addr.s_addr = inet_addr("127.0.0.1")
+        for _ in 0..<2 {
+            let sent = withUnsafePointer(to: &to) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    sendto(fd, initiation, initiation.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            XCTAssertEqual(sent, initiation.count)
+        }
+        // wireguard-go reads handshakes on its own goroutines.
+        var stale: StaleConfig?
+        for _ in 0..<100 where stale == nil {
+            try await Task.sleep(for: .milliseconds(20))
+            stale = server.snapshot().stale
+        }
+        XCTAssertEqual(stale?.kind, .server)
+        server.stop()
+        XCTAssertNil(server.snapshot().stale, "a stopped server knows of no knock")
     }
 
     func testStatsOfAnotherShapeAreRefused() {
@@ -202,6 +246,7 @@ final class WireGuardServerTests: XCTestCase {
     func testAStatsKeyAddedLaterIsSkipped() throws {
         let json = #"{"v":1,"up":1,"down":2,"peers":[{"address":"10.7.0.2","connected":true,"up":1,"down":2,"handshake":5,"endpoint":"","paused":true}],"new":0}"#
         XCTAssertEqual(try WireGuardServer.Stats.read(Data(json.utf8)).connected, ["10.7.0.2"])
+        XCTAssertNil(try WireGuardServer.Stats.read(Data(json.utf8)).stale, "no stale key, no stale config")
     }
 
     func testTheDeviceListIsTheMessageGoReads() throws {
