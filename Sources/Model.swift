@@ -12,6 +12,9 @@
 //   ConfigPageServer.swift  serves that page on the hotspot address
 //   AppExpiry.swift     when a sideloaded build stops opening, and the warning before it
 //   LocalNetwork.swift  whether iOS lets Tether answer the devices (Local Network access)
+//   LocalNetworkWarning.swift  why no device can connect while it's off, on the card and in Add a device
+//   LocalNetworkIntro.swift  no check before the first launch's screen about it, Foundation only;
+//     LocalNetworkIntroView.swift is that screen
 //   Notices.swift       what to tell in a notification and when, and asking for permission, Foundation only
 //   SettingsView.swift  the Settings sheet behind the gear, and the system's notification center
 //   DemoMode.swift      fake app state for the UI tests, Debug builds only
@@ -52,6 +55,9 @@ final class Model: ObservableObject {
     /// iOS blocks Tether's replies to the devices, see `LocalNetworkCheck`. Checked while on screen.
     @Published private(set) var localNetworkDenied = false
     private let localNetwork = LocalNetworkCheck()
+    /// The screen before iOS asks for Local Network access. Every check goes through it, see `LocalNetworkIntro`.
+    @Published private(set) var showsLocalNetworkIntro = false
+    private lazy var localNetworkIntro = LocalNetworkIntro(defaults: .standard) { [weak self] in self?.localNetwork.start() }
     /// The hotspot was up at the watcher's last round, so the check runs again when it comes up.
     private var hotspotWasUp = false
 
@@ -124,6 +130,7 @@ final class Model: ObservableObject {
             expires = demo.expires
             refreshExpiryWarning() // didSet doesn't run for a property set in its own class's init
             localNetworkDenied = demo.localNetworkDenied
+            showsLocalNetworkIntro = demo.showsLocalNetworkIntro
             if demo.scenario == .notifying { postDemoNoticeInBackground() }
             return // no watcher, sampler or scene observers
         }
@@ -134,7 +141,8 @@ final class Model: ObservableObject {
             self?.localNetworkDenied = denied
             Self.append("Local Network access: \(denied ? "denied" : "allowed")")
         }
-        if session.sceneActive { localNetwork.start() }
+        showsLocalNetworkIntro = localNetworkIntro.shown
+        if session.sceneActive { localNetworkIntro.check() }
         watcher = Task { [weak self] in
             while !Task.isCancelled {
                 self?.session.watch()
@@ -282,11 +290,20 @@ final class Model: ObservableObject {
         session.wireGuardConfig(for: ready)
     }
 
+    /// Continue on the screen before iOS asks: the check that makes it ask runs now.
+    func finishLocalNetworkIntro() {
+        showsLocalNetworkIntro = false
+        #if DEBUG
+        if demo != nil { return } // nothing real runs in a demo
+        #endif
+        localNetworkIntro.finish()
+    }
+
     /// The hotspot is a local network iOS may ask about, so a check on screen runs again when it appears.
     private func checkLocalNetworkWhenTheHotspotComesUp() {
         let up = session.running
         defer { hotspotWasUp = up }
-        if up, !hotspotWasUp, session.sceneActive { localNetwork.start() }
+        if up, !hotspotWasUp, session.sceneActive { localNetworkIntro.check() }
     }
 
     /// The expiry warning and the session's sample, see `HotspotSession.sampleTraffic`.
@@ -304,7 +321,7 @@ final class Model: ObservableObject {
         }
         observe(UIApplication.didBecomeActiveNotification) { model in
             model.session.cameOnScreen()
-            model.localNetwork.start() // afresh, for a change made in Settings
+            model.localNetworkIntro.check() // afresh, for a change made in Settings
             model.startSampler() // samples at once, then every second again
         }
         observe(UIApplication.willResignActiveNotification) { model in

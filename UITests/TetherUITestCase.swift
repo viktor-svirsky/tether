@@ -3,7 +3,7 @@ import XCTest
 /// The fake app states a test can launch (`-TetherDemo <name>`, see Sources/DemoMode.swift).
 /// Their fixed values are described there.
 enum Scenario: String {
-    case waiting, wireGuardLockedWaiting, noDevices, sharing, wireGuardLocked, wireGuardNeedsReset, wireGuardUnsaved, qrCodeUnsaved, expiring, notificationsOff, notifying, notificationsScreen, addDeviceScreen, addDeviceComputer, addDeviceWaiting, addDeviceDone, localNetworkDenied, oldAddress
+    case waiting, localNetworkIntro, wireGuardLockedWaiting, noDevices, sharing, wireGuardLocked, wireGuardNeedsReset, wireGuardUnsaved, qrCodeUnsaved, expiring, notificationsOff, notifying, notificationsScreen, addDeviceScreen, addDeviceComputer, addDeviceWaiting, addDeviceDone, localNetworkDenied, oldAddress
 }
 
 /// Base class for the screen tests: launching, finding things by identifier, scrolling a List.
@@ -16,16 +16,22 @@ class TetherUITestCase: XCTestCase {
     }
 
     /// Launches Tether in a demo scenario, in English with US formats so every text is stable.
-    /// Pass `scenario: nil` for a normal launch.
+    /// Pass `scenario: nil` for a normal launch. It waits for `screen` to show, the main screen's title by default.
     @discardableResult
-    func launch(_ scenario: Scenario?, arguments: [String] = []) -> XCUIApplication {
+    func launch(_ scenario: Scenario?, arguments: [String] = [], screen: String = "status.title") -> XCUIApplication {
         let app = XCUIApplication()
         var args = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
-        if let scenario { args += ["-TetherDemo", scenario.rawValue] }
+        if let scenario {
+            args += ["-TetherDemo", scenario.rawValue]
+        } else if !arguments.contains("-localNetworkIntroduced") {
+            // A normal launch opens on the screen about Local Network until its Continue, and the
+            // simulator keeps whether an earlier run tapped it. This launch counts it as tapped.
+            args += ["-localNetworkIntroduced", "YES"]
+        }
         app.launchArguments = args + arguments
         app.launch()
         self.app = app
-        XCTAssertTrue(element("status.title").waitForExistence(timeout: 10), "main screen did not appear")
+        XCTAssertTrue(element(screen).waitForExistence(timeout: 10), "\(screen) did not appear")
         return app
     }
 
@@ -247,6 +253,7 @@ class TetherUITestCase: XCTestCase {
                 if let prefix, !(element?.identifier.hasPrefix(prefix) ?? false) { return true }
                 let systemText = element?.elementType == .staticText && element?.identifier.isEmpty == true
                 let systemStyled = Self.systemStyled.contains(element?.identifier ?? "")
+                    || Self.filledButtons.contains(element?.identifier ?? "")
                     || (element?.elementType == .button && Self.systemButtons.contains(element?.label ?? ""))
                 let known = (issue.compactDescription == "Contrast nearly passed" && (systemText || systemStyled))
                     || (underSheet && issue.compactDescription == "Potentially inaccessible text" && element == nil)
@@ -318,6 +325,9 @@ class TetherUITestCase: XCTestCase {
 
     /// Toolbar buttons, drawn by the system in its own tint.
     static let systemButtons: Set<String> = ["Cancel", "Done"]
+    /// Filled buttons over the bottom bar's material, which the audit's contrast estimate gets just short of.
+    /// Their tests read the real contrast from the pixels instead, see `textContrast`.
+    static let filledButtons: Set<String> = ["intro.continue"]
     /// Tether's elements that use only `.secondary` text, the plain button tint or the system's red for a destructive button.
     static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.hint", "add.airdrop", "notices.footer"]
 

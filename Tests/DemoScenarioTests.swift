@@ -7,11 +7,11 @@ import XCTest
 /// from the demo in Model.init, and the UI tests check those screens.
 @MainActor
 final class DemoScenarioTests: XCTestCase {
-    private let waiting: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting]
+    private let waiting: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro]
     /// The list shows both states: the iPad connected, the Windows PC not.
     private let iPadConnected: Set<DemoScenario> = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying,
                                                     .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .oldAddress]
-    private let noSpeed: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .noDevices, .wireGuardUnsaved,
+    private let noSpeed: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro, .noDevices, .wireGuardUnsaved,
                                               .addDeviceScreen, .addDeviceComputer]
 
     func testTheHotspotIsOnExceptWhileWaiting() {

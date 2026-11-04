@@ -93,6 +93,8 @@ struct MainView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showSettings) { SettingsView(model: model) }
             .sheet(isPresented: $addingDevice) { AddDeviceSheet(model: model) }
+            // Only its Continue closes it, see `LocalNetworkIntro`.
+            .fullScreenCover(isPresented: .constant(model.showsLocalNetworkIntro)) { LocalNetworkIntroView(model: model) }
             // Some demos open on a sheet, for the screenshots and the tests.
             .onAppear {
                 if model.opensSettings { showSettings = true }

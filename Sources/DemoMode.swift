@@ -13,6 +13,8 @@ import Foundation
 enum DemoScenario: String, CaseIterable {
     /// Hotspot off.
     case waiting
+    /// Like `waiting`, on the first launch: the screen before iOS asks for Local Network access.
+    case localNetworkIntro
     /// Hotspot off, and the Keychain is locked: the problem shows from launch, and there's no QR code.
     case wireGuardLockedWaiting
     /// Hotspot on, no device yet: only Add a device.
@@ -111,7 +113,7 @@ struct DemoState {
 
     init(_ scenario: DemoScenario) {
         self.scenario = scenario
-        guard ![.waiting, .wireGuardLockedWaiting].contains(scenario) else {
+        guard ![.waiting, .wireGuardLockedWaiting, .localNetworkIntro].contains(scenario) else {
             running = false
             return
         }
@@ -167,6 +169,8 @@ struct DemoState {
     var expires: Date? { scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil }
 
     var localNetworkDenied: Bool { scenario == .localNetworkDenied }
+
+    var showsLocalNetworkIntro: Bool { scenario == .localNetworkIntro }
 
     /// The real session, run the way the app would have by the time the screen shows: the hotspot comes
     /// up or doesn't, the iPad's tunnel is up or not, and two samples a second apart give the speed.
