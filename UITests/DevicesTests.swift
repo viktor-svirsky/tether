@@ -13,7 +13,15 @@ final class DevicesTests: TetherUITestCase {
         XCTAssertTrue(sectionHeader("DEVICES").exists)
     }
 
-    func testDeviceRowsHaveNoAddressesOrByteLines() {
+    func testEachRowSaysWhatItUsedThisMonth() {
+        launch(.sharing)
+        let ipad = reveal(element("device.iPad"))
+        XCTAssertTrue(ipad.label.contains("3.12 GB this month"), ipad.label)
+        let pc = element("device.Windows PC")
+        XCTAssertTrue(pc.label.contains("Not used this month"), pc.label)
+    }
+
+    func testDeviceRowsHaveNoAddresses() {
         launch(.sharing)
         reveal(element("device.iPad"))
         assertNowhere(text(containing: "172.20.10"), text(containing: "10.7.0"), text(containing: "Downloaded"),

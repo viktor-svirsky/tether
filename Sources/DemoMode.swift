@@ -168,18 +168,37 @@ struct DemoState {
 
     var localNetworkDenied: Bool { scenario == .localNetworkDenied }
 
+    /// Where the demo's data use is saved, emptied at each launch. Never the app's own.
+    @MainActor
+    private func usageDefaults(for devices: WireGuardDevices) -> UserDefaults {
+        UserDefaults.standard.removePersistentDomain(forName: "TetherDemo.usage")
+        let defaults = UserDefaults(suiteName: "TetherDemo.usage")!
+        // What the iPad used in September, as an earlier launch would have saved it.
+        if !connected.isEmpty, let ipad = devices.setup.peers.first(where: { $0.name == "iPad" }) {
+            var september = UsageLedger()
+            let used = PeerStats(traffic: TrafficTotals(bytesUp: 1_400_000_000, bytesDown: 10_000_000_000))
+            september.record(ServerSnapshot(peers: [ipad.address: used]), peers: [ipad],
+                             now: DemoScenario.now.addingTimeInterval(-30 * 86_400), calendar: .current)
+            defaults.set(september.saved(), forKey: HotspotSession.usageKey)
+        }
+        return defaults
+    }
+
     /// The real session, run the way the app would have by the time the screen shows: the hotspot comes
-    /// up or doesn't, the iPad's tunnel is up or not, and two samples a second apart give the speed.
+    /// up or doesn't, the iPad's tunnel is up or not, and two samples a second apart give the speed. The
+    /// iPad used 2.7 GB down and 420 MB up this month.
     @MainActor
     func makeSession(log: @escaping @MainActor (String) -> Void = { _ in }) -> HotspotSession {
         let server = FakeServer()
         let clock = DemoClock()
         let address = running ? Hotspot.host : nil
-        let session = HotspotSession(devices: WireGuardDevices(secrets: secrets()), server: server, keepAlive: FakeSound(),
+        let devices = WireGuardDevices(secrets: secrets())
+        let session = HotspotSession(devices: devices, server: server, keepAlive: FakeSound(),
                                      page: FakePage(), sceneActive: true, hotspotAddress: { address },
-                                     now: { clock.now }, log: log)
+                                     now: { clock.now }, usageDefaults: usageDefaults(for: devices), log: log)
         session.syncWithHotspot()
         server.connected = connected
+        for address in connected { server.peerTraffic[address] = TrafficTotals(bytesUp: 420_000_000, bytesDown: 2_700_000_000) }
         session.sampleTraffic()
         clock.now = clock.now.addingTimeInterval(1)
         server.totals = TrafficTotals(bytesUp: UInt64(upSpeed / 8), bytesDown: UInt64(downSpeed / 8))

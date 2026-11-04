@@ -75,9 +75,9 @@ struct WireGuardProblemSection: View {
     }
 }
 
-/// One device: whether it's connected, and removing it. Tapping the title renames it. A rename or
-/// removal that couldn't be saved says so at the top, and so does a config that points at an old
-/// address of this iPhone.
+/// One device: whether it's connected, its data this month and last, when it last connected, and
+/// removing it. Tapping the title renames it. A rename or removal that couldn't be saved says so at
+/// the top, and so does a config that points at an old address of this iPhone.
 struct DeviceView: View {
     @ObservedObject var model: Model
     let peer: WireGuardSetup.Peer
@@ -89,8 +89,24 @@ struct DeviceView: View {
     private var connected: Bool { model.wireGuardConnected.contains(peer.address) }
     /// A rename or removal of this device that couldn't be saved.
     private var problem: String? { model.wireGuardDeviceProblem.flatMap { $0.device == peer.id ? $0.text : nil } }
+    private var usage: DeviceUsage { model.deviceUsage[peer.id] ?? DeviceUsage() }
 
     var body: some View {
+        ScrollViewReader { list in
+            content
+                // Remove is at the bottom, and at a large text size the top is off screen, so a
+                // problem that appears there is scrolled to and read out.
+                .onChange(of: problem) { _, problem in
+                    guard let problem else { return }
+                    withAnimation { list.scrollTo(Self.problemRow, anchor: .top) }
+                    AccessibilityNotification.Announcement(problem).post()
+                }
+        }
+    }
+
+    private static let problemRow = "problem"
+
+    private var content: some View {
         List {
             // On top, where a rename is made, and the screen a failed removal stays on.
             if let problem {
@@ -98,6 +114,7 @@ struct DeviceView: View {
                     Label(problem, systemImage: "exclamationmark.triangle")
                         .accessibilityIdentifier("device.problem")
                 }
+                .id(Self.problemRow)
             }
             if model.needsNewConfig(current) {
                 Section {
@@ -107,8 +124,28 @@ struct DeviceView: View {
                 }
             }
             Section {
-                ConnectedLabel(connected: connected)
-                    .accessibilityIdentifier("device.status")
+                VStack(alignment: .leading, spacing: 4) {
+                    ConnectedLabel(connected: connected)
+                        .accessibilityIdentifier("device.status")
+                    if !connected, usage.lastConnected == nil {
+                        Text("It hasn't connected yet.")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.detailText)
+                            .accessibilityIdentifier("device.statusDetail")
+                    }
+                }
+            }
+            Section {
+                DataUseCard(usage: usage, now: model.now)
+            }
+            Section {
+                ValueRow(title: "Last month", value: Format.lastMonth(usage.lastMonth))
+                    .accessibilityIdentifier("device.lastMonth")
+                // While it's connected, the status says it.
+                if !connected {
+                    ValueRow(title: "Last connected", value: Format.lastConnected(usage.lastConnected, now: model.now, calendar: .current))
+                        .accessibilityIdentifier("device.lastConnected")
+                }
             }
             Section {
                 Button("Remove device", role: .destructive) { confirmRemove = true }
@@ -126,6 +163,61 @@ struct DeviceView: View {
                 if model.removeWireGuardDevice(peer.id) { dismiss() }
             }
         }
+    }
+}
+
+/// A device's data this month, both ways together, then down and up, and when the count starts again.
+struct DataUseCard: View {
+    let usage: DeviceUsage
+    let now: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(Format.thisMonth(usage.thisMonth))
+                .font(.title2.weight(.semibold))
+                .accessibilityIdentifier("device.thisMonth")
+            // Side by side, or one under the other where they don't fit, at a large text size.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) { resets; Spacer(); downAndUp }
+                VStack(alignment: .leading, spacing: 4) { resets; downAndUp }
+            }
+            .font(.footnote)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var resets: some View {
+        Text(Format.resetsOn(now: now, calendar: .current))
+            .foregroundStyle(Color.detailText)
+            .accessibilityIdentifier("device.resets")
+    }
+
+    /// One text, so VoiceOver reads it as one line, in its two colours.
+    private var downAndUp: some View {
+        (Text("↓ \(Format.bytes(usage.thisMonth.bytesDown))").foregroundStyle(Direction.download)
+            + Text("  ")
+            + Text("↑ \(Format.bytes(usage.thisMonth.bytesUp))").foregroundStyle(Direction.upload))
+            .monospacedDigit()
+            .accessibilityLabel(Format.downAndUpSpoken(usage.thisMonth))
+            .accessibilityIdentifier("device.downAndUp")
+    }
+}
+
+/// A title and its value in one row, read as one by VoiceOver. The value keeps a grey that passes
+/// the contrast audit, unlike LabeledContent's.
+struct ValueRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+            Spacer()
+            Text(value)
+                .foregroundStyle(Color.detailText)
+                .multilineTextAlignment(.trailing)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

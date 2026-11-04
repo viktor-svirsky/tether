@@ -635,8 +635,21 @@ final class TrafficTotalsTests: XCTestCase {
     func testADeviceThatLeavesDropsWhatItCarried() {
         var carried = CarriedDevices()
         carried.absorb(["10.7.0.2": PeerStats(traffic: TrafficTotals(bytesUp: 10, bytesDown: 100))])
-        carried.keep(only: [])
+        carried.keep(only: [:])
         XCTAssertEqual(carried.apply(to: [:]), [:], "a device given its address later starts from zero, as on the server")
+    }
+
+    func testAnAddressGivenToANewKeyStartsFromZero() {
+        var carried = CarriedDevices()
+        let old = Data(repeating: 1, count: 32), new = Data(repeating: 2, count: 32)
+        carried.keep(only: ["10.7.0.3": old])
+        carried.absorb(["10.7.0.3": PeerStats(traffic: TrafficTotals(bytesUp: 10, bytesDown: 100))])
+        carried.keep(only: ["10.7.0.3": old])
+        XCTAssertEqual(carried.apply(to: [:])["10.7.0.3"]?.traffic, TrafficTotals(bytesUp: 10, bytesDown: 100), "the same key keeps its count")
+        // Removed while the hotspot is off, so the next list the server gets, at its next start, already
+        // has the ready device at that address: it never sees the address leave.
+        carried.keep(only: ["10.7.0.3": new])
+        XCTAssertEqual(carried.apply(to: [:]), [:], "as Go does, see apply in server.go")
     }
 }
 

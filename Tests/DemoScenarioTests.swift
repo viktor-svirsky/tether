@@ -48,6 +48,21 @@ final class DemoScenarioTests: XCTestCase {
         }
     }
 
+    /// The iPad used 3.12 GB in October (the demo's month) and 11.4 GB in September, and is connected.
+    /// The Windows PC never connected.
+    func testTheIPadShowsItsDataWhereTheListShowsBothStates() throws {
+        for scenario in iPadConnected {
+            let session = DemoState(scenario).makeSession()
+            let ipad = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "iPad" }, "\(scenario)")
+            let pc = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "Windows PC" }, "\(scenario)")
+            XCTAssertEqual(session.deviceUsage[ipad.id],
+                           DeviceUsage(thisMonth: TrafficTotals(bytesUp: 420_000_000, bytesDown: 2_700_000_000),
+                                       lastMonth: TrafficTotals(bytesUp: 1_400_000_000, bytesDown: 10_000_000_000),
+                                       lastConnected: DemoScenario.now), "\(scenario)")
+            XCTAssertEqual(session.deviceUsage[pc.id], DeviceUsage(), "\(scenario)")
+        }
+    }
+
     func testTheOldAddressDemoNeedsTheWindowsPCAddedAgain() throws {
         let session = DemoState(.oldAddress).makeSession()
         let pc = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "Windows PC" })

@@ -19,6 +19,20 @@ final class HotspotSessionTests: XCTestCase {
     private var ipv6Only = false
     private var now = Date(timeIntervalSince1970: 1_800_000_000)
     private var session: HotspotSession!
+    /// Where the session saves what each device used. Each test has its own, and it lasts across
+    /// the sessions a test makes, like a relaunch.
+    private let usageSuite = "HotspotSessionTests.\(UUID())"
+    private lazy var usageDefaults = UserDefaults(suiteName: usageSuite)!
+    /// New York: a month starts at a known moment.
+    private let calendar: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "America/New_York")!
+        return c
+    }()
+
+    override func tearDown() async throws {
+        UserDefaults.standard.removePersistentDomain(forName: usageSuite)
+    }
 
     /// `saved` is a setup already in the Keychain at launch.
     private func makeSession(sceneActive: Bool = true, locked: Bool = false, saved: WireGuardSetup? = nil,
@@ -32,7 +46,8 @@ final class HotspotSessionTests: XCTestCase {
         devices = WireGuardDevices(secrets: secrets)
         session = HotspotSession(devices: devices, server: server, keepAlive: sound, page: page,
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
-                                 carrierIPv6Only: { [unowned self] in ipv6Only }, now: { [unowned self] in now }, log: log)
+                                 carrierIPv6Only: { [unowned self] in ipv6Only }, now: { [unowned self] in now },
+                                 usageDefaults: usageDefaults, calendar: calendar, log: log)
     }
 
     private func minutes(_ m: Double) -> Date { start.addingTimeInterval(m * 60) }
@@ -280,7 +295,7 @@ final class HotspotSessionTests: XCTestCase {
 
         let again = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: FakeServer(), keepAlive: FakeSound(),
                                    page: FakePage(), sceneActive: true, hotspotAddress: { [unowned self] in address },
-                                   now: { [unowned self] in now })
+                                   now: { [unowned self] in now }, usageDefaults: usageDefaults)
         again.syncWithHotspot()
         XCTAssertTrue(again.needsNewConfig(try XCTUnwrap(again.wireGuardPeers.first)), "after a relaunch too")
     }
@@ -906,7 +921,7 @@ final class HotspotSessionTests: XCTestCase {
         let relaunched = FakeServer()
         let again = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: relaunched, keepAlive: FakeSound(),
                                    page: FakePage(), sceneActive: true, hotspotAddress: { [unowned self] in address },
-                                   now: { [unowned self] in now })
+                                   now: { [unowned self] in now }, usageDefaults: usageDefaults)
         again.syncWithHotspot()
         XCTAssertEqual(again.wireGuardReady, old, "still the saved one")
         XCTAssertEqual(relaunched.lastSetup?.serverPeers, [])
@@ -1023,13 +1038,207 @@ final class HotspotSessionTests: XCTestCase {
         session.removeWireGuardDevice(peer.id)
         XCTAssertTrue(announced.contains("true - 1"), "the devices")
         XCTAssertTrue(session.wireGuardPeers.isEmpty)
-        // The speeds, the connected devices and their stats change with a sample, each announced.
+        // The speeds and the connected devices change with a sample, each announced.
         announced = []
         now = now.addingTimeInterval(1)
         server.totals = TrafficTotals(bytesUp: 1000, bytesDown: 1000)
         server.connected = ["10.7.0.99"] // nobody's, so nothing else changes
         session.sampleTraffic()
-        XCTAssertEqual(announced.count, 4, "down, up, the connected devices and their stats")
+        XCTAssertEqual(announced.count, 3, "down, up and the connected devices")
+    }
+
+    func testANewCountIsAnnouncedAndAnUnchangedOneIsNot() throws {
+        makeSession()
+        let peer = try connectDevice()
+        session.sampleTraffic()
+        var announced = 0
+        session.willChange = { announced += 1 }
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 100)]
+        session.sampleTraffic()
+        XCTAssertEqual(announced, 1)
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        XCTAssertEqual(announced, 1, "nothing moved, so the screen isn't redrawn, though it's connected")
+    }
+
+    // MARK: Data use (#73)
+
+    /// The hotspot on, with one device that used the QR code and is connected.
+    private func connectDevice() throws -> WireGuardSetup.Peer {
+        address = hotspot
+        session.syncWithHotspot()
+        let peer = try XCTUnwrap(devices.connectReady())
+        server.connected.insert(peer.address)
+        return peer
+    }
+
+    /// What's saved for `id`, as the next launch reads it.
+    private func savedUsage(of id: WireGuardSetup.Peer.ID) throws -> DeviceUsage {
+        let data = try XCTUnwrap(usageDefaults.data(forKey: HotspotSession.usageKey), "nothing saved")
+        return try UsageLedger(saved: data).usage(of: id, now: now, calendar: calendar)
+    }
+
+    func testWhatADeviceUsesIsPublished() throws {
+        makeSession()
+        let peer = try connectDevice()
+        server.peerTraffic = [peer.address: TrafficTotals(bytesUp: 5, bytesDown: 1000)]
+        session.sampleTraffic()
+        XCTAssertEqual(session.deviceUsage[peer.id],
+                       DeviceUsage(thisMonth: TrafficTotals(bytesUp: 5, bytesDown: 1000), lastConnected: now))
+        address = nil
+        session.syncWithHotspot()
+        now = now.addingTimeInterval(60)
+        session.sampleTraffic()
+        XCTAssertEqual(session.deviceUsage[peer.id]?.thisMonth, TrafficTotals(bytesUp: 5, bytesDown: 1000),
+                       "with the hotspot off, what it used still shows")
+        XCTAssertEqual(session.deviceUsage[peer.id]?.lastConnected, now.addingTimeInterval(-60), "the last read it was connected at")
+    }
+
+    func testANewDeviceShowsNothingUsed() throws {
+        makeSession()
+        let peer = try connectDevice()
+        server.connected = []
+        session.sampleTraffic()
+        XCTAssertEqual(session.deviceUsage[peer.id], DeviceUsage())
+    }
+
+    /// The device that used the QR code is listed in the same read that counts its first bytes.
+    func testADeviceThatJustUsedTheCodeCountsFromItsFirstRead() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [ready.address]
+        server.peerTraffic = [ready.address: TrafficTotals(bytesUp: 1, bytesDown: 2)]
+        session.sampleTraffic()
+        let peer = try XCTUnwrap(session.wireGuardPeers.first { $0.address == ready.address })
+        XCTAssertEqual(session.deviceUsage[peer.id]?.thisMonth, TrafficTotals(bytesUp: 1, bytesDown: 2))
+    }
+
+    func testTheBackgroundRoundCountsTooAlsoTheOneThatStopsTheServer() throws {
+        makeSession(sceneActive: false)
+        let peer = try connectDevice()
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 100)]
+        session.watch()
+        XCTAssertEqual(session.deviceUsage[peer.id]?.thisMonth, TrafficTotals(bytesDown: 100))
+        // What moved since the last round is counted in the round that finds the hotspot gone.
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 150)]
+        address = nil
+        session.watch()
+        XCTAssertFalse(session.running)
+        XCTAssertEqual(try savedUsage(of: peer.id).thisMonth, TrafficTotals(bytesDown: 150))
+    }
+
+    func testOnScreenUsageIsSavedEvery15SecondsAndWhenTetherLeavesTheScreen() throws {
+        makeSession()
+        let peer = try connectDevice()
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 100)]
+        session.sampleTraffic()
+        XCTAssertEqual(try savedUsage(of: peer.id).thisMonth, TrafficTotals(bytesDown: 100), "the first change saves at once")
+        now = now.addingTimeInterval(14)
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 200)]
+        session.sampleTraffic()
+        XCTAssertEqual(try savedUsage(of: peer.id).thisMonth, TrafficTotals(bytesDown: 100), "not every second")
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        XCTAssertEqual(try savedUsage(of: peer.id).thisMonth, TrafficTotals(bytesDown: 200), "15 seconds on")
+        now = now.addingTimeInterval(1)
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 300)]
+        session.sampleTraffic()
+        session.leftScreen()
+        XCTAssertEqual(try savedUsage(of: peer.id).thisMonth, TrafficTotals(bytesDown: 300), "iOS may end Tether once it's away")
+    }
+
+    func testAClockThatWentBackStillSaves() throws {
+        makeSession()
+        let peer = try connectDevice()
+        server.connected = []
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 100)]
+        session.sampleTraffic()
+        now = now.addingTimeInterval(-3600) // the time was set back
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 200)]
+        session.sampleTraffic()
+        XCTAssertEqual(try savedUsage(of: peer.id).thisMonth, TrafficTotals(bytesDown: 200))
+    }
+
+    func testWhatWasSavedShowsAfterARelaunch() throws {
+        makeSession()
+        let peer = try connectDevice()
+        server.peerTraffic = [peer.address: TrafficTotals(bytesUp: 7, bytesDown: 70)]
+        session.sampleTraffic()
+        session.leftScreen()
+        let shown = session.deviceUsage[peer.id]
+        makeSession(saved: devices.setup)
+        XCTAssertEqual(session.deviceUsage[peer.id], shown, "before the first read, from what was saved")
+        // The new launch's server counts from zero, and that adds to it.
+        address = hotspot
+        session.syncWithHotspot()
+        server.peerTraffic = [peer.address: TrafficTotals(bytesUp: 1, bytesDown: 1)]
+        session.sampleTraffic()
+        XCTAssertEqual(session.deviceUsage[peer.id]?.thisMonth, TrafficTotals(bytesUp: 8, bytesDown: 71))
+    }
+
+    func testSavedUsageThatCantBeReadStartsAgainAndIsLogged() {
+        usageDefaults.set(Data("not json".utf8), forKey: HotspotSession.usageKey)
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        XCTAssertEqual(session.deviceUsage.values.filter { $0 != DeviceUsage() }, [])
+        XCTAssertTrue(logged.contains { $0.hasPrefix("data use can't be read, counting from zero:") }, "\(logged)")
+    }
+
+    func testARemovedDeviceIsForgotten() throws {
+        makeSession()
+        let peer = try connectDevice()
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 100)]
+        session.sampleTraffic()
+        XCTAssertTrue(session.removeWireGuardDevice(peer.id))
+        XCTAssertNil(session.deviceUsage[peer.id])
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        session.leftScreen()
+        XCTAssertEqual(try savedUsage(of: peer.id), DeviceUsage())
+    }
+
+    func testARemovalThatCantBeSavedKeepsTheUsage() throws {
+        makeSession()
+        let peer = try connectDevice()
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 100)]
+        session.sampleTraffic()
+        secrets.savesFail = true
+        XCTAssertFalse(session.removeWireGuardDevice(peer.id))
+        session.sampleTraffic()
+        XCTAssertEqual(session.deviceUsage[peer.id]?.thisMonth, TrafficTotals(bytesDown: 100))
+    }
+
+    /// Locked, the setup lists no devices, which would forget them all.
+    func testALockedKeychainKeepsWhatWasSaved() throws {
+        makeSession()
+        let peer = try connectDevice()
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 100)]
+        session.sampleTraffic()
+        session.leftScreen()
+        makeSession(locked: true, saved: devices.setup)
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 100)]
+        session.sampleTraffic()
+        session.watch()
+        session.leftScreen()
+        XCTAssertEqual(try savedUsage(of: peer.id).thisMonth, TrafficTotals(bytesDown: 100))
+        secrets.failing = false // the first unlock
+        session.syncWithHotspot()
+        XCTAssertEqual(session.deviceUsage[peer.id]?.thisMonth, TrafficTotals(bytesDown: 100))
+    }
+
+    func testTheMonthTurnsOverWithTheClock() throws {
+        makeSession()
+        let peer = try connectDevice()
+        server.connected = []
+        server.peerTraffic = [peer.address: TrafficTotals(bytesDown: 100)]
+        session.sampleTraffic()
+        now = calendar.dateInterval(of: .month, for: now)!.end.addingTimeInterval(60)
+        session.sampleTraffic()
+        XCTAssertEqual(session.deviceUsage[peer.id]?.thisMonth, TrafficTotals())
+        XCTAssertEqual(session.deviceUsage[peer.id]?.lastMonth, TrafficTotals(bytesDown: 100))
     }
 
     // MARK: Speeds
@@ -1057,24 +1266,6 @@ final class HotspotSessionTests: XCTestCase {
         session.sampleTraffic()
         XCTAssertEqual(session.upSpeed, 2000)
         XCTAssertEqual(session.downSpeed, 0)
-    }
-
-    func testEachDeviceStatsArePublished() throws {
-        makeSession()
-        address = hotspot
-        session.syncWithHotspot()
-        let peer = try XCTUnwrap(devices.connectReady())
-        server.connected = [peer.address]
-        server.peerTraffic = [peer.address: TrafficTotals(bytesUp: 5, bytesDown: 1000)]
-        session.sampleTraffic()
-        XCTAssertEqual(session.wireGuardPeerStats[peer.address],
-                       PeerStats(traffic: TrafficTotals(bytesUp: 5, bytesDown: 1000), connected: true))
-        address = nil
-        session.syncWithHotspot()
-        session.sampleTraffic()
-        XCTAssertEqual(session.wireGuardPeerStats[peer.address]?.traffic, TrafficTotals(bytesUp: 5, bytesDown: 1000),
-                       "with the hotspot off, what it used still shows")
-        XCTAssertEqual(session.wireGuardPeerStats[peer.address]?.connected, false)
     }
 
     func testANewHotspotStartsFromZero() {

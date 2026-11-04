@@ -24,6 +24,7 @@ Lots of plans give the iPhone itself plenty of data, then cap, slow down or bloc
 - It's not only web pages. Video calls, games, streaming, downloads and SSH all go through.
 - There's no account and nothing in the cloud. Traffic goes from your devices to your iPhone and out, and Tether itself talks to nothing else. The device configs use Cloudflare's 1.1.1.1 for DNS, which you can change. It's free and open source (MIT).
 - One shortcut turns on the hotspot and Tether together, from the Action button, a widget or Siri.
+- Each device shows how much data it used this month and last, and when it last connected.
 
 A device without WireGuard can still join the hotspot, but its traffic goes straight out as hotspot traffic and Tether doesn't help it. Tether isn't in the App Store, so you install it with SideStore or AltStore (a free Apple ID works, with a refresh every 7 days). And a carrier that looks closely can still notice, see [Good to know](#good-to-know).
 
@@ -162,6 +163,7 @@ scripts/build-wireguard.sh   builds WireGuard/ into TetherWG.xcframework (xcodeg
 scripts/build-ipa.sh         builds the unsigned Tether.ipa; make_source.py writes source.json for it
 scripts/next-version.sh      picks the next release version from the last tag
 Sources/HotspotSession.swift finds the hotspot, starts the server, samples traffic (tested on the Mac)
+Sources/DataUsage.swift      each device's data by month, kept across launches (tested on the Mac)
 Sources/Model.swift          runs the session on timers and feeds the screens
 Sources/MainView.swift       the main screen; AddDeviceSheet.swift has the steps and the QR code, DevicesView.swift the device screen
 Sources/ConfigPage.swift     the page on the hotspot that hands out the next device's config; ConfigPageServer.swift serves it

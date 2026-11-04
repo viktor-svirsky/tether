@@ -71,8 +71,9 @@ final class HotspotSession {
     /// The tunnel addresses of the WireGuard devices that are connected. Read with every sample
     /// while the app is on screen.
     private(set) var wireGuardConnected: Set<String> = [] { willSet { willChange() } }
-    /// Each device's numbers by tunnel address, read with the speeds. With the hotspot off, what they used.
-    private(set) var wireGuardPeerStats: [String: PeerStats] = [:] { willSet { willChange() } }
+    /// What each saved device used this month and last, and when it last connected, see `UsageLedger`.
+    /// Read with the speeds on screen and with the watcher's rounds in the background.
+    private(set) var deviceUsage: [WireGuardSetup.Peer.ID: DeviceUsage] = [:] { willSet { willChange() } }
     /// Who was connected at the last read, for the notifications: the sampler's on screen, the
     /// watcher's in the background. Nothing on screen shows the watcher's, so it isn't published.
     var connectedNow: Set<String> { sceneActive ? wireGuardConnected : watchedConnected }
@@ -89,7 +90,18 @@ final class HotspotSession {
     private let hotspotAddress: () -> String?
     private let carrierIPv6Only: () -> Bool
     private let now: () -> Date
+    private let calendar: Calendar
     private let log: @MainActor (String) -> Void
+
+    /// Where `usage` is saved: UserDefaults, since it holds no secret. See `recordUsage`.
+    static let usageKey = "usage"
+    /// How often at most the sampler saves a change to `usage` on screen, see `recordUsage`.
+    static let saveUsageEvery: TimeInterval = 15
+    private var usage = UsageLedger()
+    private let usageDefaults: UserDefaults
+    /// When `usage` was last saved, and whether it has changed since.
+    private var usageSaved: Date?
+    private var usageUnsaved = false
 
     /// When the hotspot went away, or Tether was last on screen since. Nil while the hotspot is on.
     /// A launch starts long past, so only opening Tether or Start Tether (`wake`) gives it the 10
@@ -122,7 +134,7 @@ final class HotspotSession {
 
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
-         now: @escaping () -> Date = Date.init,
+         now: @escaping () -> Date = Date.init, usageDefaults: UserDefaults, calendar: Calendar = .autoupdatingCurrent,
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -133,7 +145,12 @@ final class HotspotSession {
         self.carrierIPv6Only = carrierIPv6Only
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
+        self.calendar = calendar
+        self.usageDefaults = usageDefaults
         self.log = log
+        if let saved = usageDefaults.data(forKey: Self.usageKey) {
+            do { usage = try UsageLedger(saved: saved) } catch { log("data use can't be read, counting from zero: \(error)") }
+        }
         publishSetup()
         showSetupProblem() // from launch, before any device joins the hotspot
         page.respond = { [weak self] request, client in self?.pageResponse(request, from: client) ?? ConfigPage.notFound }
@@ -272,6 +289,7 @@ final class HotspotSession {
         sceneActive = false
         if addSheetShown { addWindowEnds = now().addingTimeInterval(Self.addWindowAfterClose) }
         lastSample = nil // or the first speed back on screen averages the whole time away
+        if usageUnsaved { saveUsage() } // iOS may end Tether any time once it's away
         watchedConnected = wireGuardConnected // not a list from an earlier time away, until the next round reads
     }
 
@@ -466,6 +484,7 @@ final class HotspotSession {
     private func publishSetup() {
         wireGuardPeers = devices.setup.peers
         wireGuardReady = devices.setup.ready
+        publishUsage()
         let readyProblem = devices.readyError.map { "The code for the next device can't be saved: \($0)." }
         if readyProblem != wireGuardReadyProblem {
             wireGuardReadyProblem = readyProblem
@@ -500,22 +519,23 @@ final class HotspotSession {
             if downSpeed != 0 { downSpeed = 0 }
             if upSpeed != 0 { upSpeed = 0 }
             if !wireGuardConnected.isEmpty { wireGuardConnected = [] }
-            let peers = server.snapshot().peers // a stopped server answers with what each device used
-            if peers != wireGuardPeerStats { wireGuardPeerStats = peers }
+            recordUsage(server.snapshot()) // a stopped server answers with what each device used
             return
         }
         let snap = server.snapshot()
         defer { lastSample = (snap.totals.bytesUp, snap.totals.bytesDown, now) }
         let connected = snap.connected
         if connected != wireGuardConnected { wireGuardConnected = connected }
-        if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
         claimReady(connected: connected)
         rememberHosts(connected: connected)
+        recordUsage(snap) // after claimReady, so a device that just used the code counts from its first read
         guard let last = lastSample else { return } // the first sample has nothing to compare with
         let seconds = now.timeIntervalSince(last.at)
         guard seconds > 0 else { return }
-        upSpeed = Self.bps(snap.totals.bytesUp, last.up, seconds)
-        downSpeed = Self.bps(snap.totals.bytesDown, last.down, seconds)
+        // Only a new value is set, so an idle hotspot doesn't redraw the screen every second.
+        let up = Self.bps(snap.totals.bytesUp, last.up, seconds), down = Self.bps(snap.totals.bytesDown, last.down, seconds)
+        if up != upSpeed { upSpeed = up }
+        if down != downSpeed { downSpeed = down }
     }
 
     /// A device that connected with the QR code is listed, and the code changes for the next one.
@@ -540,14 +560,43 @@ final class HotspotSession {
     /// The watcher's read in the background, where the sampler doesn't run: who is connected, for
     /// the notifications, and a device that connects then is listed too and the next one gets a new
     /// code. One small JSON from Go each round, which reads the handshakes every 10 seconds anyway.
+    /// Data use is counted on every round, also the one that found the hotspot gone and stopped the server.
     private func readInBackground() {
+        let snap = server.snapshot()
         guard running else {
             watchedConnected = []
+            recordUsage(snap)
             return
         }
-        watchedConnected = server.snapshot().connected
+        watchedConnected = snap.connected
         claimReady(connected: watchedConnected)
         rememberHosts(connected: watchedConnected)
+        recordUsage(snap)
+    }
+
+    /// Adds what each device used since the last read, publishes it, and saves it: on every round in
+    /// the background, where each can be the last before iOS ends Tether, and at most every 15 seconds
+    /// from the sampler on screen, where `leftScreen()` saves too. A clock that was set back saves.
+    /// Not while the setup can't be read: it lists no devices then, and every device would be forgotten.
+    private func recordUsage(_ snap: ServerSnapshot) {
+        guard devices.loaded else { return }
+        if usage.record(snap, peers: devices.setup.peers, now: now(), calendar: calendar) { usageUnsaved = true }
+        publishUsage()
+        let since = usageSaved.map { now().timeIntervalSince($0) } ?? .infinity
+        if usageUnsaved, !sceneActive || since >= Self.saveUsageEvery || since < 0 { saveUsage() }
+    }
+
+    private func saveUsage() {
+        usageDefaults.set(usage.saved(), forKey: Self.usageKey)
+        usageSaved = now()
+        usageUnsaved = false
+    }
+
+    /// The listed devices' usage, by the clock: a new month shows zero even before anything is read.
+    private func publishUsage() {
+        let now = self.now()
+        let shown = Dictionary(uniqueKeysWithValues: devices.setup.peers.map { ($0.id, usage.usage(of: $0.id, now: now, calendar: calendar)) })
+        if shown != deviceUsage { deviceUsage = shown }
     }
 
     /// The server's counters never go backwards. The guard is only a safety net.

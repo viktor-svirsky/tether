@@ -22,6 +22,29 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertEqual(staticText("device.status").label, "Not connected")
     }
 
+    // MARK: data use (#73)
+
+    /// The demo is on 17 October: the iPad used 2.7 GB down and 420 MB up this month, 11.4 GB in September.
+    func testAConnectedDeviceShowsItsDataThisMonthAndLast() {
+        launch(.sharing)
+        openDevice("iPad")
+        XCTAssertEqual(label(of: "device.thisMonth"), "3.12 GB this month")
+        XCTAssertEqual(label(of: "device.downAndUp"), "2.7 GB down, 420 MB up")
+        XCTAssertEqual(label(of: "device.resets"), "Resets on November 1")
+        XCTAssertTrue(reveal(element("device.lastMonth")).label.contains("11.4 GB"), element("device.lastMonth").label)
+        assertNowhere(element("device.lastConnected"), element("device.statusDetail"),
+                      message: "while it's connected, the status says so")
+    }
+
+    func testADeviceThatNeverConnectedSaysSo() {
+        launch(.sharing)
+        openDevice("Windows PC")
+        XCTAssertEqual(label(of: "device.statusDetail"), "It hasn't connected yet.")
+        XCTAssertEqual(label(of: "device.thisMonth"), "Not used this month")
+        XCTAssertTrue(reveal(element("device.lastMonth")).label.contains("Not used"), element("device.lastMonth").label)
+        XCTAssertTrue(reveal(element("device.lastConnected")).label.contains("Never"), element("device.lastConnected").label)
+    }
+
     func testBackReturnsToTheMainScreen() {
         launch(.sharing)
         openDevice("iPad")

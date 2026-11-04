@@ -213,6 +213,10 @@ final class AccessibilityTests: TetherUITestCase {
         launch(.sharing, arguments: accessibilityXL)
         reveal(element("device.iPad"), maxSwipes: 30).tap()
         XCTAssertTrue(element("device.status").waitForExistence(timeout: 5))
+        let thisMonth = reveal(element("device.thisMonth"), maxSwipes: 30)
+        XCTAssertGreaterThan(thisMonth.frame.height, 40, "the big number grows with the text size")
+        XCTAssertTrue(reveal(element("device.downAndUp"), maxSwipes: 30).exists)
+        XCTAssertTrue(reveal(element("device.lastMonth"), maxSwipes: 30).exists)
         XCTAssertTrue(reveal(element("device.remove"), maxSwipes: 30).isHittable)
     }
 

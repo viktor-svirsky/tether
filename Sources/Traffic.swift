@@ -4,6 +4,15 @@ import Foundation
 struct TrafficTotals: Equatable {
     var bytesUp: UInt64 = 0
     var bytesDown: UInt64 = 0
+
+    /// Both ways.
+    var total: UInt64 { bytesUp.addingReportingOverflow(bytesDown).overflow ? .max : bytesUp + bytesDown }
+
+    /// Stops at the largest count rather than trap.
+    static func += (a: inout TrafficTotals, b: TrafficTotals) {
+        a.bytesUp = a.bytesUp.addingReportingOverflow(b.bytesUp).overflow ? .max : a.bytesUp + b.bytesUp
+        a.bytesDown = a.bytesDown.addingReportingOverflow(b.bytesDown).overflow ? .max : a.bytesDown + b.bytesDown
+    }
 }
 
 /// The WireGuard server starts from zero each time the hotspot comes back, while readers expect
@@ -42,22 +51,25 @@ struct ServerSnapshot: Equatable {
 }
 
 /// `CarriedTotals` for each device, by tunnel address. A device that's no longer let in is dropped,
-/// so one given its address later starts from zero, as on the server.
+/// and so is an address given to another key, so a device given an address later starts from zero,
+/// as on the server.
 struct CarriedDevices {
     private var carried: [String: TrafficTotals] = [:]
+    /// Each address's key at the last `keep(only:)`.
+    private var keys: [String: Data] = [:]
 
     /// Call with a run's last stats when it stops.
     mutating func absorb(_ last: [String: PeerStats]) {
-        for (address, stats) in last {
-            var c = carried[address, default: TrafficTotals()]
-            c.bytesUp += stats.traffic.bytesUp
-            c.bytesDown += stats.traffic.bytesDown
-            carried[address] = c
-        }
+        for (address, stats) in last { carried[address, default: TrafficTotals()] += stats.traffic }
     }
 
-    mutating func keep(only addresses: Set<String>) {
-        carried = carried.filter { addresses.contains($0.key) }
+    /// The devices let in now, address to public key. `WireGuardServer` calls it with every list it
+    /// applies, which is only while running, so also with the list a new run starts with: a device
+    /// removed while the server was stopped never left a list it got, but its address may have a new
+    /// key already.
+    mutating func keep(only devices: [String: Data]) {
+        carried = carried.filter { address, _ in devices[address].map { $0 == keys[address] } ?? false }
+        keys = devices
     }
 
     /// The run's stats with what earlier runs counted added. A device this run hasn't reported yet
@@ -65,10 +77,7 @@ struct CarriedDevices {
     func apply(to current: [String: PeerStats]) -> [String: PeerStats] {
         var out = current
         for (address, c) in carried {
-            var stats = out[address] ?? PeerStats()
-            stats.traffic.bytesUp += c.bytesUp
-            stats.traffic.bytesDown += c.bytesDown
-            out[address] = stats
+            out[address, default: PeerStats()].traffic += c
         }
         return out
     }

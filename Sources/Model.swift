@@ -3,6 +3,7 @@
 //   Model.swift         Model: what the screen and the Shortcuts actions see, and the timers
 //   HotspotSession.swift  the hotspot lifecycle Model runs, and Interfaces, Foundation only
 //   Traffic.swift       the server's byte counters, Foundation only
+//   DataUsage.swift     each device's data by month, kept across launches, Foundation only
 //   Format.swift        bytes and speeds as text
 //   MainView.swift      MainView (the main screen), StatusCard, and the speeds
 //   DevicesView.swift   Add a device on the main screen, and a device's own screen
@@ -41,7 +42,7 @@ final class Model: ObservableObject {
     var upSpeed: Double { session.upSpeed }
     var wireGuardConnected: Set<String> { session.wireGuardConnected }
     var wireGuardPeers: [WireGuardSetup.Peer] { session.wireGuardPeers }
-    var wireGuardPeerStats: [String: PeerStats] { session.wireGuardPeerStats }
+    var deviceUsage: [WireGuardSetup.Peer.ID: DeviceUsage] { session.deviceUsage }
     var wireGuardReady: WireGuardSetup.Ready? { session.wireGuardReady }
     var wireGuardReadyProblem: String? { session.wireGuardReadyProblem }
     var wireGuardDeviceProblem: HotspotSession.DeviceProblem? { session.wireGuardDeviceProblem }
@@ -154,7 +155,7 @@ final class Model: ObservableObject {
                        keepAlive: KeepAlive(log: Self.append), page: ConfigPageServer(),
                        sceneActive: UIApplication.shared.applicationState != .background,
                        hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,
-                       carrierIPv6Only: Interfaces.carrierIPv6Only,
+                       carrierIPv6Only: Interfaces.carrierIPv6Only, usageDefaults: .standard,
                        log: Self.append)
     }
 
@@ -272,6 +273,14 @@ final class Model: ObservableObject {
     }
 
     var deviceHost: String? { session.deviceHost }
+
+    /// The time the screens show dates against: the demo's own in a demo launch.
+    var now: Date {
+        #if DEBUG
+        if demo != nil { return DemoScenario.now }
+        #endif
+        return Date()
+    }
 
     /// See `HotspotSession.needsNewConfig`.
     func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {

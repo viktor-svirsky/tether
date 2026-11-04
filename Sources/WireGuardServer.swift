@@ -62,7 +62,9 @@ final class WireGuardServer {
         let json = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
         let error = json.withCString { TetherWGConfigure(UnsafeMutablePointer(mutating: $0)) }
         if let message = take(error) { throw Failure(message: message) }
-        carriedDevices.keep(only: Set(peers.map(\.address)).union(setup.peers.map(\.address)))
+        var kept = Dictionary(setup.peers.map { ($0.address, $0.publicKey) }) { $1 }
+        for peer in peers { kept[peer.address] = peer.publicKey }
+        carriedDevices.keep(only: kept)
     }
 
     /// Gives memory Go's GC has freed back to iOS, on a memory warning.

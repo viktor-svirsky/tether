@@ -30,6 +30,7 @@ final class FakeServer: WireGuardServing {
     var connected: Set<String> = []
     var totals = TrafficTotals()
     var peerTraffic: [String: TrafficTotals] = [:]
+    var handshakes: [String: Date] = [:]
     private(set) var starts: [String] = []
     private(set) var lastSetup: WireGuardSetup?
 
@@ -59,6 +60,7 @@ final class FakeServer: WireGuardServing {
     func snapshot() -> ServerSnapshot {
         var peers: [String: PeerStats] = [:]
         for (address, traffic) in peerTraffic { peers[address] = PeerStats(traffic: traffic) }
+        for (address, date) in handshakes { peers[address, default: PeerStats()].lastHandshake = date }
         if running {
             for address in connected { peers[address, default: PeerStats()].connected = true }
         }

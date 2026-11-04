@@ -77,6 +77,9 @@ struct MainView: View {
                                         ConnectedLabel(connected: model.wireGuardConnected.contains(peer.address))
                                             .font(.subheadline)
                                     }
+                                    Text(Format.thisMonth(model.deviceUsage[peer.id]?.thisMonth ?? TrafficTotals()))
+                                        .font(.subheadline)
+                                        .foregroundStyle(Color.detailText)
                                     if model.needsNewConfig(peer) { OldAddressLabel().font(.footnote) }
                                 }
                             }
@@ -143,6 +146,16 @@ extension Color {
         traits.userInterfaceStyle == .dark
             ? UIColor(red: 0.0, green: 0.40, blue: 0.82, alpha: 1)
             : UIColor(red: 0.0, green: 0.45, blue: 0.78, alpha: 1)
+    })
+}
+
+extension Color {
+    /// Grey for details such as "3.1 GB this month". The system's secondary grey fails the contrast
+    /// audit on a card, this one passes in both appearances.
+    static let detailText = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.63, green: 0.63, blue: 0.65, alpha: 1)
+            : UIColor(red: 0.42, green: 0.42, blue: 0.44, alpha: 1)
     })
 }
 
