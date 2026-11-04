@@ -161,6 +161,7 @@ WireGuard/                   the WireGuard server in Go: wireguard-go plus a gVi
 scripts/build-wireguard.sh   builds WireGuard/ into TetherWG.xcframework (xcodegen runs it)
 scripts/build-ipa.sh         builds the unsigned Tether.ipa; make_source.py writes source.json for it
 scripts/next-version.sh      picks the next release version from the last tag
+scripts/which-release.sh     says whether main is at a release branch, which releases it by itself
 Sources/HotspotSession.swift finds the hotspot, starts the server, samples traffic (tested on the Mac)
 Sources/Model.swift          runs the session on timers and feeds the screens
 Sources/MainView.swift       the main screen; AddDeviceSheet.swift has the steps and the QR code, DevicesView.swift the device screen
@@ -181,7 +182,7 @@ The file map at the top of Model.swift lists every source file.
 
 Run the unit tests with `swift test` (after `scripts/build-wireguard.sh` or `xcodegen generate`, since they link the WireGuard server), and the WireGuard server's own with `go -C WireGuard test ./...`. They start the real server on your Mac and talk to it over loopback, so you don't need a device. [TESTING.md](TESTING.md) covers the simulator UI tests and the checks by hand.
 
-To release, open Actions > Release > Run workflow on main and pick what goes up: patch, minor or major. `scripts/next-version.sh` works out the version from the last tag, `scripts/build-ipa.sh` builds `Tether.ipa`, `make_source.py` writes `source.json`, and the workflow publishes both as a GitHub release, which creates the tag. `python3 scripts/test_make_source.py` and `scripts/test-next-version.sh` test the scripts.
+Features go to a release branch for the next version (`release-1.6`), not to main. To release it, move main to that branch: once CI passes on main, the Release workflow publishes 1.6.0 by itself. `scripts/which-release.sh` checks that main is at a release branch whose version isn't out yet, so other changes on main (refactors, tests, CI) release nothing. For a patch, open Actions > Release > Run workflow on main and pick what goes up: patch, minor or major. `scripts/next-version.sh` works out the version from the last tag, `scripts/build-ipa.sh` builds `Tether.ipa`, `make_source.py` writes `source.json`, and the workflow publishes both as a GitHub release, which creates the tag. `python3 scripts/test_make_source.py`, `scripts/test-next-version.sh` and `scripts/test-which-release.sh` test the scripts.
 
 ## License
 

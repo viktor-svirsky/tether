@@ -1,8 +1,13 @@
-# Actions > Release > Run workflow publishes the next version of Tether from main, once CI passed on
-# it. It builds an unsigned Tether.ipa and publishes it as a GitHub release with source.json for
+# Publishes the next version of Tether from main, once CI passed on it, in one of two ways:
+#   - Main moves to a release branch (release-X.Y) and CI passes there: X.Y.0 goes out by itself.
+#   - Actions > Release > Run workflow on main, for a patch, or to pick what goes up by hand.
+# It builds an unsigned Tether.ipa and publishes it as a GitHub release with source.json for
 # AltStore and SideStore, and the release creates the version tag. People add
 # https://github.com/viktor-svirsky/tether/releases/latest/download/source.json once and get every
 # release after that. Runs on GitHub's macOS runner, like CI.
+#
+# A release branch's version can go missing if main moves on before its CI run ends (CI cancels the
+# older run), or if the release branch moves after main reached it. Then run this by hand with minor.
 name: Release
 
 on:
@@ -13,17 +18,72 @@ on:
         type: choice
         options: [patch, minor, major]
         default: patch
-
-concurrency:
-  group: release
-  cancel-in-progress: false
+  # Every CI run that ends on main. The decide job lets only main at a release branch through.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 defaults:
   run:
     shell: bash
 
 jobs:
+  # Whether this run releases, and what goes up. A small Linux job, since CI ending on main for a
+  # refactor or a test starts this workflow too, and that shouldn't wait for a Mac.
+  decide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      bump: ${{ steps.bump.outputs.bump }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts # for which-release.sh
+      - name: What goes up
+        id: bump
+        env:
+          INPUT: ${{ inputs.bump }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [[ $GITHUB_EVENT_NAME == workflow_dispatch ]]; then
+              echo "bump=$INPUT" >> "$GITHUB_OUTPUT"
+              exit 0
+          fi
+          # This run gets the write token whatever started CI, so only a green CI run on a push to this
+          # repo's main counts. A pull request from a fork's branch named main has head_branch main too.
+          if [[ $RUN_CONCLUSION != success || $RUN_EVENT != push || $RUN_REPO != "$GITHUB_REPOSITORY" || $RUN_BRANCH != main ]]; then
+              echo "::notice::Nothing to release: CI ended $RUN_CONCLUSION on a $RUN_EVENT of $RUN_REPO $RUN_BRANCH."
+              exit 0
+          fi
+          # GITHUB_SHA is main's head now, and the attestation names it. When main moved on since this CI
+          # run, the newer commit's own CI run decides.
+          if [[ $RUN_SHA != "$GITHUB_SHA" ]]; then
+              echo "::notice::Nothing to release: main moved on from $RUN_SHA to $GITHUB_SHA."
+              exit 0
+          fi
+          branch=$(scripts/which-release.sh "$RUN_SHA")
+          if [[ -z $branch ]]; then
+              echo "::notice::Nothing to release: main isn't at a release branch whose version is still to come."
+              exit 0
+          fi
+          echo "Main is at $branch."
+          echo "bump=$branch" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: decide
+    if: needs.decide.outputs.bump != ''
+    # One release at a time. On this job, not the workflow, so CI ending on main meanwhile can't
+    # cancel a release waiting its turn.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     runs-on: macos-26
     timeout-minutes: 30
     permissions:
@@ -53,7 +113,9 @@ jobs:
       - name: Pick the version
         id: version
         env:
-          BUMP: ${{ inputs.bump }}
+          BUMP: ${{ needs.decide.outputs.bump }}
+        # GITHUB_REF is main for workflow_run too, so its main-only check always passes there: decide
+        # is what keeps other branches out.
         run: scripts/next-version.sh "$BUMP" >> "$GITHUB_OUTPUT"
       - name: Unit tests
         run: |
@@ -61,6 +123,7 @@ jobs:
           swift test
           python3 scripts/test_make_source.py
           scripts/test-next-version.sh
+          scripts/test-which-release.sh
       - name: Build Tether.ipa
         run: scripts/build-ipa.sh "$VERSION" "$RUNNER_TEMP/out"
         env:
