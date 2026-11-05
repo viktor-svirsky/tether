@@ -15,6 +15,8 @@
 
 Lots of plans give the iPhone itself plenty of data, then cap, slow down or block Personal Hotspot. Tether makes every connection again on the iPhone itself, so your laptop's traffic counts as the phone's own. Windows, Mac, Linux, Android, iPad or a travel router: if it runs WireGuard, it works.
 
+![How Tether works: a laptop runs out of hotspot data, then connects to Tether over WireGuard and its traffic counts as the iPhone's own. A Windows PC, a Mac, an iPad, an Android phone and a travel router connect the same way.](docs/tether.gif)
+
 <img src="docs/sharing.png" width="260" alt="Tether sharing with an iPad and a Windows PC, with the speed and the list of devices"> <img src="docs/add-device.png" width="260" alt="Tether's Add a device sheet: three steps on a line, the first ticked, and a QR code"> <img src="docs/notifications.png" width="260" alt="Tether's Settings sheet with a switch for each kind of notification">
 
 ## What you get

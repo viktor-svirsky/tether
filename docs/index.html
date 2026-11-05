@@ -81,6 +81,8 @@
   .hero .button.ghost { background: transparent; color: #ffffff; box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.8); }
 
   section { padding: 56px 0; }
+  .explainer { padding-bottom: 0; }
+  .explainer video { display: block; width: 100%; max-width: 960px; margin: 0 auto; border-radius: 20px; box-shadow: 0 10px 34px rgb(0 0 0 / 0.25); background: #07131f; }
   h2 { font-size: 30px; margin: 0 0 8px; text-align: center; }
   .lead { color: var(--muted); text-align: center; max-width: 640px; margin: 0 auto 32px; }
 
@@ -157,6 +159,21 @@
 </header>
 
 <main>
+  <section class="explainer">
+    <div class="wrap">
+      <video id="explainer" src="tether.mp4" poster="tether-poster.jpg" autoplay muted loop playsinline
+             aria-label="How Tether works: a laptop runs out of hotspot data, then connects to Tether over WireGuard and its traffic counts as the iPhone's own. A Windows PC, a Mac, an iPad, an Android phone and a travel router connect the same way."></video>
+    </div>
+  </section>
+  <script>
+    // With reduced motion, the video waits for a tap on play instead of looping by itself.
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const video = document.getElementById("explainer");
+      video.removeAttribute("autoplay");
+      video.pause();
+      video.controls = true;
+    }
+  </script>
   <section>
     <div class="wrap">
       <h2>Why Tether</h2>
