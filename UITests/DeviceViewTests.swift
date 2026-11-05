@@ -16,6 +16,18 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(element("wireguard.qr"), text(containing: "10.7.0.2"), message: "no per-device code or address any more")
     }
 
+    /// What a device used this month and last, through Tether (#75). The demo's iPad used 3.12 GB.
+    func testADeviceShowsItsDataThisMonthAndLast() throws {
+        launch(.sharing)
+        openDevice("iPad")
+        let thisMonth = reveal(element("device.thisMonth"))
+        XCTAssertTrue(thisMonth.label.contains("This month") && thisMonth.label.contains("3.12 GB"), thisMonth.label)
+        let lastMonth = reveal(element("device.lastMonth"))
+        XCTAssertTrue(lastMonth.label.contains("Last month") && lastMonth.label.contains("0 bytes"), lastMonth.label)
+        XCTAssertTrue(sectionHeader("Data through Tether").exists)
+        try audit(only: "device.")
+    }
+
     func testAnUnconnectedDeviceSaysNotConnected() {
         launch(.sharing)
         openDevice("Windows PC")

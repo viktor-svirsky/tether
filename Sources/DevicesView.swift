@@ -91,39 +91,47 @@ struct DeviceView: View {
     private var problem: String? { model.wireGuardDeviceProblem.flatMap { $0.device == peer.id ? $0.text : nil } }
 
     var body: some View {
-        List {
-            // On top, where a rename is made, and the screen a failed removal stays on.
-            if let problem {
-                Section {
-                    Label(problem, systemImage: "exclamationmark.triangle")
-                        .accessibilityIdentifier("device.problem")
+        ScrollViewReader { proxy in
+            List {
+                // On top, where a rename is made, and the screen a failed removal stays on.
+                if let problem {
+                    Section {
+                        Label(problem, systemImage: "exclamationmark.triangle")
+                            .accessibilityIdentifier("device.problem")
+                    }
+                    .id("problem")
                 }
-            }
-            if model.needsNewConfig(current) {
-                Section {
-                    Label("Its config points at an old address of this iPhone, so it can't connect. Remove it, then add it again.",
-                          systemImage: "exclamationmark.triangle")
-                        .accessibilityIdentifier("device.oldAddress")
-                }
-            }
-            Section {
-                VStack(alignment: .leading, spacing: 4) {
-                    DeviceStatusLabel(status: status, text: status.title)
-                        .accessibilityIdentifier("device.status")
-                    if let detail = status.detail {
-                        // The label colour, like the status: grey text on the card fails the contrast audit.
-                        Text(detail)
-                            .font(.subheadline)
-                            .accessibilityIdentifier("device.statusDetail")
+                if model.needsNewConfig(current) {
+                    Section {
+                        Label("Its config points at an old address of this iPhone, so it can't connect. Remove it, then add it again.",
+                              systemImage: "exclamationmark.triangle")
+                            .accessibilityIdentifier("device.oldAddress")
                     }
                 }
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        DeviceStatusLabel(status: status, text: status.title)
+                            .accessibilityIdentifier("device.status")
+                        if let detail = status.detail {
+                            // The label colour, like the status: grey text on the card fails the contrast audit.
+                            Text(detail)
+                                .font(.subheadline)
+                                .accessibilityIdentifier("device.statusDetail")
+                        }
+                    }
+                }
+                pauseSection
+                usageSection
+                Section {
+                    Button("Remove device", role: .destructive) { confirmRemove = true }
+                        .accessibilityIdentifier("device.remove")
+                } footer: {
+                    Text("It can't connect any more. Delete its tunnel in its WireGuard app too.")
+                }
             }
-            pauseSection
-            Section {
-                Button("Remove device", role: .destructive) { confirmRemove = true }
-                    .accessibilityIdentifier("device.remove")
-            } footer: {
-                Text("It can't connect any more. Delete its tunnel in its WireGuard app too.")
+            // Remove is at the bottom, so a removal that fails says so up there, out of sight with large text.
+            .onChange(of: problem) { _, problem in
+                if problem != nil { withAnimation { proxy.scrollTo("problem", anchor: .top) } }
             }
         }
         .navigationTitle(Binding(get: { current.name }, set: { model.renameWireGuardDevice(peer.id, to: $0) }))
@@ -139,6 +147,20 @@ struct DeviceView: View {
 }
 
 extension DeviceView {
+    /// What it used, both ways, counted the way the main screen counts (#75). iOS Settings > Cellular
+    /// adds the iPhone's own headers on top, so it says "through Tether".
+    private var usageSection: some View {
+        let usage = model.usage(of: peer.id)
+        return Section("Data through Tether") {
+            LabeledContent("This month", value: Format.bytes(usage.thisMonth.total))
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("device.thisMonth")
+            LabeledContent("Last month", value: Format.bytes(usage.lastMonth.total))
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("device.lastMonth")
+        }
+    }
+
     /// Under the status: Pause, or Resume once it's paused, filled since it's the main action then.
     @ViewBuilder private var pauseSection: some View {
         if current.paused == nil {

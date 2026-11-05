@@ -19,6 +19,11 @@ final class HotspotSessionTests: XCTestCase {
     private var ipv6Only = false
     private var idleAfter = IdleStop.After.never
     private var dns = "1.1.1.1, 1.0.0.1"
+    private let usageDefaults: UserDefaults = {
+        let defaults = UserDefaults(suiteName: "HotspotSessionTests.usage")!
+        defaults.removePersistentDomain(forName: "HotspotSessionTests.usage")
+        return defaults
+    }()
     private var now = Date(timeIntervalSince1970: 1_800_000_000)
     private var session: HotspotSession!
 
@@ -35,7 +40,7 @@ final class HotspotSessionTests: XCTestCase {
         session = HotspotSession(devices: devices, server: server, keepAlive: sound, page: page,
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
                                  carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
-                                 dns: { [unowned self] in dns },
+                                 dns: { [unowned self] in dns }, usageDefaults: usageDefaults,
                                  now: { [unowned self] in now }, log: log)
     }
 
@@ -325,6 +330,76 @@ final class HotspotSessionTests: XCTestCase {
         dns = "94.140.14.14, 94.140.15.15"
         XCTAssertTrue(try XCTUnwrap(session.wireGuardConfig(for: ready)).contains("\nDNS = 94.140.14.14, 94.140.15.15\n"))
         XCTAssertTrue(body(page.ask(.config)).contains("\nDNS = 94.140.14.14, 94.140.15.15\n"))
+    }
+
+    /// Each device's data this month comes from its counters, on screen and in the background, and
+    /// is saved at most once a minute, so it's there after a relaunch (#75).
+    func testEachDevicesDataThisMonthIsCountedAndSaved() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let scanned = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [scanned.address]
+        server.peerTraffic = [scanned.address: TrafficTotals(bytesUp: 10, bytesDown: 1000)]
+        session.sampleTraffic()
+        XCTAssertEqual(session.usage(of: scanned.id).thisMonth, TrafficTotals(bytesUp: 10, bytesDown: 1000))
+        server.peerTraffic = [scanned.address: TrafficTotals(bytesUp: 20, bytesDown: 3000)]
+        session.leftScreen()
+        session.watch() // the background read
+        XCTAssertEqual(session.usage(of: scanned.id).thisMonth, TrafficTotals(bytesUp: 20, bytesDown: 3000))
+        XCTAssertEqual(MonthlyUsage.load(from: usageDefaults).of(scanned.id, at: now, calendar: .current).thisMonth,
+                       TrafficTotals(bytesUp: 10, bytesDown: 1000), "saved at the first read, not again within the minute")
+        now = now.addingTimeInterval(61)
+        session.watch()
+        XCTAssertEqual(MonthlyUsage.load(from: usageDefaults).of(scanned.id, at: now, calendar: .current).thisMonth,
+                       TrafficTotals(bytesUp: 20, bytesDown: 3000))
+    }
+
+    /// While the Keychain is locked the setup lists no devices, which mustn't drop what they used.
+    func testALockedSetupKeepsEachDevicesData() throws {
+        var saved = WireGuardSetup.new()
+        let ipad = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        var usage = MonthlyUsage()
+        usage.record([ipad.id: TrafficTotals(bytesUp: 1, bytesDown: 2)], at: now, calendar: .current)
+        usage.save(to: usageDefaults)
+        makeSession(locked: true, saved: saved)
+        session.saveUsage()
+        XCTAssertEqual(MonthlyUsage.load(from: usageDefaults), usage)
+        secrets.failing = false
+        session.syncWithHotspot() // unlocked: the setup is read
+        XCTAssertEqual(session.usage(of: ipad.id).thisMonth, TrafficTotals(bytesUp: 1, bytesDown: 2))
+    }
+
+    /// What a device used after the last read still counts when the hotspot goes.
+    func testDataUsedJustBeforeTheHotspotGoesIsCounted() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let scanned = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [scanned.address]
+        server.peerTraffic = [scanned.address: TrafficTotals(bytesUp: 10, bytesDown: 1000)]
+        session.sampleTraffic()
+        server.peerTraffic = [scanned.address: TrafficTotals(bytesUp: 30, bytesDown: 5000)] // after that read
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertEqual(MonthlyUsage.load(from: usageDefaults).of(scanned.id, at: now, calendar: .current).thisMonth,
+                       TrafficTotals(bytesUp: 30, bytesDown: 5000))
+    }
+
+    /// A removed device's data goes with it.
+    func testARemovedDevicesDataIsDropped() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let scanned = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [scanned.address]
+        server.peerTraffic = [scanned.address: TrafficTotals(bytesUp: 10, bytesDown: 1000)]
+        session.sampleTraffic()
+        XCTAssertTrue(session.removeWireGuardDevice(scanned.id))
+        XCTAssertEqual(session.usage(of: scanned.id), MonthlyUsage.Usage())
     }
 
     func testOnAUsualCarrierNoDeviceNeedsANewConfig() throws {

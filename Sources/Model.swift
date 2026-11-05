@@ -203,7 +203,7 @@ final class Model: ObservableObject {
                        hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,
                        carrierIPv6Only: Interfaces.carrierIPv6Only,
                        idleStopAfter: { IdleStop.After.saved(in: settings) },
-                       dns: { DNSChoice.servers(in: settings) },
+                       dns: { DNSChoice.servers(in: settings) }, usageDefaults: settings,
                        log: Self.append)
     }
 
@@ -341,6 +341,9 @@ final class Model: ObservableObject {
     var deviceHost: String? { session.deviceHost }
     var pageHosts: [String] { session.pageHosts }
 
+    /// See `HotspotSession.usage(of:)`.
+    func usage(of id: WireGuardSetup.Peer.ID) -> MonthlyUsage.Usage { session.usage(of: id) }
+
     /// See `HotspotSession.needsNewConfig`.
     func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {
         session.needsNewConfig(peer)
@@ -397,6 +400,7 @@ final class Model: ObservableObject {
         }
         observe(UIApplication.willResignActiveNotification) { model in
             model.session.leftScreen()
+            model.session.saveUsage() // iOS may end Tether in the background with no warning
             model.localNetwork.stop()
             model.sampler?.cancel()
         }

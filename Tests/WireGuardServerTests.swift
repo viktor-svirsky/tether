@@ -315,6 +315,22 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertEqual(peer?["address"] as? String, "10.7.0.2")
     }
 
+    /// A device removed while the hotspot is off drops what it used then, so the next device given its
+    /// address starts from zero (#75 counts each device's data by these numbers).
+    func testADeviceRemovedWhileStoppedDropsWhatItUsed() throws {
+        var carried = CarriedDevices()
+        carried.absorb(["10.7.0.2": PeerStats(traffic: TrafficTotals(bytesUp: 10, bytesDown: 100))])
+        let server = WireGuardServer(carriedDevices: carried)
+        var setup = WireGuardSetup.new()
+        let ipad = try XCTUnwrap(setup.addPeer(name: "iPad"))
+        XCTAssertEqual(ipad.address, "10.7.0.2")
+        try server.setPeers(setup)
+        XCTAssertEqual(server.snapshot().peers["10.7.0.2"]?.traffic, TrafficTotals(bytesUp: 10, bytesDown: 100), "kept while it's there")
+        setup.removePeer(ipad.id)
+        try server.setPeers(setup)
+        XCTAssertNil(server.snapshot().peers["10.7.0.2"])
+    }
+
     func testSetPeersBeforeStartDoesNothing() {
         var setup = WireGuardSetup.new()
         _ = setup.addPeer(name: "iPad")

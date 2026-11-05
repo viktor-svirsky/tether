@@ -13,8 +13,10 @@ final class WireGuardServer {
     private var statsProblem: String?
     private let log: (String) -> Void
 
-    init(log: @escaping (String) -> Void = { _ in }) {
+    /// `carriedDevices` is for the tests, which can't make traffic through the real server.
+    init(log: @escaping (String) -> Void = { _ in }, carriedDevices: CarriedDevices = CarriedDevices()) {
         self.log = log
+        self.carriedDevices = carriedDevices
     }
 
     /// Listens on the hotspot's addresses only. Go leaves out one it can't listen on, unless none works.
@@ -55,6 +57,9 @@ final class WireGuardServer {
     /// and what it used is dropped, as on the server. A saved device the server doesn't let in now keeps it.
     /// A paused device stays, and keeps what it used: the server closes its connections and lets nothing through.
     func setPeers(_ setup: WireGuardSetup) throws {
+        // Also while stopped: a device removed then mustn't hand what it used to the next device
+        // that gets its address.
+        carriedDevices.keep(only: Set(setup.serverPeers.map(\.address)).union(setup.peers.map(\.address)))
         guard running else { return }
         let peers = setup.serverPeers
         guard peers.allSatisfy({ $0.publicKey.count == 32 }) else { throw Failure(message: "a device key isn't 32 bytes") }
@@ -63,7 +68,6 @@ final class WireGuardServer {
         let json = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
         let error = json.withCString { TetherWGConfigure(UnsafeMutablePointer(mutating: $0)) }
         if let message = take(error) { throw Failure(message: message) }
-        carriedDevices.keep(only: Set(peers.map(\.address)).union(setup.peers.map(\.address)))
     }
 
     /// Gives memory Go's GC has freed back to iOS, on a memory warning.

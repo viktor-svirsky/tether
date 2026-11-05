@@ -11,6 +11,7 @@ final class FormatTests: XCTestCase {
 
     func testBytesAreReadable() {
         XCTAssertEqual(Format.bytes(2_000_000), "2 MB")
+        XCTAssertEqual(Format.bytes(0), "0 bytes", "a number, not \"Zero KB\"")
         XCTAssertEqual(Format.bytes(UInt64.max), Format.bytes(UInt64(Int64.max)), "a huge count doesn't trap")
     }
 }

@@ -98,6 +98,13 @@ final class HotspotSession {
     private let idleStopAfter: () -> IdleStop.After
     /// The DNS line for the next device, picked in Settings > New devices, read for each config made.
     private let dns: () -> String
+    /// Where each device's data per month is saved, see `MonthlyUsage`. Nil keeps it in memory only.
+    private let usageDefaults: UserDefaults?
+    private let calendar: Calendar
+    private var monthlyUsage: MonthlyUsage
+    /// When it was last saved, and whether a read has changed it since.
+    private var usageSavedAt: Date?
+    private var usageUnsaved = false
     private let now: () -> Date
     private let log: @MainActor (String) -> Void
 
@@ -131,7 +138,7 @@ final class HotspotSession {
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
          idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> String = { DNSChoice.defaultServers },
-         now: @escaping () -> Date = Date.init,
+         usageDefaults: UserDefaults? = nil, calendar: Calendar = .current, now: @escaping () -> Date = Date.init,
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -142,6 +149,9 @@ final class HotspotSession {
         self.carrierIPv6Only = carrierIPv6Only
         self.idleStopAfter = idleStopAfter
         self.dns = dns
+        self.usageDefaults = usageDefaults
+        self.calendar = calendar
+        monthlyUsage = usageDefaults.map(MonthlyUsage.load(from:)) ?? MonthlyUsage()
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
         self.log = log
@@ -194,6 +204,9 @@ final class HotspotSession {
         server.stop()
         page.stop()
         pageHandler.forget()
+        // What the devices used since the last read: a stopped server still reports what it carried.
+        countUsage(server.snapshot().peers)
+        saveUsage()
         running = false
         startProblem = nil // the next hotspot gets a new try
         showProblem()
@@ -537,6 +550,12 @@ final class HotspotSession {
 
     private func publishSetup() {
         wireGuardPeers = devices.setup.peers
+        // Only from a setup that was read: a locked Keychain lists no devices, and that isn't a removal.
+        if devices.loaded {
+            let before = monthlyUsage
+            monthlyUsage.keep(only: Set(devices.setup.peers.map(\.id) + [devices.setup.ready?.id].compactMap { $0 }))
+            if monthlyUsage != before { usageUnsaved = true }
+        }
         wireGuardReady = devices.setup.ready
         let readyProblem = devices.readyError.map { "The code for the next device can't be saved: \($0)." }
         if readyProblem != wireGuardReadyProblem {
@@ -588,6 +607,7 @@ final class HotspotSession {
         if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
         if snap.stale != staleConfig { staleConfig = snap.stale }
         absorb(snap.peers)
+        countUsage(snap.peers)
         guard let speeds = sampler.sample(snap.totals, at: now) else { return } // nothing to compare with yet
         upSpeed = speeds.up
         downSpeed = speeds.down
@@ -640,6 +660,37 @@ final class HotspotSession {
         tunnelsUp = snap.connected
         watchedConnected = unpaused(snap.connected)
         absorb(snap.peers)
+        countUsage(snap.peers)
+    }
+
+    // MARK: Data per month
+
+    /// What the device used this month and last, as of now, see `MonthlyUsage`.
+    func usage(of id: WireGuardSetup.Peer.ID) -> MonthlyUsage.Usage {
+        monthlyUsage.of(id, at: now(), calendar: calendar)
+    }
+
+    /// Adds what each device's counters grew by to this month, and saves at most once a minute. A
+    /// crash loses up to that minute, never counts anything twice.
+    private func countUsage(_ peers: [String: PeerStats]) {
+        var ids: [String: WireGuardSetup.Peer.ID] = [:]
+        for peer in devices.setup.peers { ids[peer.address] = peer.id }
+        if let ready = devices.setup.ready { ids[ready.address] = ready.id }
+        var counts: [WireGuardSetup.Peer.ID: TrafficTotals] = [:]
+        for (address, stats) in peers { if let id = ids[address] { counts[id] = stats.traffic } }
+        let before = monthlyUsage
+        let now = self.now()
+        monthlyUsage.record(counts, at: now, calendar: calendar)
+        if monthlyUsage != before { usageUnsaved = true }
+        if usageSavedAt.map({ now.timeIntervalSince($0) >= 60 }) ?? true { saveUsage() }
+    }
+
+    /// Also when sharing stops and when Tether leaves the screen, see `Model`.
+    func saveUsage() {
+        guard usageUnsaved, let usageDefaults else { return }
+        monthlyUsage.save(to: usageDefaults)
+        usageSavedAt = now()
+        usageUnsaved = false
     }
 }
 

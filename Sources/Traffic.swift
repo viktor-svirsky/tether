@@ -1,9 +1,17 @@
 import Foundation
 
 /// The WireGuard server's byte counters. They only grow, so a reader can take the difference of two.
-struct TrafficTotals: Equatable {
+struct TrafficTotals: Equatable, Codable {
     var bytesUp: UInt64 = 0
     var bytesDown: UInt64 = 0
+
+    /// Both ways, as a device's data per month counts it.
+    var total: UInt64 { bytesUp.addingReportingOverflow(bytesDown).overflow ? .max : bytesUp + bytesDown }
+
+    static func += (a: inout TrafficTotals, b: TrafficTotals) {
+        a.bytesUp = a.bytesUp.addingReportingOverflow(b.bytesUp).overflow ? .max : a.bytesUp + b.bytesUp
+        a.bytesDown = a.bytesDown.addingReportingOverflow(b.bytesDown).overflow ? .max : a.bytesDown + b.bytesDown
+    }
 }
 
 /// The WireGuard server starts from zero each time the hotspot comes back, while readers expect

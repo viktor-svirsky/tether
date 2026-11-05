@@ -205,6 +205,8 @@ struct DemoState {
                                      now: { clock.now }, log: log)
         session.syncWithHotspot()
         server.connected = connected
+        // What the iPad used this month, for its screen. The Windows PC used nothing.
+        if connected.contains("10.7.0.2") { server.peerTraffic = ["10.7.0.2": TrafficTotals(bytesUp: 120_000_000, bytesDown: 3_000_000_000)] }
         if scenario == .staleConfig { server.stale = StaleConfig(kind: .device, at: clock.now) }
         session.sampleTraffic()
         clock.now = clock.now.addingTimeInterval(1)
