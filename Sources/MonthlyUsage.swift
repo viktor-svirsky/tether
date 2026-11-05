@@ -43,13 +43,32 @@ struct MonthlyUsage: Codable, Equatable {
         var lastMonth: TrafficTotals
     }
 
+    /// What a device's limit has done this month, see `HotspotSession.checkLimits`. Each is the month
+    /// it holds for, so a new month forgets it.
+    private struct Marks: Codable, Equatable {
+        /// Resumed by hand at its limit: it goes over until the 1st.
+        var resumedOver: Month?
+        /// Told it's near its limit.
+        var nearTold: Month?
+    }
+
     static let key = "usage.monthly"
 
     private var devices: [UUID: Device] = [:]
+    private var marks: [UUID: Marks] = [:]
     /// Each device's counters at the last read, in this launch only.
     private var seen: [UUID: TrafficTotals] = [:]
 
-    private enum CodingKeys: String, CodingKey { case devices }
+    private enum CodingKeys: String, CodingKey { case devices, marks }
+
+    init() {}
+
+    /// Usage saved before there were marks has none.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        devices = try container.decode([UUID: Device].self, forKey: .devices)
+        marks = try container.decodeIfPresent([UUID: Marks].self, forKey: .marks) ?? [:]
+    }
 
     /// Adds what each device's counters grew by since the last read to the month of `date`.
     mutating func record(_ counts: [UUID: TrafficTotals], at date: Date, calendar: Calendar) {
@@ -85,7 +104,31 @@ struct MonthlyUsage: Codable, Equatable {
     /// Drops removed devices.
     mutating func keep(only ids: Set<UUID>) {
         devices = devices.filter { ids.contains($0.key) }
+        marks = marks.filter { ids.contains($0.key) }
         seen = seen.filter { ids.contains($0.key) }
+    }
+
+    // MARK: The limit's marks
+
+    func resumedOver(_ id: UUID, at date: Date, calendar: Calendar) -> Bool {
+        marks[id]?.resumedOver == Month(date, calendar: calendar)
+    }
+
+    mutating func markResumedOver(_ id: UUID, at date: Date, calendar: Calendar) {
+        marks[id, default: Marks()].resumedOver = Month(date, calendar: calendar)
+    }
+
+    func nearTold(_ id: UUID, at date: Date, calendar: Calendar) -> Bool {
+        marks[id]?.nearTold == Month(date, calendar: calendar)
+    }
+
+    mutating func markNearTold(_ id: UUID, at date: Date, calendar: Calendar) {
+        marks[id, default: Marks()].nearTold = Month(date, calendar: calendar)
+    }
+
+    /// A new limit starts over: a resume or a notice for the old one doesn't hold for it.
+    mutating func clearMarks(_ id: UUID) {
+        marks[id] = nil
     }
 
     static func load(from defaults: UserDefaults) -> MonthlyUsage {
@@ -96,5 +139,5 @@ struct MonthlyUsage: Codable, Equatable {
         if let data = try? JSONEncoder().encode(self) { defaults.set(data, forKey: Self.key) }
     }
 
-    static func == (a: MonthlyUsage, b: MonthlyUsage) -> Bool { a.devices == b.devices }
+    static func == (a: MonthlyUsage, b: MonthlyUsage) -> Bool { a.devices == b.devices && a.marks == b.marks }
 }

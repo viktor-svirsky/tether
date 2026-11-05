@@ -82,6 +82,9 @@ struct DeviceView: View {
     @ObservedObject var model: Model
     let peer: WireGuardSetup.Peer
     @State private var confirmRemove = false
+    /// Other amount, typed in GB.
+    @State private var typingLimit = false
+    @State private var typedLimit = ""
     @Environment(\.dismiss) private var dismiss
 
     /// The saved device, so a new name shows at once.
@@ -137,6 +140,17 @@ struct DeviceView: View {
         .navigationTitle(Binding(get: { current.name }, set: { model.renameWireGuardDevice(peer.id, to: $0) }))
         .navigationBarTitleDisplayMode(.inline)
         .toolbarRole(.editor)
+        .alert("Data limit", isPresented: $typingLimit) {
+            TextField("GB", text: $typedLimit)
+                .keyboardType(.decimalPad)
+                .accessibilityIdentifier("device.limitAmount")
+            Button("Set") {
+                if let bytes = DataLimit.bytes(typedGB: typedLimit) { model.setLimit(peer.id, bytes) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Data both ways this month, in GB.")
+        }
         .confirmationDialog("Remove \(current.name)?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
                 // A removal that couldn't be saved stays here, and the screen says so.
@@ -149,16 +163,67 @@ struct DeviceView: View {
 extension DeviceView {
     /// What it used, both ways, counted the way the main screen counts (#75). iOS Settings > Cellular
     /// adds the iPhone's own headers on top, so it says "through Tether".
+    /// With a limit, a meter of this month against it and when the count resets (#75).
     private var usageSection: some View {
         let usage = model.usage(of: peer.id)
-        return Section("Data through Tether") {
-            LabeledContent("This month", value: Format.bytes(usage.thisMonth.total))
+        let used = usage.thisMonth.total
+        let resets = model.nextResetDay
+        return Section {
+            if let limit = current.limit {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(Format.bytes(used)) of \(Format.bytes(limit)) this month")
+                        .font(.headline)
+                    LimitMeter(fraction: limit == 0 ? 1 : min(1, Double(used) / Double(limit)))
+                    Text("Resets on \(resets)")
+                        .font(.subheadline)
+                }
+                .padding(.vertical, 4)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("device.thisMonth")
+                if model.overLimit(peer.id) {
+                    // The label colour, like the status: grey text on the card fails the contrast audit.
+                    Text("Over its limit until \(resets), because you resumed it.")
+                        .font(.subheadline)
+                        .accessibilityIdentifier("device.overLimit")
+                }
+            } else {
+                LabeledContent("This month", value: Format.bytes(used))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("device.thisMonth")
+            }
             LabeledContent("Last month", value: Format.bytes(usage.lastMonth.total))
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("device.lastMonth")
+            Picker("Limit", selection: Binding(get: { LimitPick.preset(current.limit) }, set: { pick in
+                switch pick {
+                case let .preset(limit): model.setLimit(peer.id, limit)
+                case .other:
+                    typedLimit = ""
+                    typingLimit = true
+                }
+            })) {
+                ForEach(limitPicks, id: \.self) { pick in
+                    switch pick {
+                    case let .preset(limit): Text(DataLimit.label(limit)).tag(pick)
+                    case .other: Text("Other amount").tag(pick)
+                    }
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("device.limit")
+        } header: {
+            Text("Data through Tether")
+        } footer: {
+            Text("Counts data both ways. When \(current.name) reaches it, Tether pauses \(current.name) until the count resets on \(resets). You can resume it sooner.")
+                .accessibilityIdentifier("device.limitFooter")
         }
+    }
+
+    /// The menu's choices, with a typed amount the device has, then Other amount.
+    private var limitPicks: [LimitPick] {
+        var picks = DataLimit.choices.map(LimitPick.preset)
+        if let limit = current.limit, !DataLimit.choices.contains(limit) { picks.append(.preset(limit)) }
+        return picks + [.other]
     }
 
     /// Under the status: Pause, or Resume once it's paused, filled since it's the main action then.
@@ -224,5 +289,29 @@ struct DeviceStatusLabel: View {
             .accessibilityHidden(true)
             Text(text ?? status.label)
         }
+    }
+}
+
+/// A choice in a device's Limit menu.
+private enum LimitPick: Hashable {
+    case preset(UInt64?)
+    case other
+}
+
+/// This month's data against the limit, in the app icon's blue-to-teal.
+private struct LimitMeter: View {
+    let fraction: Double
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color(.tertiarySystemFill))
+                Capsule()
+                    .fill(LinearGradient(colors: StatusOrb.iconColors, startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(8, geometry.size.width * fraction))
+            }
+        }
+        .frame(height: 8)
+        .accessibilityHidden(true)
     }
 }

@@ -39,8 +39,11 @@ struct WireGuardSetup: Codable, Equatable {
         /// there was pausing has none. A release before it, installed over this one, drops it, and the
         /// device connects again there.
         var paused: Pause?
+        /// Its data limit per month in bytes, both ways, see `DataLimit`. Nil for none. A release
+        /// before it, installed over this one, drops it.
+        var limit: UInt64?
 
-        private enum SavedKeys: String, CodingKey { case id, name, privateKey, publicKey, address, host, paused }
+        private enum SavedKeys: String, CodingKey { case id, name, privateKey, publicKey, address, host, paused, limit }
 
         func encode(to encoder: Encoder) throws {
             try encode(to: encoder, privateKey: Data())
@@ -56,27 +59,33 @@ struct WireGuardSetup: Codable, Equatable {
             try container.encode(address, forKey: .address)
             try container.encodeIfPresent(host, forKey: .host)
             try container.encodeIfPresent(paused, forKey: .paused)
+            try container.encodeIfPresent(limit, forKey: .limit)
         }
     }
 
-    /// Why a device is paused, saved as `{"why": "you"}`. Each reason has its own words, see
-    /// `DeviceStatus`. A reason this version doesn't know, from a newer one, reads as paused by you,
-    /// so the device stays paused and can be resumed here. Saved again, it's saved as that.
+    /// Why a device is paused, saved as `{"why": "you"}` or `{"why": "limit"}`. Each reason has its
+    /// own words, see `DeviceStatus`. A reason this version doesn't know, from a newer one, reads as
+    /// paused by you, so the device stays paused and can be resumed here. Saved again, it's saved as that.
     enum Pause: Codable, Hashable {
         /// Paused on its screen, until it's resumed there.
         case byYou
+        /// It used its data limit for the month, see `Peer.limit`. It connects again when the count
+        /// starts over on the 1st, or when it's resumed. An older release reads it as paused by you.
+        case atLimit
 
         private enum CodingKeys: String, CodingKey { case why }
 
         /// Whatever was saved, so a newer version's shape never makes the setup unreadable.
         init(from decoder: Decoder) throws {
-            self = .byYou
+            let why = try? decoder.container(keyedBy: CodingKeys.self).decode(String.self, forKey: .why)
+            self = why == "limit" ? .atLimit : .byYou
         }
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             switch self {
             case .byYou: try container.encode("you", forKey: .why)
+            case .atLimit: try container.encode("limit", forKey: .why)
             }
         }
     }
@@ -178,6 +187,12 @@ struct WireGuardSetup: Codable, Equatable {
     mutating func pausePeer(_ id: Peer.ID, _ pause: Pause?) {
         guard let i = peers.firstIndex(where: { $0.id == id }) else { return }
         peers[i].paused = pause
+    }
+
+    /// Its data limit per month in bytes, or nil for none, see `Peer.limit`.
+    mutating func limitPeer(_ id: Peer.ID, _ limit: UInt64?) {
+        guard let i = peers.firstIndex(where: { $0.id == id }) else { return }
+        peers[i].limit = limit
     }
 
     /// The devices at these tunnel addresses reach Tether at `host`, see `Peer.host`.
@@ -436,6 +451,12 @@ final class WireGuardDevices {
     @discardableResult
     func pause(_ id: WireGuardSetup.Peer.ID, _ pause: WireGuardSetup.Pause?) -> Bool {
         change { $0.pausePeer(id, pause) }
+    }
+
+    /// See `WireGuardSetup.limitPeer`. False when it couldn't be saved, and then nothing changes.
+    @discardableResult
+    func limit(_ id: WireGuardSetup.Peer.ID, _ limit: UInt64?) -> Bool {
+        change { $0.limitPeer(id, limit) }
     }
 
     /// False when the change couldn't be saved. Then the device stays, here and on the server, since

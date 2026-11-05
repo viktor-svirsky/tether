@@ -176,7 +176,7 @@ final class NotifierTests: XCTestCase {
     }
 
     func testTheSwitchesAreSavedUnderTheirOwnKeys() {
-        XCTAssertEqual(NoticeKind.allCases.map(\.key), ["notify.connected", "notify.disconnected", "notify.sharingStopped", "notify.idleStopped", "notify.closed", "notify.expiring"])
+        XCTAssertEqual(NoticeKind.allCases.map(\.key), ["notify.connected", "notify.disconnected", "notify.sharingStopped", "notify.idleStopped", "notify.limit", "notify.closed", "notify.expiring"])
     }
 
     /// A device that's connected when Tether starts isn't news, on screen or off. The question

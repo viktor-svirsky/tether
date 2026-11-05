@@ -79,6 +79,8 @@ final class HotspotSession {
     private(set) var staleConfig: StaleConfig? { willSet { willChange() } }
     /// Sharing stopped after a time with no device connected, until Tether is opened or Start Tether runs.
     private(set) var idleStopped: IdleStopped? { willSet { willChange() } }
+    /// Devices that came near or reached their data limit, for the notifications, the latest last.
+    private(set) var limitAlerts: [LimitAlert] = [] { willSet { willChange() } }
     /// Who was connected at the last read, for the notifications: the sampler's on screen, the
     /// watcher's in the background. Nothing on screen shows the watcher's, so it isn't published.
     var connectedNow: Set<String> { sceneActive ? wireGuardConnected : watchedConnected }
@@ -167,6 +169,8 @@ final class HotspotSession {
         syncWithHotspot()
         // On screen the sampler does this every second.
         if !sceneActive { readInBackground() }
+        // Also with the hotspot off, so a device paused at its limit connects again on the 1st.
+        checkLimits()
         stopWhenIdle()
     }
 
@@ -412,20 +416,63 @@ final class HotspotSession {
 
     /// Paused, a device stays on the server, so its tunnel stays up, but nothing gets through until
     /// it's resumed. A pause that couldn't be saved changes nothing, and its screen says so.
+    /// A device already paused stays paused for its reason: one paused at its limit just now, before
+    /// the screen showed it, still connects again on the 1st.
     func pauseWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
+        guard devices.setup.peers.first(where: { $0.id == id })?.paused == nil else { return }
         pause(id, .byYou, problem: "The device couldn't be paused.")
     }
 
+    /// A device paused at its limit, resumed by hand while it's still at it, goes over it until the
+    /// 1st, see `checkLimits`. One the count already let go (the 1st, before a read caught up) doesn't.
     func resumeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
-        pause(id, nil, problem: "The device couldn't be resumed.")
+        let peer = devices.setup.peers.first { $0.id == id }
+        let atLimit = peer?.paused == .atLimit && peer?.limit.map { usage(of: id).thisMonth.total >= $0 } == true
+        guard pause(id, nil, problem: "The device couldn't be resumed."), atLimit else { return }
+        monthlyUsage.markResumedOver(id, at: now(), calendar: calendar)
+        usageUnsaved = true
     }
 
-    private func pause(_ id: WireGuardSetup.Peer.ID, _ pause: WireGuardSetup.Pause?, problem: String) {
+    /// Its data limit per month, or nil for none. It counts at once: lowered below what the device used
+    /// this month, the device is paused, raised above it or removed, a device paused at it resumes. A
+    /// resume or a notice for the old limit doesn't hold for the new one. False when it couldn't be
+    /// saved, and the device's screen says so.
+    @discardableResult
+    func setLimit(_ id: WireGuardSetup.Peer.ID, _ limit: UInt64?) -> Bool {
+        // The same limit picked again changes nothing, so a resume over it still holds.
+        if devices.setup.peers.first(where: { $0.id == id })?.limit == limit { return true }
+        guard devices.limit(id, limit) else {
+            log("WireGuard: the new limit couldn't be saved")
+            showDeviceProblem(DeviceProblem(device: id, text: "The new limit couldn't be saved."))
+            publishSetup()
+            return false
+        }
+        showDeviceProblem(nil)
+        monthlyUsage.clearMarks(id)
+        usageUnsaved = true
+        publishSetup()
+        checkLimits()
+        return true
+    }
+
+    /// Resumed at its limit this month, so it's over it until the 1st.
+    func overLimit(_ id: WireGuardSetup.Peer.ID) -> Bool {
+        monthlyUsage.resumedOver(id, at: now(), calendar: calendar)
+    }
+
+    /// The 1st of next month, when the counts and the limits start over, on the session's clock.
+    var nextReset: Date {
+        calendar.dateInterval(of: .month, for: now())?.end ?? now()
+    }
+
+    @discardableResult
+    private func pause(_ id: WireGuardSetup.Peer.ID, _ pause: WireGuardSetup.Pause?, problem: String) -> Bool {
         let saved = devices.pause(id, pause)
         if !saved { log("WireGuard: the \(pause == nil ? "resume" : "pause") couldn't be saved, nothing changed") }
         showDeviceProblem(saved ? nil : DeviceProblem(device: id, text: problem))
         wireGuardPeersChanged()
         publishConnected()
+        return saved
     }
 
     /// The devices the notifications follow, see `Notifier`. A paused one neither connects nor
@@ -598,6 +645,7 @@ final class HotspotSession {
             let peers = server.snapshot().peers // a stopped server answers with what each device used
             if peers != wireGuardPeerStats { wireGuardPeerStats = peers }
             if staleConfig != nil { staleConfig = nil }
+            checkLimits()
             return
         }
         let snap = server.snapshot()
@@ -682,7 +730,47 @@ final class HotspotSession {
         let now = self.now()
         monthlyUsage.record(counts, at: now, calendar: calendar)
         if monthlyUsage != before { usageUnsaved = true }
+        checkLimits()
         if usageSavedAt.map({ now.timeIntervalSince($0) >= 60 }) ?? true { saveUsage() }
+    }
+
+    /// Each device's limit against what it used this month, after every read: at 90% it's told once,
+    /// at its limit it's paused and told, unless it was resumed at its limit this month. A device paused
+    /// at its limit connects again once it's under it: on the 1st, or with a higher limit or none. A
+    /// pause or resume that can't be saved is tried again at the next read, and only a saved one is told.
+    private func checkLimits() {
+        guard devices.loaded else { return }
+        let now = self.now()
+        var changed = false
+        for peer in devices.setup.peers {
+            let used = monthlyUsage.of(peer.id, at: now, calendar: calendar).thisMonth.total
+            switch (peer.paused, peer.limit) {
+            case (.atLimit?, nil):
+                changed = devices.pause(peer.id, nil) || changed
+            case let (.atLimit?, limit?) where used < limit:
+                changed = devices.pause(peer.id, nil) || changed
+            case let (nil, limit?) where used >= limit && !monthlyUsage.resumedOver(peer.id, at: now, calendar: calendar):
+                guard devices.pause(peer.id, .atLimit) else { continue }
+                changed = true
+                log("WireGuard: a device reached its limit and is paused until the 1st")
+                alert(peer, .reached, used: used, limit: limit, now: now)
+            case let (nil, limit?) where used < limit && used >= limit / 10 * 9 && !monthlyUsage.nearTold(peer.id, at: now, calendar: calendar):
+                monthlyUsage.markNearTold(peer.id, at: now, calendar: calendar)
+                usageUnsaved = true
+                alert(peer, .near, used: used, limit: limit, now: now)
+            default:
+                break
+            }
+        }
+        if changed {
+            wireGuardPeersChanged()
+            publishConnected()
+        }
+    }
+
+    private func alert(_ peer: WireGuardSetup.Peer, _ kind: LimitAlert.Kind, used: UInt64, limit: UInt64, now: Date) {
+        let alert = LimitAlert(device: peer.id, name: peer.name, kind: kind, used: used, limit: limit, resets: nextReset)
+        limitAlerts = Array((limitAlerts + [alert]).suffix(20))
     }
 
     /// Also when sharing stops and when Tether leaves the screen, see `Model`.

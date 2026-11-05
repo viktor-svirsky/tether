@@ -97,7 +97,7 @@ final class PauseTests: XCTestCase {
         _ = setup.addPeer(name: "iPad")
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(setup)) as? [String: Any])
         var peers = try XCTUnwrap(json["peers"] as? [[String: Any]])
-        peers[0]["paused"] = ["why": "limit", "until": 1_800_000_000]
+        peers[0]["paused"] = ["why": "schedule", "until": 1_800_000_000]
         json["peers"] = peers
         let read = try JSONDecoder().decode(WireGuardSetup.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertEqual(read.peers.map(\.paused), [.byYou])

@@ -137,6 +137,8 @@ struct DemoState {
             var setup = WireGuardSetup.new()
             let ipad = setup.addPeer(name: "iPad")
             if scenario == .paused, let ipad { setup.pausePeer(ipad.id, .byYou) }
+            // A 10 GB limit, so its screen shows the meter. The Windows PC has none.
+            if let ipad { setup.limitPeer(ipad.id, 10_000_000_000) }
             // A documentation address. The demo listens on 172.20.10.1, so it's an old one.
             _ = setup.addPeer(name: "Windows PC", host: scenario == .oldAddress ? "2001:db8::1" : nil)
             secrets.data = try? JSONEncoder().encode(setup) // no ready device yet: loading makes and saves one

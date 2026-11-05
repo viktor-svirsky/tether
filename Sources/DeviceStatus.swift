@@ -46,12 +46,14 @@ extension WireGuardSetup.Pause {
     var title: String {
         switch self {
         case .byYou: "Paused"
+        case .atLimit: "Paused at its limit"
         }
     }
 
     var detail: String {
         switch self {
         case .byYou: "It can't connect until you resume it."
+        case .atLimit: "It used its data for this month. It connects again on the 1st, or when you resume it."
         }
     }
 }

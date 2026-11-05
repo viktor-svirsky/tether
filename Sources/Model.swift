@@ -238,7 +238,7 @@ final class Model: ObservableObject {
         let notices = notifier.check(Notifier.Round(now: Date(), onScreen: session.sceneActive, hotspot: session.running,
                                                     sharing: session.sharing, devices: session.notifiedPeers,
                                                     connected: session.connectedNow, expires: expires,
-                                                    idleStopped: session.idleStopped))
+                                                    idleStopped: session.idleStopped, limitAlerts: session.limitAlerts))
         if notifier.wouldTell { askForNotices() }
         let alarm = closedAlarm.check(now: Date(), sharing: session.sharing, on: NoticeKind.closed.isOn(in: settingsDefaults))
         if alarm != .none { poster.queue(alarm) }
@@ -343,6 +343,15 @@ final class Model: ObservableObject {
 
     /// See `HotspotSession.usage(of:)`.
     func usage(of id: WireGuardSetup.Peer.ID) -> MonthlyUsage.Usage { session.usage(of: id) }
+
+    /// See `HotspotSession.setLimit`.
+    func setLimit(_ id: WireGuardSetup.Peer.ID, _ limit: UInt64?) { session.setLimit(id, limit) }
+
+    /// See `HotspotSession.overLimit`.
+    func overLimit(_ id: WireGuardSetup.Peer.ID) -> Bool { session.overLimit(id) }
+
+    /// "1 December": see `HotspotSession.nextReset`.
+    var nextResetDay: String { LimitAlert.day(session.nextReset, calendar: .current) }
 
     /// See `HotspotSession.needsNewConfig`.
     func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {

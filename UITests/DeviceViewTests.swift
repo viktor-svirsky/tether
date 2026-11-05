@@ -16,16 +16,44 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(element("wireguard.qr"), text(containing: "10.7.0.2"), message: "no per-device code or address any more")
     }
 
-    /// What a device used this month and last, through Tether (#75). The demo's iPad used 3.12 GB.
+    /// What a device used this month and last, through Tether (#75). The demo's iPad used 3.12 GB of
+    /// its 10 GB limit, and the Windows PC has no limit.
     func testADeviceShowsItsDataThisMonthAndLast() throws {
         launch(.sharing)
         openDevice("iPad")
         let thisMonth = reveal(element("device.thisMonth"))
-        XCTAssertTrue(thisMonth.label.contains("This month") && thisMonth.label.contains("3.12 GB"), thisMonth.label)
+        XCTAssertTrue(thisMonth.label.contains("3.12 GB of 10 GB this month") && thisMonth.label.contains("Resets on 1 "), thisMonth.label)
         let lastMonth = reveal(element("device.lastMonth"))
         XCTAssertTrue(lastMonth.label.contains("Last month") && lastMonth.label.contains("0 bytes"), lastMonth.label)
         XCTAssertTrue(sectionHeader("Data through Tether").exists)
+        let footer = reveal(element("device.limitFooter")).label
+        XCTAssertTrue(footer.hasPrefix("Counts data both ways. When iPad reaches it, Tether pauses iPad until the count resets on 1 "), footer)
+        XCTAssertTrue(footer.hasSuffix(". You can resume it sooner."), footer)
         try audit(only: "device.")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        openDevice("Windows PC")
+        let plain = reveal(element("device.thisMonth"))
+        XCTAssertTrue(plain.label.contains("This month") && plain.label.contains("0 bytes"), "no limit, no meter: \(plain.label)")
+    }
+
+    /// The limit is a menu: None, 5, 10, 20, 50 GB and Other amount, which asks for GB.
+    func testTheLimitIsAMenuWithOtherAmount() {
+        launch(.sharing)
+        openDevice("Windows PC")
+        let menu = reveal(app.buttons["device.limit"].firstMatch)
+        XCTAssertTrue(menu.label.contains("Limit") && (menu.label.contains("None") || value(of: menu) == "None"), menu.label)
+        menu.tap()
+        for choice in ["None", "5 GB", "10 GB", "20 GB", "50 GB", "Other amount"] {
+            XCTAssertTrue(app.buttons[choice].waitForExistence(timeout: 3), choice)
+        }
+        app.buttons["Other amount"].tap()
+        let amount = app.textFields["device.limitAmount"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 3))
+        amount.typeText("7.5")
+        app.alerts.buttons["Set"].tap()
+        let meter = reveal(element("device.thisMonth"))
+        XCTAssertTrue(meter.label.contains("0 bytes of 7.5 GB this month"), meter.label)
+        XCTAssertTrue(reveal(app.buttons["device.limit"].firstMatch).label.contains("7.5 GB") || value(of: app.buttons["device.limit"].firstMatch) == "7.5 GB")
     }
 
     func testAnUnconnectedDeviceSaysNotConnected() {

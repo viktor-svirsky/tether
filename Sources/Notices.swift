@@ -2,7 +2,7 @@ import Foundation
 
 /// What Tether can tell in a notification. Each has its own switch, all on until turned off.
 enum NoticeKind: String, CaseIterable {
-    case connected, disconnected, sharingStopped, idleStopped, closed, expiring
+    case connected, disconnected, sharingStopped, idleStopped, limit, closed, expiring
 
     /// The switch's label in Settings.
     var label: String {
@@ -11,6 +11,7 @@ enum NoticeKind: String, CaseIterable {
         case .disconnected: "A device disconnects"
         case .sharingStopped: "Sharing stops with a problem"
         case .idleStopped: "Sharing stops while idle"
+        case .limit: "A device nears or reaches its limit"
         case .closed: "iOS stops Tether in the background"
         case .expiring: "Tether stops opening soon"
         }
@@ -31,6 +32,45 @@ struct Notice: Equatable {
     let id: String
     let title: String
     let body: String
+}
+
+/// A device near its data limit (90%), or paused at it, see `HotspotSession.checkLimits`. Each is
+/// made once a month for a limit, so its `id` is told once.
+struct LimitAlert: Equatable {
+    enum Kind: String { case near, reached }
+
+    let device: WireGuardSetup.Peer.ID
+    let name: String
+    let kind: Kind
+    /// Both ways this month, and the limit, in bytes.
+    let used: UInt64
+    let limit: UInt64
+    /// The 1st of next month, when the count starts over.
+    let resets: Date
+
+    var id: String { "\(kind.rawValue)-\(device)-\(Int(resets.timeIntervalSince1970))-\(limit)" }
+
+    /// One notice per device, so "paused" takes the place of "near" in Notification Center.
+    func notice(calendar: Calendar) -> Notice {
+        switch kind {
+        case .near:
+            Notice(kind: .limit, id: "limit-\(device)", title: "\(name) is near its limit",
+                   body: "It used \(Format.bytes(used)) of its \(Format.bytes(limit)) this month.")
+        case .reached:
+            Notice(kind: .limit, id: "limit-\(device)", title: "\(name) paused at its limit",
+                   body: "It used \(Format.bytes(limit)) this month. It connects again on \(Self.day(resets, calendar: calendar)), or when you resume it.")
+        }
+    }
+
+    /// "1 December".
+    static func day(_ date: Date, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "d MMMM"
+        return formatter.string(from: date)
+    }
 }
 
 /// Decides what to tell, round by round: a device that connects or leaves, sharing that stops while
@@ -67,6 +107,8 @@ struct Notifier {
         var expires: Date? = nil
         /// Sharing stopped after a time with no device connected, see `IdleStop`.
         var idleStopped: IdleStopped? = nil
+        /// Devices near or at their data limit this month, see `LimitAlert`.
+        var limitAlerts: [LimitAlert] = []
     }
 
     private struct Device {
@@ -86,6 +128,8 @@ struct Notifier {
     private var stoppedSince: Date?
     /// The idle stop last told, so each is told once.
     private var toldIdleStop: IdleStopped?
+    /// The limit alerts told, or seen on screen, by `LimitAlert.id`.
+    private var toldLimits: Set<String> = []
     /// The last round was on screen and saw something it would have told in the background. iOS
     /// shows the permission question only while Tether is on screen, so `Model` asks then.
     private(set) var wouldTell = false
@@ -106,6 +150,7 @@ struct Notifier {
             notices += checkStopped(round)
         }
         notices += checkIdleStop(round)
+        notices += checkLimits(round)
         notices += checkExpiry(round)
         seen = true
         return notices
@@ -205,6 +250,17 @@ struct Notifier {
         guard !round.onScreen, NoticeKind.idleStopped.isOn(in: defaults) else { return [] }
         return [Notice(kind: .idleStopped, id: "idleStop", title: "Sharing stopped while idle",
                        body: "No device was connected for \(stopped.after.spelledOut). Open Tether to share again.")]
+    }
+
+    /// Each limit alert once. On screen the device's screen shows it, so it's the moment to ask.
+    private mutating func checkLimits(_ round: Round) -> [Notice] {
+        var notices: [Notice] = []
+        for alert in round.limitAlerts where !toldLimits.contains(alert.id) {
+            toldLimits.insert(alert.id)
+            guard NoticeKind.limit.isOn(in: defaults) else { continue }
+            if round.onScreen { wouldTell = true } else { notices.append(alert.notice(calendar: calendar)) }
+        }
+        return notices
     }
 
     /// Once a day within `AppExpiry.warnBefore`. A day the main screen showed the warning counts as told.
