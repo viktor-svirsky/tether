@@ -1,0 +1,50 @@
+# Reruns a CI run whose job GitHub cancelled because no macos-26 runner ever started it (#87). Such a
+# job ends after 15 minutes with no steps and no log, the run ends as a failure, and it passes when
+# run again with no change.
+name: Rerun CI that never started
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  rerun:
+    # Only this repo's own branches, at most three attempts in all.
+    if: >-
+      (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'cancelled') &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write # to rerun
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts
+      - name: Rerun it if no runner ever started it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          # A newer push cancels the older run on purpose (ci.yml's concurrency group), so only the
+          # branch's latest commit goes again. A deleted branch has nothing to rerun.
+          head=$(gh api "repos/$GITHUB_REPOSITORY/branches/$RUN_BRANCH" --jq .commit.sha 2>/dev/null || true)
+          if [[ $head != "$RUN_SHA" ]]; then
+              echo "::notice::Not rerun: $RUN_BRANCH is at ${head:-nothing} now, not $RUN_SHA."
+              exit 0
+          fi
+          if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" | scripts/never-started.sh; then
+              echo "::notice::Not rerun: a runner started every job, so it failed or was cancelled for real."
+              exit 0
+          fi
+          echo "::notice::No runner started run $RUN_ID, rerunning it."
+          gh run rerun "$RUN_ID" --failed -R "$GITHUB_REPOSITORY"
