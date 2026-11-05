@@ -35,7 +35,7 @@ final class WireGuardServerTests: XCTestCase {
 
     private func start(_ setup: WireGuardSetup = .new()) throws -> UInt16 {
         let port = freePort()
-        try server.start(host: "127.0.0.1", setup: setup, port: port)
+        try server.start(hosts: ["127.0.0.1"], setup: setup, port: port)
         return port
     }
 
@@ -50,6 +50,12 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertEqual(server.snapshot().totals, TrafficTotals(), "a stopped server still answers with its carried counters")
     }
 
+    /// On a carrier that gives the iPhone IPv6 only it listens on 172.20.10.1 and the IPv6 address (#98).
+    func testItListensOnTwoAddresses() throws {
+        try server.start(hosts: ["127.0.0.1", "::1"], setup: .new(), port: freePort())
+        XCTAssertTrue(server.running)
+    }
+
     func testStartingAgainReplacesTheServer() throws {
         try start()
         try start()
@@ -57,7 +63,7 @@ final class WireGuardServerTests: XCTestCase {
     }
 
     func testAnAddressThatIsntOneIsAnError() {
-        XCTAssertThrowsError(try server.start(host: "not an address", setup: .new(), port: freePort())) { error in
+        XCTAssertThrowsError(try server.start(hosts: ["not an address"], setup: .new(), port: freePort())) { error in
             XCTAssertTrue("\(error)".contains("ParseAddr"), "\(error)")
         }
         XCTAssertFalse(server.running)
@@ -67,7 +73,7 @@ final class WireGuardServerTests: XCTestCase {
     func testAShortServerKeyIsRefusedBeforeGo() {
         var setup = WireGuardSetup.new()
         setup.serverPrivateKey = Data(count: 16)
-        XCTAssertThrowsError(try server.start(host: "127.0.0.1", setup: setup, port: freePort())) { error in
+        XCTAssertThrowsError(try server.start(hosts: ["127.0.0.1"], setup: setup, port: freePort())) { error in
             XCTAssertTrue("\(error)".contains("32 bytes"))
         }
         XCTAssertFalse(server.running)
@@ -83,7 +89,7 @@ final class WireGuardServerTests: XCTestCase {
         let bound = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
             Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
         XCTAssertEqual(bound, 0)
-        XCTAssertThrowsError(try server.start(host: "127.0.0.1", setup: .new(), port: port)) { error in
+        XCTAssertThrowsError(try server.start(hosts: ["127.0.0.1"], setup: .new(), port: port)) { error in
             XCTAssertTrue("\(error)".contains("address already in use"), "\(error)")
         }
         XCTAssertFalse(server.running, "not left half started")
@@ -143,7 +149,7 @@ final class WireGuardServerTests: XCTestCase {
         setup.removePeer(b.id)
         b.address = a.address
         setup.peers.append(b)
-        XCTAssertThrowsError(try server.start(host: "127.0.0.1", setup: setup, port: freePort()))
+        XCTAssertThrowsError(try server.start(hosts: ["127.0.0.1"], setup: setup, port: freePort()))
         XCTAssertFalse(server.running, "HotspotSession's watcher retries only a server that isn't running")
     }
 

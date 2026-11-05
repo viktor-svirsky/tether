@@ -108,7 +108,7 @@ func setup(t *testing.T) (*Server, *client) { return setupWithMTU(t, MTU) }
 func setupWithMTU(t *testing.T, mtu int) (*Server, *client) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func setupTwo(t *testing.T) (s *Server, a, b *client) {
 	sPriv, sPub := keyPair(t)
 	aPriv, aPub := keyPair(t)
 	bPriv, bPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestTCPGoesThroughTheTunnel(t *testing.T) {
 func TestADeviceReachesTheServerOverIPv6(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
-	s, err := Start(netip.IPv6Loopback(), 0, sPriv)
+	s, err := Start([]netip.Addr{netip.IPv6Loopback()}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestADeviceWithTheOldMTUStillDownloads(t *testing.T) {
 func TestAnUnknownKeyGetsNothing(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +358,7 @@ func TestRemovingAPeerLocksItOut(t *testing.T) {
 func TestCloseDuringUDPTrafficReturns(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -751,7 +751,7 @@ func TestReplyPacketsAreValidIPv4(t *testing.T) {
 }
 
 func TestTheBindsEndpointsAndOptions(t *testing.T) {
-	b := &hostBind{host: loopback}
+	b := &hostBind{hosts: []netip.Addr{loopback}}
 	ep, err := b.ParseEndpoint("127.0.0.1:51820")
 	if err != nil {
 		t.Fatal(err)
@@ -823,7 +823,7 @@ func TestTheQueueHoldsABurstFromTheStack(t *testing.T) {
 func setupRouter(t *testing.T, lan netip.Addr) (*Server, *client) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -920,7 +920,7 @@ func twoRouters(t *testing.T) (s *Server, a, b netip.Addr, cb *client, target st
 	sPriv, sPub := keyPair(t)
 	aPriv, aPub := keyPair(t)
 	bPriv, bPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -973,7 +973,7 @@ func TestRemovingTheRouterLocksItsClientsOut(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
 	_, otherPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1091,7 +1091,7 @@ func TestRoutedNetsLeaveTheTunnelOut(t *testing.T) {
 func TestARoutersIPv6ClientsGoThroughTheTunnel(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1122,7 +1122,7 @@ func TestAnIPv6SourceDoesntMakeARouter(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	lPriv, lPub := keyPair(t)
 	rPriv, rPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1160,7 +1160,7 @@ func TestARouterThatCarriedNothingGivesTheRoleUp(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	aPriv, aPub := keyPair(t)
 	bPriv, bPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1190,7 +1190,7 @@ func TestARemovedDevicesAddressDoesntFallToTheRouter(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	rPriv, rPub := keyPair(t)
 	dPriv, dPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1412,7 +1412,7 @@ func TestRepliesAloneDontKeepAConeOpen(t *testing.T) {
 func startUnclosed(t *testing.T) (*Server, *client) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}

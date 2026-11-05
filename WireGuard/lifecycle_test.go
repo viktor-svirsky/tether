@@ -38,7 +38,7 @@ func startFleet(t *testing.T, n int) *fleet {
 }
 
 func (f *fleet) start(t *testing.T, port int) {
-	s, err := Start(loopback, port, f.priv)
+	s, err := Start([]netip.Addr{loopback}, port, f.priv)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -201,7 +201,7 @@ func TestLoadAFarEndThatNeverAnswersTimesOutAfterTheDialTimeout(t *testing.T) {
 	}
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +518,7 @@ func TestADeviceSendingAsAnotherGetsNothingThrough(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	aPriv, aPub := keyPair(t)
 	bPriv, bPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}

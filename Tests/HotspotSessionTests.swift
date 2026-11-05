@@ -145,8 +145,8 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(session.deviceHost, hotspot)
         address = v6
         session.syncWithHotspot()
-        XCTAssertEqual(server.starts, [v6])
-        XCTAssertEqual(page.starts, ["\(v6):80"])
+        XCTAssertEqual(server.starts, ["\(hotspot),\(v6)"])
+        XCTAssertEqual(page.starts, ["\(hotspot),\(v6):80"])
         XCTAssertEqual(session.deviceHost, v6)
         session.openAddWindow()
         let ready = try XCTUnwrap(session.wireGuardReady)
@@ -155,6 +155,73 @@ final class HotspotSessionTests: XCTestCase {
         address = nil
         session.syncWithHotspot()
         XCTAssertEqual(session.deviceHost, hotspot, "the usual address while there's no hotspot")
+    }
+
+    /// A Mac takes no IPv4 on an IPv6-only hotspot, but a Windows PC does, and reaches 172.20.10.1
+    /// (#98). So Tether listens there too, and a computer that downloads over IPv4 gets a config for
+    /// 172.20.10.1, which never changes. The page shows that address first.
+    func testOnAnIPv6HotspotAComputerWithIPv4Gets172_20_10_1() throws {
+        makeSession()
+        let v6 = "2607:fb91:88a2:e822::a"
+        XCTAssertEqual(session.pageHosts, [hotspot], "before the hotspot, the usual address")
+        address = v6
+        session.syncWithHotspot()
+        XCTAssertEqual(session.pageHosts, [hotspot, v6])
+        XCTAssertEqual(session.deviceHost, v6, "the QR code: iPhones and iPads take no IPv4 there either")
+        session.openAddWindow()
+        XCTAssertTrue(body(page.ask(.config, from: "172.20.10.2")).contains("Endpoint = 172.20.10.1:51820\n"))
+        XCTAssertTrue(body(page.ask(.config, from: "2607:fb91:88a2:e822::99")).contains("Endpoint = [\(v6)]:51820\n"))
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [hotspot, v6])
+
+        address = hotspot // IPv4 from the carrier again: only 172.20.10.1
+        session.syncWithHotspot()
+        XCTAssertEqual(session.pageHosts, [hotspot])
+        XCTAssertEqual(server.starts, ["\(hotspot),\(v6)", hotspot])
+    }
+
+    /// A config for 172.20.10.1 keeps working through a new IPv6 address, and back on a usual carrier.
+    /// One for the old IPv6 address doesn't.
+    func testAConfigFor172_20_10_1NeverNeedsANewOne() throws {
+        makeSession()
+        let a = "2607:fb91:88a2:e822::a", b = "2607:fb91:88a3:1234::b"
+        address = a
+        session.syncWithHotspot()
+        session.openAddWindow()
+        _ = page.ask(.config, from: "172.20.10.2")
+        _ = page.ask(.config, from: "2607:fb91:88a2:e822::99")
+        let (overV4, overV6) = (session.wireGuardPeers[0], session.wireGuardPeers[1])
+        let rounds: [(address: String?, v4: Bool, v6: Bool, line: UInt)] = [
+            (a, false, false, #line),
+            (b, false, true, #line),
+            (hotspot, false, true, #line),
+            (a, false, false, #line),
+        ]
+        for round in rounds {
+            address = round.address
+            session.syncWithHotspot()
+            XCTAssertEqual(session.needsNewConfig(overV4), round.v4, line: round.line)
+            XCTAssertEqual(session.needsNewConfig(overV6), round.v6, line: round.line)
+        }
+    }
+
+    /// The server tells where each device's last handshake came from, so a connected device points
+    /// at the address it reached, whichever it was given, the QR code's device too.
+    func testAConnectedDevicePointsAtTheAddressItReached() throws {
+        makeSession()
+        let v6 = "2607:fb91:88a2:e822::a"
+        address = v6
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let scanned = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [scanned.address]
+        server.endpoints = [scanned.address: "172.20.10.3:51820"]
+        session.sampleTraffic()
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [hotspot])
+        server.endpoints = [scanned.address: "[2607:fb91:88a2:e822::99]:51820"]
+        session.leftScreen()
+        session.watch() // the background read
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [v6])
+        XCTAssertEqual(WireGuardDevices(secrets: secrets).setup.peers.map(\.host), [v6], "saved")
     }
 
     /// Before a device joins, the hotspot has no bridge, so there's no IPv6 address to give yet. The
@@ -229,7 +296,7 @@ final class HotspotSessionTests: XCTestCase {
         address = a
         session.syncWithHotspot()
         session.openAddWindow()
-        _ = page.ask(.config)
+        _ = page.ask(.config, from: "2607:fb91:88a2:e822::99")
         let peer = try XCTUnwrap(session.wireGuardPeers.first)
         let rounds: [(address: String?, needsNewConfig: Bool, line: UInt)] = [
             (a, false, #line),
@@ -311,7 +378,7 @@ final class HotspotSessionTests: XCTestCase {
         address = a
         session.syncWithHotspot()
         session.openAddWindow()
-        _ = page.ask(.config)
+        _ = page.ask(.config, from: "2607:fb91:88a2:e822::99")
         let peer = try XCTUnwrap(session.wireGuardPeers.first)
         address = b
         session.syncWithHotspot()
@@ -332,7 +399,7 @@ final class HotspotSessionTests: XCTestCase {
         address = a
         session.syncWithHotspot()
         session.openAddWindow()
-        _ = page.ask(.config)
+        _ = page.ask(.config, from: "2607:fb91:88a2:e822::99")
         let peer = try XCTUnwrap(session.wireGuardPeers.first)
         address = b
         session.syncWithHotspot()

@@ -339,6 +339,7 @@ final class Model: ObservableObject {
     }
 
     var deviceHost: String? { session.deviceHost }
+    var pageHosts: [String] { session.pageHosts }
 
     /// See `HotspotSession.needsNewConfig`.
     func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {

@@ -15,7 +15,7 @@ final class ConfigPageServerTests: XCTestCase {
     }
 
     /// Listening on 127.0.0.1, answering every request with the page and noting who asked for what.
-    private func listen(timeout: TimeInterval = 5) async throws -> UInt16 {
+    private func listen(on hosts: [String] = ["127.0.0.1"], port: UInt16 = 0, timeout: TimeInterval = 5) async throws -> UInt16 {
         server = ConfigPageServer(timeout: timeout)
         server.respond = { [unowned self] request, client in
             asked.append((request, client))
@@ -31,16 +31,16 @@ final class ConfigPageServerTests: XCTestCase {
         }
         let ready = expectation(description: "listening")
         server.onChange = { [unowned self] in if server.listening { ready.fulfill() } }
-        server.start(host: "127.0.0.1", port: 0)
+        server.start(hosts: hosts, port: port)
         XCTAssertTrue(server.running, "running from the start, before it's ready")
         await fulfillment(of: [ready], timeout: 5)
         return try XCTUnwrap(server.port)
     }
 
     /// Sends `bytes` and reads until the server closes. Nil when the connection fails.
-    private nonisolated func exchange(_ bytes: Data, port: UInt16) async -> Data? {
+    private nonisolated func exchange(_ bytes: Data, port: UInt16, host: NWEndpoint.Host = "127.0.0.1") async -> Data? {
         await withCheckedContinuation { done in
-            let connection = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+            let connection = NWConnection(host: host, port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
             let queue = DispatchQueue(label: "test.client")
             var received = Data()
             var finished = false
@@ -145,7 +145,7 @@ final class ConfigPageServerTests: XCTestCase {
         let ready = expectation(description: "listening again")
         server.onChange = { [unowned self] in if server.listening { ready.fulfill() } }
         server.onFailure = { XCTFail("\($0)") }
-        server.start(host: "127.0.0.1", port: port)
+        server.start(hosts: ["127.0.0.1"], port: port)
         await fulfillment(of: [ready], timeout: 5)
         let reply = text(await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port))
         XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200 OK"), reply)
@@ -160,10 +160,61 @@ final class ConfigPageServerTests: XCTestCase {
             XCTAssertEqual((error as? NWError).map { "\($0)" }, "\(NWError.posix(.EADDRINUSE))")
             failed.fulfill()
         }
-        second.start(host: "127.0.0.1", port: port)
+        second.start(hosts: ["127.0.0.1"], port: port)
         await fulfillment(of: [failed], timeout: 5)
         XCTAssertFalse(second.running)
         XCTAssertFalse(second.listening)
         second.stop()
+    }
+
+    /// On a carrier that gives the iPhone IPv6 only, the page is on 172.20.10.1 and the IPv6 address
+    /// (#98): one port, each address answering, and each client named by its own address.
+    func testItListensOnEachAddress() async throws {
+        let port = try await listen(on: ["127.0.0.1", "::1"], port: try freeTCPPort())
+        for host: NWEndpoint.Host in ["127.0.0.1", "::1"] {
+            let reply = text(await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port, host: host))
+            XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200 OK"), "\(host): \(reply)")
+        }
+        XCTAssertEqual(asked.map(\.1), ["127.0.0.1", "::1"])
+        server.stop()
+        let after = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port, host: "::1")
+        XCTAssertNil(after, "both stopped")
+    }
+
+    /// An address that can't be listened on stops them all, so HotspotSession starts them again later,
+    /// that one too.
+    func testOneAddressThatFailsStopsThemAll() async throws {
+        let port = try freeTCPPort()
+        let taken = ConfigPageServer()
+        let up = expectation(description: "taken")
+        taken.onChange = { if taken.listening { up.fulfill() } }
+        taken.start(hosts: ["::1"], port: port)
+        await fulfillment(of: [up], timeout: 5)
+        defer { taken.stop() }
+
+        server = ConfigPageServer()
+        server.respond = { _, _ in ConfigPage.page(.ready) }
+        let failed = expectation(description: "the IPv6 one failed")
+        server.onFailure = { _ in failed.fulfill() }
+        server.start(hosts: ["127.0.0.1", "::1"], port: port)
+        await fulfillment(of: [failed], timeout: 5)
+        XCTAssertFalse(server.running)
+        XCTAssertFalse(server.listening)
+        let reply = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port)
+        XCTAssertNil(reply, "the IPv4 one stopped too")
+    }
+
+    private func freeTCPPort() throws -> UInt16 {
+        let fd = socket(AF_INET6, SOCK_STREAM, 0)
+        defer { close(fd) }
+        var addr = sockaddr_in6()
+        addr.sin6_family = sa_family_t(AF_INET6)
+        addr.sin6_addr = in6addr_loopback
+        var len = socklen_t(MemoryLayout<sockaddr_in6>.size)
+        let bound = withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, len) == 0 && getsockname(fd, $0, &len) == 0 }
+        }
+        guard bound else { throw XCTSkip("no free port") }
+        return UInt16(bigEndian: addr.sin6_port)
     }
 }

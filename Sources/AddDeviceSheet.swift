@@ -167,7 +167,7 @@ struct AddDeviceSheet: View {
     @ViewBuilder private func config(_ progress: AddDeviceProgress) -> some View {
         if let device = progress.device {
             note("\(device.name) has it")
-        } else if let ready = model.wireGuardReady, let config = model.wireGuardConfig(for: ready), let host = model.deviceHost {
+        } else if let ready = model.wireGuardReady, let config = model.wireGuardConfig(for: ready) {
             let code = ReadyCode.for(config)
             VStack(alignment: .leading, spacing: 14) {
                 Picker("Kind of device", selection: $kind) {
@@ -178,7 +178,7 @@ struct AddDeviceSheet: View {
                 .accessibilityIdentifier("add.kind")
                 switch kind {
                 case .phone: scan(code.qr)
-                case .computer: download(address: ConfigPage.url(host: host), ipv6Only: host.contains(":"), file: code.file)
+                case .computer: download(hosts: model.pageHosts, file: code.file)
                 }
             }
         } else if model.wireGuardReady != nil {
@@ -210,43 +210,22 @@ struct AddDeviceSheet: View {
         windowNote(id: "add.codeWindow")
     }
 
-    /// `ipv6Only`: Tether listens on the iPhone's IPv6 address, on a carrier that gives it IPv6 only,
-    /// see `HotspotSession.deviceHost`. A computer with IPv6 off for the hotspot can't reach it then (#94).
-    @ViewBuilder private func download(address: String, ipv6Only: Bool, file: URL?) -> some View {
+    /// `hosts`: where the page is, see `HotspotSession.pageHosts`. On a carrier that gives the iPhone
+    /// IPv6 only, 172.20.10.1 and then the iPhone's IPv6 address, the one a Mac reaches. A Mac with
+    /// IPv6 off for the hotspot can't reach either (#94).
+    @ViewBuilder private func download(hosts: [String], file: URL?) -> some View {
         Text("Open this in the computer's browser while Tether is on screen:")
             .font(.subheadline)
             .accessibilityIdentifier("add.laptop")
-        HStack(spacing: 10) {
-            if let url = URL(string: address) {
-                Link(address, destination: url)
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // VoiceOver says what it is, then the address, which as a label alone fails the audit.
-                    .accessibilityLabel("Page address")
-                    .accessibilityValue(address)
-                    .accessibilityIdentifier("add.address")
-            }
-            Button {
-                UIPasteboard.general.string = address
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .font(.body.weight(.semibold))
-                    .frame(width: 44, height: 44)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
-            .accessibilityLabel("Copy the address")
-            .accessibilityIdentifier("add.copy")
+        if let first = hosts.first {
+            addressRow(ConfigPage.url(host: first), id: "add.address", copyID: "add.copy")
         }
-        .padding(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 6))
-        .background(Color(.systemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        if ipv6Only {
-            Text("This network reaches Tether over IPv6 only. If the page doesn't open, turn on IPv6 for the computer's Wi-Fi.")
+        if hosts.count > 1, let mac = hosts.last {
+            Text("On a Mac, or if that one doesn't open:")
                 .font(.subheadline)
-                .accessibilityIdentifier("add.ipv6")
+                .accessibilityIdentifier("add.macLabel")
+            addressRow(ConfigPage.url(host: mac), id: "add.addressMac", copyID: "add.copyMac")
+            ipv6Note
         }
         if let file {
             HStack(spacing: 10) {
@@ -270,6 +249,44 @@ struct AddDeviceSheet: View {
                 .accessibilityIdentifier("add.airdrop")
             windowNote(id: "add.fileWindow")
         }
+    }
+
+    /// One address of the page, with a button to copy it.
+    private func addressRow(_ address: String, id: String, copyID: String) -> some View {
+        HStack(spacing: 10) {
+            if let url = URL(string: address) {
+                Link(address, destination: url)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // VoiceOver says what it is, then the address, which as a label alone fails the audit.
+                    .accessibilityLabel("Page address")
+                    .accessibilityValue(address)
+                    .accessibilityIdentifier(id)
+            }
+            Button {
+                UIPasteboard.general.string = address
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 44, height: 44)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+            .accessibilityLabel("Copy the address")
+            .accessibilityIdentifier(copyID)
+        }
+        .padding(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 6))
+        .background(Color(.systemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// Under an IPv6 address: a computer with IPv6 off for the hotspot can't reach it (#94).
+    private var ipv6Note: some View {
+        Text("If neither opens, turn on IPv6 for the computer's Wi-Fi.")
+            .font(.subheadline)
+            .accessibilityIdentifier("add.ipv6")
     }
 
     /// How long the code and the shared file work, see `AddWindow`. Not under the

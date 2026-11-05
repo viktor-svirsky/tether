@@ -154,7 +154,7 @@ func TestPausingOneDeviceLeavesTheOthers(t *testing.T) {
 func TestADeviceAddedPausedHandshakesButGetsNoTraffic(t *testing.T) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
