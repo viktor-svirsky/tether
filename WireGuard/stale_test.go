@@ -28,7 +28,7 @@ func startOneDevice(t *testing.T) (*Server, [32]byte) {
 	t.Helper()
 	sPriv, sPub := keyPair(t)
 	_, cPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}

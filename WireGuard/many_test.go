@@ -17,7 +17,7 @@ import (
 // setupMany starts a server with n devices at 10.7.0.2 and up.
 func setupMany(t *testing.T, n int) (*Server, []*client, []netip.Addr) {
 	sPriv, sPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestARouterAndDevicesAtOnce(t *testing.T) {
 		devices, count = 2, 1
 	}
 	sPriv, sPub := keyPair(t)
-	s, err := Start(loopback, 0, sPriv)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}

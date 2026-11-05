@@ -1,7 +1,8 @@
 import Foundation
 import Network
 
-/// Serves `ConfigPage` on one address, the hotspot's. Each connection sends one request, gets one
+/// Serves `ConfigPage` on the hotspot's addresses only, one listener each (172.20.10.1, and the
+/// iPhone's IPv6 address on a carrier that gives it IPv6 only, #98). Each connection sends one request, gets one
 /// answer and is closed. `respond` decides the answer. Everything runs on the main queue: a few
 /// small requests from a laptop or two are no work, and HotspotSession, which answers, is there.
 @MainActor
@@ -10,17 +11,17 @@ final class ConfigPageServer {
     var respond: @MainActor (ConfigPage.Request, _ client: String) -> ConfigPage.Response = { _, _ in ConfigPage.notFound }
     /// Called when `listening` changes.
     var onChange: @MainActor () -> Void = {}
-    /// Called when the listener fails, after it has stopped itself.
+    /// Called when a listener fails, after all of them have stopped.
     var onFailure: @MainActor (Error) -> Void = { _ in }
 
     /// Started, and not failed or stopped since. HotspotSession starts one that isn't again.
-    var running: Bool { listener != nil }
+    var running: Bool { !listeners.isEmpty }
     /// Taking connections.
     private(set) var listening = false
     /// The port it listens on: the one asked for, or the one the system picked for port 0.
     private(set) var port: UInt16?
 
-    private var listener: NWListener?
+    private var listeners: [NWListener] = []
     private var open = 0
     /// A request that hasn't arrived whole by then gets no answer, so a stalled client can't hold a connection.
     private let timeout: TimeInterval
@@ -32,40 +33,47 @@ final class ConfigPageServer {
         self.timeout = timeout
     }
 
-    /// Listens on host:port only, in place of a listener already running. Whether it worked comes
-    /// later: `listening` turns true, or the listener stops and `onFailure` says why.
-    func start(host: String, port: UInt16) {
+    /// Listens on port at each of `hosts` only, in place of listeners already running. Whether it
+    /// worked comes later: `listening` turns true, or one fails, all stop, and `onFailure` says why.
+    /// The port must be one for all of them, not 0, with more than one address.
+    func start(hosts: [String], port: UInt16) {
         stop()
-        let parameters = NWParameters.tcp
-        parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port) ?? .any)
-        let listener: NWListener
-        do {
-            listener = try NWListener(using: parameters)
-        } catch {
-            onFailure(error)
-            return
-        }
-        listener.stateUpdateHandler = { [weak self, weak listener] state in
-            MainActor.assumeIsolated {
-                // A listener this one replaced reports its end too.
-                guard let self, let listener, listener === self.listener else { return }
-                self.changed(to: state, listener)
+        for host in hosts {
+            let parameters = NWParameters.tcp
+            // Without it a listener on 172.20.10.1 takes the port for IPv6 too, and the one on the
+            // IPv6 address fails with "address in use". The same address twice is still refused.
+            parameters.allowLocalEndpointReuse = true
+            parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port) ?? .any)
+            let listener: NWListener
+            do {
+                listener = try NWListener(using: parameters)
+            } catch {
+                stop()
+                onFailure(error)
+                return
             }
-        }
-        listener.newConnectionHandler = { [weak self] connection in
-            MainActor.assumeIsolated {
-                guard let self else { return connection.cancel() }
-                self.accept(connection)
+            listener.stateUpdateHandler = { [weak self, weak listener] state in
+                MainActor.assumeIsolated {
+                    // A listener this one replaced reports its end too.
+                    guard let self, let listener, self.listeners.contains(where: { $0 === listener }) else { return }
+                    self.changed(to: state, listener)
+                }
             }
+            listener.newConnectionHandler = { [weak self] connection in
+                MainActor.assumeIsolated {
+                    guard let self else { return connection.cancel() }
+                    self.accept(connection)
+                }
+            }
+            listeners.append(listener)
+            listener.start(queue: .main)
         }
-        self.listener = listener
-        listener.start(queue: .main)
     }
 
     /// Connections already open finish on their own, within `timeout`.
     func stop() {
-        listener?.cancel()
-        listener = nil
+        listeners.forEach { $0.cancel() }
+        listeners = []
         port = nil
         setListening(false)
     }
@@ -76,7 +84,9 @@ final class ConfigPageServer {
             port = listener.port?.rawValue
             setListening(true)
         case let .failed(error), let .waiting(error):
-            // Waiting is for an address that isn't there (yet). The next watcher round starts again.
+            // Waiting is for an address that isn't there (yet), an IPv6 one still being checked
+            // say. All stop, and the next watcher round starts them again. Serving on with the
+            // other one would never try this one again.
             stop()
             onFailure(error)
         default:

@@ -124,7 +124,7 @@ final class PauseTests: XCTestCase {
         var setup = WireGuardSetup.new()
         let ipad = try XCTUnwrap(setup.addPeer(name: "iPad"))
         setup.pausePeer(ipad.id, .byYou)
-        try real.start(host: "127.0.0.1", setup: setup, port: 0)
+        try real.start(hosts: ["127.0.0.1"], setup: setup, port: 0)
         XCTAssertEqual(real.snapshot().peers.keys.sorted(), [ipad.address], "it stays on the server")
         setup.pausePeer(ipad.id, nil)
         XCTAssertNoThrow(try real.setPeers(setup))

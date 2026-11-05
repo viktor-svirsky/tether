@@ -17,14 +17,14 @@ final class WireGuardServer {
         self.log = log
     }
 
-    /// Listens on the hotspot address only.
+    /// Listens on the hotspot's addresses only. Go leaves out one it can't listen on, unless none works.
     /// `port` is for the tests, which can't count on 51820 being free.
-    func start(host: String, setup: WireGuardSetup, port: UInt16 = WireGuardSetup.port) throws {
+    func start(hosts: [String], setup: WireGuardSetup, port: UInt16 = WireGuardSetup.port) throws {
         stop()
         // Go reads exactly 32 bytes behind each key pointer.
         guard setup.serverPrivateKey.count == 32 else { throw Failure(message: "the server key isn't 32 bytes") }
         let error = setup.serverPrivateKey.withUnsafeBytes { key in
-            host.withCString { h in
+            hosts.joined(separator: ",").withCString { h in
                 TetherWGStart(UnsafeMutablePointer(mutating: h), Int32(port),
                               UnsafeMutablePointer(mutating: key.bindMemory(to: UInt8.self).baseAddress))
             }

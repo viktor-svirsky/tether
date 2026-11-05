@@ -238,8 +238,9 @@ type arrival struct {
 	taken  bool       // a forwardTCP is making it
 }
 
-// Start listens for WireGuard on host:port with the server's private key. Peers come from SetPeers.
-func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
+// Start listens for WireGuard on port at each of hosts, with the server's private key. An address
+// that can't be listened on fails it. Peers come from SetPeers.
+func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	s := &Server{
 		peers:     map[[32]byte]netip.Addr{},
 		keys:      map[netip.Addr][32]byte{},
@@ -309,7 +310,7 @@ func Start(host netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	s.stack.SetTransportProtocolHandler(udp.ProtocolNumber, s.handleUDP)
 
 	logger := &device.Logger{Verbosef: s.notice, Errorf: s.noticeError}
-	s.dev = device.NewDevice(s.tun, &hostBind{host: host}, logger)
+	s.dev = device.NewDevice(s.tun, &hostBind{hosts: hosts}, logger)
 	if err := s.dev.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\n", hex.EncodeToString(privateKey[:]), port)); err != nil {
 		s.dev.Close()
 		s.stack.Close()

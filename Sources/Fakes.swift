@@ -30,14 +30,17 @@ final class FakeServer: WireGuardServing {
     var connected: Set<String> = []
     var totals = TrafficTotals()
     var peerTraffic: [String: TrafficTotals] = [:]
+    /// Where a connected device's last handshake came from, ip:port, by tunnel address.
+    var endpoints: [String: String] = [:]
     /// Reported only while running, as the real server's knocks go with it.
     var stale: StaleConfig?
+    /// The addresses of each start, comma-separated.
     private(set) var starts: [String] = []
     private(set) var lastSetup: WireGuardSetup?
 
-    func start(host: String, setup: WireGuardSetup, port: UInt16) throws {
+    func start(hosts: [String], setup: WireGuardSetup, port: UInt16) throws {
         stop()
-        starts.append(host)
+        starts.append(hosts.joined(separator: ","))
         if let startError { throw startError }
         running = true
         do {
@@ -62,7 +65,10 @@ final class FakeServer: WireGuardServing {
         var peers: [String: PeerStats] = [:]
         for (address, traffic) in peerTraffic { peers[address] = PeerStats(traffic: traffic) }
         if running {
-            for address in connected { peers[address, default: PeerStats()].connected = true }
+            for address in connected {
+                peers[address, default: PeerStats()].connected = true
+                peers[address]?.endpoint = endpoints[address]
+            }
         }
         return ServerSnapshot(totals: totals, peers: peers, stale: running ? stale : nil)
     }
@@ -81,12 +87,12 @@ final class FakePage: ConfigPageServing {
     var onFailure: @MainActor (Error) -> Void = { _ in }
     private(set) var running = false
     private(set) var listening = false
-    /// "host:port" for each start.
+    /// "hosts:port" for each start, the hosts comma-separated.
     private(set) var starts: [String] = []
 
-    func start(host: String, port: UInt16) {
+    func start(hosts: [String], port: UInt16) {
         stop()
-        starts.append("\(host):\(port)")
+        starts.append("\(hosts.joined(separator: ",")):\(port)")
         running = true
     }
 

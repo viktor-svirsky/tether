@@ -14,6 +14,7 @@ import "C"
 import (
 	"net/netip"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -38,27 +39,31 @@ func survive(result **C.char) {
 	}
 }
 
-// TetherWGStart listens on host:port. Returns nil, or an error message.
+// TetherWGStart listens on port at each of hosts, a comma-separated list. Returns nil, or an error message.
 //
 //export TetherWGStart
-func TetherWGStart(host *C.char, port C.int, privateKey *C.uint8_t) (result *C.char) {
+func TetherWGStart(hosts *C.char, port C.int, privateKey *C.uint8_t) (result *C.char) {
 	defer survive(&result)
 	mu.Lock()
 	defer mu.Unlock()
-	if host == nil || privateKey == nil {
+	if hosts == nil || privateKey == nil {
 		return C.CString("no address or key")
 	}
 	if server != nil {
 		server.Close()
 		server = nil
 	}
-	addr, err := netip.ParseAddr(C.GoString(host))
-	if err != nil {
-		return cerr(err)
+	var addrs []netip.Addr
+	for _, h := range strings.Split(C.GoString(hosts), ",") {
+		addr, err := netip.ParseAddr(h)
+		if err != nil {
+			return cerr(err)
+		}
+		addrs = append(addrs, addr)
 	}
 	var key [32]byte
 	copy(key[:], unsafe.Slice((*byte)(privateKey), 32))
-	s, err := Start(addr, int(port), key)
+	s, err := Start(addrs, int(port), key)
 	if err != nil {
 		return cerr(err)
 	}

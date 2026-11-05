@@ -1,11 +1,13 @@
 import Foundation
+import Network
 
 /// The WireGuard server as `HotspotSession` uses it. `WireGuardServer` is the real one, the tests have a fake.
 @MainActor
 protocol WireGuardServing: AnyObject {
     var running: Bool { get }
-    /// Applies the setup's devices as `setPeers` does, and is left stopped when they're refused.
-    func start(host: String, setup: WireGuardSetup, port: UInt16) throws
+    /// Listens on each of `hosts`. Applies the setup's devices as `setPeers` does, and is left
+    /// stopped when they're refused.
+    func start(hosts: [String], setup: WireGuardSetup, port: UInt16) throws
     func stop()
     func setPeers(_ setup: WireGuardSetup) throws
     /// The counters, the totals and each device's, only grow, across restarts. Which devices are
@@ -26,7 +28,7 @@ protocol ConfigPageServing: AnyObject {
     var running: Bool { get }
     /// Taking connections.
     var listening: Bool { get }
-    func start(host: String, port: UInt16)
+    func start(hosts: [String], port: UInt16)
     func stop()
 }
 
@@ -108,6 +110,8 @@ final class HotspotSession {
     /// Whose tunnel was up at the last read, the sampler's or the watcher's, paused devices too, so a
     /// resume shows at once.
     private var tunnelsUp: Set<String> = []
+    /// The one address `hotspotAddress` picked when the server started. The others come from it,
+    /// see `boundHosts`.
     private var boundHost: String?
     /// The carrier gives this iPhone IPv6 only, see `deviceHost`.
     private var onIPv6OnlyCarrier: Bool { willSet { willChange() } }
@@ -167,7 +171,7 @@ final class HotspotSession {
         // A WireGuard start that failed (keys locked after a restart, say) is tried again here.
         if running, !server.running, let boundHost { startWireGuard(on: boundHost) }
         // And a page that failed: the address may not have been ready for it yet.
-        if running, server.running, !page.running, let boundHost { page.start(host: boundHost, port: ConfigPage.port) }
+        if running, server.running, !page.running { page.start(hosts: boundHosts, port: ConfigPage.port) }
         // Stopped while idle, it waits to be opened, hotspot or not.
         keepAliveWhileSharing(hotspot: hotspot != nil && idleStopped == nil)
         guard !running, idleStopped == nil, let hotspot else { return }
@@ -245,12 +249,13 @@ final class HotspotSession {
     /// its next round.
     private func startWireGuard(on hotspot: String) {
         guard devices.loaded else { return } // the setup's problem shows already
+        let hosts = Self.hosts(for: hotspot)
         do {
-            try server.start(host: hotspot, setup: serverSetup, port: WireGuardSetup.port)
-            page.start(host: hotspot, port: ConfigPage.port)
+            try server.start(hosts: hosts, setup: serverSetup, port: WireGuardSetup.port)
+            page.start(hosts: hosts, port: ConfigPage.port)
             startProblem = nil
             showProblem()
-            log("WireGuard on \(hotspot):\(WireGuardSetup.port), \(wireGuardPeers.count) devices")
+            log("WireGuard on \(hosts.joined(separator: " and ")) port \(WireGuardSetup.port), \(wireGuardPeers.count) devices")
         } catch {
             startProblem = "It couldn't start: \(error)"
             showProblem(because: error)
@@ -327,7 +332,7 @@ final class HotspotSession {
         guard open != readyLetIn, !open || devices.loaded else { return }
         // A device whose first handshake came since the last read is listed before its code goes.
         if !open, running, server.running {
-            claimReady(connected: server.snapshot().connected)
+            claimReady(server.snapshot().peers)
         }
         readyLetIn = open
         if open {
@@ -440,20 +445,49 @@ final class HotspotSession {
         return onIPv6OnlyCarrier ? nil : Hotspot.host
     }
 
-    /// The device's config points at another address than the one Tether listens on, so it can't
-    /// connect until it's added again (#65). That happens only where the address changes: on a
-    /// carrier that gives the iPhone IPv6 only, whose address comes with each cellular session, or
-    /// one that starts or stops giving it IPv4. Elsewhere it's always 172.20.10.1. While the hotspot
+    /// Where Tether listens while the hotspot is on. On a carrier that gives the iPhone IPv6 only,
+    /// its IPv6 address and 172.20.10.1 too: the hotspot gives a Windows PC IPv4 there, and only a
+    /// Mac, an iPhone or an iPad takes none (#98). Elsewhere only 172.20.10.1.
+    var boundHosts: [String] { boundHost.map(Self.hosts(for:)) ?? [] }
+
+    /// 172.20.10.1 first: it never changes, and a computer with IPv4 on the hotspot reaches it.
+    private static func hosts(for hotspot: String) -> [String] {
+        hotspot.contains(":") ? [Hotspot.host, hotspot] : [hotspot]
+    }
+
+    /// The addresses Add a device > Computer shows for the config page, see `boundHosts`.
+    var pageHosts: [String] {
+        running ? boundHosts : deviceHost.map { [$0] } ?? []
+    }
+
+    /// Where a device reaches Tether, by where its handshake ("ip:port", "[ip]:port") or page
+    /// request ("ip") came from: 172.20.10.1 from IPv4 while Tether listens there, else
+    /// `deviceHost`. A device whose last handshake isn't known goes by `deviceHost` too.
+    private func host(reachedFrom client: String?) -> String? {
+        let parts = client?.split(separator: ":", omittingEmptySubsequences: false) ?? []
+        let ip = parts.count <= 2 ? parts.first : nil
+        if let ip, IPv4Address(String(ip)) != nil, boundHosts.contains(Hotspot.host) { return Hotspot.host }
+        return deviceHost
+    }
+
+    /// The device's config points at an address Tether doesn't listen on, so it can't connect until
+    /// it's added again (#65). That happens only to the IPv6 address of a carrier that gives the
+    /// iPhone IPv6 only, which comes with each cellular session, or goes when the carrier gives it
+    /// IPv4 again. Tether always listens on 172.20.10.1, see `boundHosts`. While the hotspot
     /// is off, or for a device saved before Tether kept where it points, it's not known, and no. A
     /// device that is connected reaches Tether, whatever is saved, see `rememberHosts`.
     func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {
         guard running, let host = peer.host, !connectedNow.contains(peer.address) else { return false }
-        return host != deviceHost
+        return !boundHosts.contains(host)
     }
 
-    /// None while there's no `deviceHost`, so no config is made that can't connect.
+    /// The QR code's config. None while there's no `deviceHost`, so no config is made that can't connect.
     func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String? {
-        deviceHost.map { devices.setup.clientConfig(for: ready, host: $0) }
+        wireGuardConfig(for: ready, host: deviceHost)
+    }
+
+    private func wireGuardConfig(for ready: WireGuardSetup.Ready, host: String?) -> String? {
+        host.map { devices.setup.clientConfig(for: ready, host: $0) }
     }
 
     /// A page that listens again logs its next failure.
@@ -472,8 +506,9 @@ final class HotspotSession {
         followAddWindow() // by the clock, not only at the watcher's last round
         let ready = wireGuardReady
         let now = self.now()
-        let inputs = ConfigPageHandler.Inputs(letIn: readyLetIn, onScreen: sceneActive, ready: ready, host: deviceHost,
-                                              config: ready.flatMap(wireGuardConfig(for:)), now: now)
+        let host = host(reachedFrom: client)
+        let inputs = ConfigPageHandler.Inputs(letIn: readyLetIn, onScreen: sceneActive, ready: ready, host: host,
+                                              config: ready.flatMap { wireGuardConfig(for: $0, host: host) }, now: now)
         switch pageHandler.answer(request, from: client, inputs) {
         case let .answer(response):
             return response
@@ -548,7 +583,7 @@ final class HotspotSession {
         publishConnected()
         if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
         if snap.stale != staleConfig { staleConfig = snap.stale }
-        absorb(connected: connected)
+        absorb(snap.peers)
         guard let speeds = sampler.sample(snap.totals, at: now) else { return } // nothing to compare with yet
         upSpeed = speeds.up
         downSpeed = speeds.down
@@ -557,28 +592,35 @@ final class HotspotSession {
     /// What each read of who is connected does, on screen (the sampler) or off (the watcher): a
     /// device that connected with the QR code is listed, and each connected device's config is
     /// known to point where Tether listens. Paused devices too: their tunnels reach Tether.
-    private func absorb(connected: Set<String>) {
-        claimReady(connected: connected)
-        rememberHosts(connected: connected)
+    private func absorb(_ peers: [String: PeerStats]) {
+        claimReady(peers)
+        rememberHosts(peers)
     }
 
     /// A device that connected with the QR code is listed, and the code changes for the next one.
     /// Not saved means not claimed: the next check tries again. A code that isn't on the server can't
     /// have connected, whatever an older read says.
-    private func claimReady(connected: Set<String>) {
-        guard readyLetIn, let ready = wireGuardReady, connected.contains(ready.address), let host = deviceHost,
+    private func claimReady(_ peers: [String: PeerStats]) {
+        guard readyLetIn, let ready = wireGuardReady, let reached = peers[ready.address], reached.connected,
+              let host = host(reachedFrom: reached.endpoint),
               devices.claimReady(address: ready.address, host: host) else { return }
         log("WireGuard: a new device connected with the QR code")
         wireGuardPeersChanged()
     }
 
-    /// A device that is connected reaches Tether where it listens now, since the server listens on
-    /// that one address only, so its config points there, or at a name that leads there. Saved for a
-    /// device saved before Tether kept where it points, and for one whose config was changed by hand
-    /// to the new address. Not saved means the next read tries again.
-    private func rememberHosts(connected: Set<String>) {
-        guard running, let host = deviceHost, devices.point(connected, at: host) else { return }
-        publishSetup()
+    /// A device that is connected reaches Tether where its handshake came to, so its config points
+    /// there, or at a name that leads there. Saved for a device saved before Tether kept where it
+    /// points, and for one whose config was changed by hand to the new address. Not saved means the
+    /// next read tries again.
+    private func rememberHosts(_ peers: [String: PeerStats]) {
+        guard running else { return }
+        var reached: [String: Set<String>] = [:]
+        for (address, stats) in peers where stats.connected {
+            if let host = host(reachedFrom: stats.endpoint) { reached[host, default: []].insert(address) }
+        }
+        var changed = false
+        for (host, addresses) in reached where devices.point(addresses, at: host) { changed = true }
+        if changed { publishSetup() }
     }
 
     /// The watcher's read in the background, where the sampler doesn't run: who is connected, for
@@ -590,10 +632,10 @@ final class HotspotSession {
             tunnelsUp = []
             return
         }
-        let connected = server.snapshot().connected
-        tunnelsUp = connected
-        watchedConnected = unpaused(connected)
-        absorb(connected: connected)
+        let snap = server.snapshot()
+        tunnelsUp = snap.connected
+        watchedConnected = unpaused(snap.connected)
+        absorb(snap.peers)
     }
 }
 
@@ -623,9 +665,10 @@ final class HotspotAddressKeeper {
 enum Interfaces {
     /// Where devices on the hotspot reach the iPhone. iOS Personal Hotspot gives the phone
     /// 172.20.10.1 on a bridge interface, and matching the subnet, not only the name, keeps other
-    /// bridges out. But when the carrier gives the iPhone IPv6 only (T-Mobile US among others), the
-    /// hotspot gives its devices no IPv4 either: a Mac makes up 192.0.0.2 for itself and can't reach
-    /// 172.20.10.1. Then it's the iPhone's IPv6 address on the same bridge. A CLAT's address in
+    /// bridges out. But when the carrier gives the iPhone IPv6 only (T-Mobile US among others), a Mac
+    /// on the hotspot takes no IPv4 (it asks for IPv6 only and makes up 192.0.0.2 for itself) and
+    /// can't reach 172.20.10.1. Then it's the iPhone's IPv6 address on the same bridge, and the session
+    /// listens on 172.20.10.1 too, for a Windows PC, which does take IPv4 (#98). A CLAT's address in
     /// 192.0.0.0/29 is no IPv4 from the carrier, and nor is IPv4 on another cellular interface than
     /// pdp_ip0, the internet's: VoLTE often has its own, with IPv4 on an IPv6-only carrier.
     /// The bridge may have more than one IPv6 address, some of them temporary ones that come and go.
@@ -648,8 +691,9 @@ enum Interfaces {
         carrierIPv6Only(in: addresses())
     }
 
-    /// The carrier gives this iPhone IPv6 and no IPv4, so the hotspot will give its devices no IPv4
-    /// either. Unlike `hotspotAddress`, this is known before a device joins and the bridge appears.
+    /// The carrier gives this iPhone IPv6 and no IPv4, so a Mac, an iPhone or an iPad on the hotspot
+    /// will take no IPv4 either. Unlike `hotspotAddress`, this is known before a device joins and the
+    /// bridge appears.
     /// It takes pdp_ip0 with IPv6 to say so: no cellular at all, or Wi-Fi only, isn't IPv6 only.
     static func carrierIPv6Only(in interfaces: [String]) -> Bool {
         let lines = parse(interfaces)

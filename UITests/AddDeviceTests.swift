@@ -53,17 +53,22 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(reveal(element("add.airdrop")).label, "AirDrop it to a Mac, then open it in WireGuard.")
         // The file stops working like the code. A download from the page is listed at once, so it doesn't.
         XCTAssertEqual(reveal(element("add.fileWindow")).label, Self.windowNote)
-        assertNowhere(element("add.qr"), element("add.codeWindow"), element("add.ipv6"), message: "172.20.10.1 needs no IPv6")
+        assertNowhere(element("add.qr"), element("add.codeWindow"), element("add.macLabel"), element("add.addressMac"), element("add.ipv6"),
+                      message: "172.20.10.1 is all there is on a usual carrier")
     }
 
-    /// On a carrier that gives the iPhone IPv6 only, a computer reaches Tether only over IPv6, and
-    /// one with IPv6 off for that network can't (#94). The address says IPv6, and so does a line.
-    func testAnIPv6AddressSaysTheComputerNeedsIPv6() throws {
+    /// On a carrier that gives the iPhone IPv6 only, a Windows PC still takes IPv4 on the hotspot and
+    /// reaches 172.20.10.1, while a Mac takes none and needs the IPv6 address (#98), with IPv6 on for
+    /// that network (#94). Both addresses show, 172.20.10.1 first.
+    func testOnAnIPv6CarrierAMacGetsItsOwnAddress() throws {
         launch(.addDeviceComputerIPv6)
-        let address = reveal(element("add.address"))
-        XCTAssertEqual(address.value as? String, "http://[2001:db8::1]")
-        XCTAssertEqual(reveal(element("add.ipv6")).label,
-                       "This network reaches Tether over IPv6 only. If the page doesn't open, turn on IPv6 for the computer's Wi-Fi.")
+        XCTAssertEqual(reveal(element("add.address")).value as? String, "http://172.20.10.1")
+        XCTAssertEqual(reveal(element("add.macLabel")).label, "On a Mac, or if that one doesn't open:")
+        let mac = reveal(element("add.addressMac"))
+        XCTAssertEqual(mac.label, "Page address")
+        XCTAssertEqual(mac.value as? String, "http://[2001:db8::1]")
+        XCTAssertEqual(element("add.copyMac").label, "Copy the address")
+        XCTAssertEqual(reveal(element("add.ipv6")).label, "If neither opens, turn on IPv6 for the computer's Wi-Fi.")
         try audit(only: "add.")
     }
 
