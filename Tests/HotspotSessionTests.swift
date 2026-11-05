@@ -18,6 +18,7 @@ final class HotspotSessionTests: XCTestCase {
     private var address: String?
     private var ipv6Only = false
     private var idleAfter = IdleStop.After.never
+    private var dns = "1.1.1.1, 1.0.0.1"
     private var now = Date(timeIntervalSince1970: 1_800_000_000)
     private var session: HotspotSession!
 
@@ -34,6 +35,7 @@ final class HotspotSessionTests: XCTestCase {
         session = HotspotSession(devices: devices, server: server, keepAlive: sound, page: page,
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
                                  carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
+                                 dns: { [unowned self] in dns },
                                  now: { [unowned self] in now }, log: log)
     }
 
@@ -244,6 +246,20 @@ final class HotspotSessionTests: XCTestCase {
     }
 
     /// On a usual carrier the address is always 172.20.10.1, so no device ever needs a new config.
+    /// The DNS server picked in Settings goes into each config as it's made: the QR code's and a
+    /// download from the page. A device already added keeps the one its config has (#79).
+    func testANewConfigHasTheDNSServerPickedNow() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertTrue(try XCTUnwrap(session.wireGuardConfig(for: ready)).contains("\nDNS = 1.1.1.1, 1.0.0.1\n"))
+        dns = "94.140.14.14, 94.140.15.15"
+        XCTAssertTrue(try XCTUnwrap(session.wireGuardConfig(for: ready)).contains("\nDNS = 94.140.14.14, 94.140.15.15\n"))
+        XCTAssertTrue(body(page.ask(.config)).contains("\nDNS = 94.140.14.14, 94.140.15.15\n"))
+    }
+
     func testOnAUsualCarrierNoDeviceNeedsANewConfig() throws {
         makeSession()
         address = hotspot

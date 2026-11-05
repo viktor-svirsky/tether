@@ -19,7 +19,6 @@ struct WireGuardSetup: Codable, Equatable {
     static let port: UInt16 = 51820
     /// The same as MTU in WireGuard/server.go.
     static let mtu = 1420
-    static let dns = "1.1.1.1"
     private static let subnet = "10.7.0."
 
     /// A device as the server knows it. No private key: the device has its own copy, and the
@@ -203,13 +202,13 @@ struct WireGuardSetup: Codable, Equatable {
 
     /// What the next device imports, as a QR code or a .conf file. Only the ready device has one,
     /// since only its private key is kept. All traffic goes into the tunnel, IPv6 too, so nothing
-    /// slips past Tether onto the hotspot directly.
-    func clientConfig(for ready: Ready, host: String = Hotspot.host) -> String {
+    /// slips past Tether onto the hotspot directly. `dns` is the DNS line, see `DNSChoice`.
+    func clientConfig(for ready: Ready, host: String = Hotspot.host, dns: String) -> String {
         """
         [Interface]
         PrivateKey = \(ready.privateKey.base64EncodedString())
         Address = \(ready.address)/32
-        DNS = \(Self.dns)
+        DNS = \(dns)
         MTU = \(Self.mtu)
 
         [Peer]

@@ -94,6 +94,8 @@ final class HotspotSession {
     private let carrierIPv6Only: () -> Bool
     /// The setting in Settings > Sharing, read each round, so a change counts at once.
     private let idleStopAfter: () -> IdleStop.After
+    /// The DNS line for the next device, picked in Settings > New devices, read for each config made.
+    private let dns: () -> String
     private let now: () -> Date
     private let log: @MainActor (String) -> Void
 
@@ -124,7 +126,8 @@ final class HotspotSession {
 
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
-         idleStopAfter: @escaping () -> IdleStop.After = { .never }, now: @escaping () -> Date = Date.init,
+         idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> String = { DNSChoice.defaultServers },
+         now: @escaping () -> Date = Date.init,
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -134,6 +137,7 @@ final class HotspotSession {
         self.hotspotAddress = hotspotAddress
         self.carrierIPv6Only = carrierIPv6Only
         self.idleStopAfter = idleStopAfter
+        self.dns = dns
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
         self.log = log
@@ -453,7 +457,7 @@ final class HotspotSession {
 
     /// None while there's no `deviceHost`, so no config is made that can't connect.
     func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String? {
-        deviceHost.map { devices.setup.clientConfig(for: ready, host: $0) }
+        deviceHost.map { devices.setup.clientConfig(for: ready, host: $0, dns: dns()) }
     }
 
     /// A page that listens again logs its next failure.

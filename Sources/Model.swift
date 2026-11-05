@@ -203,6 +203,7 @@ final class Model: ObservableObject {
                        hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,
                        carrierIPv6Only: Interfaces.carrierIPv6Only,
                        idleStopAfter: { IdleStop.After.saved(in: settings) },
+                       dns: { DNSChoice.servers(in: settings) },
                        log: Self.append)
     }
 

@@ -159,6 +159,7 @@ class TetherUITestCase: XCTestCase {
     /// Fails if any of these elements is anywhere on the screen. A List only builds the rows near the screen, so `exists`
     /// is false for a row that is only scrolled away. This scrolls to the top of the list, then down to its end, and
     /// checks at every stop. Pass all the elements of a test at once: each call scrolls the whole list.
+    /// Not on a sheet whose list is at its top: the drag down to the top closes the sheet.
     func assertNowhere(_ elements: XCUIElement..., message: String = "", file: StaticString = #filePath, line: UInt = #line) {
         func found() -> Bool {
             guard let e = elements.first(where: \.exists) else { return false }

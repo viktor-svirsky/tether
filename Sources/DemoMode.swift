@@ -153,9 +153,12 @@ struct DemoState {
 
     /// The settings, the notification switches all on and no idle stop at each launch, so one test's
     /// setting doesn't leak into the next. Never the app's own.
+    /// Where a demo launch keeps its settings, see `settingsDefaults`.
+    static let settingsSuite = "TetherDemo"
+
     func settingsDefaults() -> UserDefaults {
-        UserDefaults.standard.removePersistentDomain(forName: "TetherDemo")
-        return UserDefaults(suiteName: "TetherDemo")!
+        UserDefaults.standard.removePersistentDomain(forName: Self.settingsSuite)
+        return UserDefaults(suiteName: Self.settingsSuite)!
     }
 
     /// The log Settings shares, in its own folder, emptied at each launch. Never the app's.
@@ -198,6 +201,7 @@ struct DemoState {
         let address = running ? (scenario == .addDeviceComputerIPv6 ? "2001:db8::1" : Hotspot.host) : nil
         let session = HotspotSession(devices: WireGuardDevices(secrets: secrets()), server: server, keepAlive: FakeSound(),
                                      page: FakePage(), sceneActive: true, hotspotAddress: { address },
+                                     dns: { DNSChoice.servers(in: UserDefaults(suiteName: Self.settingsSuite)!) },
                                      now: { clock.now }, log: log)
         session.syncWithHotspot()
         server.connected = connected

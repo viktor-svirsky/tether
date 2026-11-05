@@ -7,7 +7,7 @@ let package = Package(
     name: "Tether",
     platforms: [.macOS(.v14), .iOS(.v17)],
     targets: [
-        .target(name: "TetherCore", dependencies: ["TetherWG"], path: "Sources", sources: ["Traffic.swift", "TrafficSampler.swift", "WireGuardSetup.swift", "WireGuardServer.swift", "AppExpiry.swift", "KeepAlivePolicy.swift", "IdleStop.swift", "Format.swift", "ShortcutReply.swift", "HotspotSession.swift", "AddWindow.swift", "ConfigPageHandler.swift", "ConfigPage.swift", "ConfigPageServer.swift", "Notices.swift", "AddDeviceProgress.swift", "LocalNetwork.swift", "LocalNetworkIntro.swift", "Fakes.swift", "DemoMode.swift", "LogRedaction.swift", "DebugLog.swift", "DeviceStatus.swift"]),
+        .target(name: "TetherCore", dependencies: ["TetherWG"], path: "Sources", sources: ["Traffic.swift", "TrafficSampler.swift", "WireGuardSetup.swift", "WireGuardServer.swift", "AppExpiry.swift", "KeepAlivePolicy.swift", "IdleStop.swift", "DNSChoice.swift", "Format.swift", "ShortcutReply.swift", "HotspotSession.swift", "AddWindow.swift", "ConfigPageHandler.swift", "ConfigPage.swift", "ConfigPageServer.swift", "Notices.swift", "AddDeviceProgress.swift", "LocalNetwork.swift", "LocalNetworkIntro.swift", "Fakes.swift", "DemoMode.swift", "LogRedaction.swift", "DebugLog.swift", "DeviceStatus.swift"]),
         .binaryTarget(name: "TetherWG", path: "WireGuard/build/TetherWG.xcframework"),
         .testTarget(name: "TetherTests", dependencies: ["TetherCore"], path: "Tests"),
     ]

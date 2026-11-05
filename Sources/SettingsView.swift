@@ -2,8 +2,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
 
-/// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle, a
-/// switch for each kind of notification, a button for the permission before Tether asked for it
+/// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle, the
+/// DNS server new devices get, a switch for each kind of notification, a button for the permission before Tether asked for it
 /// itself, the way to Settings when iOS has Tether's notifications off, the log to share for a bug
 /// report, and what this build is.
 struct SettingsView: View {
@@ -11,16 +11,22 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     /// Read by `HotspotSession` each watcher round, see `IdleStop`.
     @AppStorage private var idleStopAfter: IdleStop.After
+    /// Read by `HotspotSession` for each config it makes, see `DNSChoice`.
+    @AppStorage private var dns: DNSChoice
+    @AppStorage private var dnsOther: String
 
     init(model: Model) {
         self.model = model
         _idleStopAfter = AppStorage(wrappedValue: .default, IdleStop.After.key, store: model.settingsDefaults)
+        _dns = AppStorage(wrappedValue: .default, DNSChoice.key, store: model.settingsDefaults)
+        _dnsOther = AppStorage(wrappedValue: "", DNSChoice.otherKey, store: model.settingsDefaults)
     }
 
     var body: some View {
         NavigationStack {
             List {
                 sharing
+                newDevices
                 notices
                 help
                 about
@@ -89,6 +95,35 @@ struct SettingsView: View {
         } footer: {
             Text("Idle means no device is connected. Stopping saves battery. Open Tether to share again.")
                 .accessibilityIdentifier("sharing.footer")
+        }
+    }
+
+    private var newDevices: some View {
+        Section {
+            Picker("DNS", selection: $dns) {
+                ForEach(DNSChoice.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("newDevices.dns")
+            if dns == .other {
+                TextField("Server address", text: $dnsOther, prompt: Text("9.9.9.10"))
+                    .keyboardType(.numbersAndPunctuation)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .accessibilityIdentifier("newDevices.other")
+                if DNSChoice.servers(typed: dnsOther) == nil {
+                    Text("New devices get 1.1.1.1 until this is one or two IPv4 addresses.")
+                        .font(.subheadline)
+                        .accessibilityIdentifier("newDevices.otherProblem")
+                }
+            }
+        } header: {
+            Text("New devices")
+        } footer: {
+            Text("Devices you add from now on use it. A device you already added keeps its DNS: change it in that device's WireGuard app, under DNS servers. The DNS server sees the names your devices look up.")
+                // In the label colour: this footer's grey just misses the contrast audit.
+                .foregroundStyle(Color(.label))
+                .accessibilityIdentifier("newDevices.footer")
         }
     }
 

@@ -73,7 +73,7 @@ final class DebugLogTests: XCTestCase {
         var setup = WireGuardSetup.new()
         setup.prepareReady()
         let ready = try XCTUnwrap(setup.ready)
-        let config = setup.clientConfig(for: ready, host: "2607:fb91:8a1c:3e40::1")
+        let config = setup.clientConfig(for: ready, host: "2607:fb91:8a1c:3e40::1", dns: DNSChoice.defaultServers)
         let log = makeLog()
         log.append("config: \(config)")
         goLines = [DebugLog.Line(at: clock, text: "go: private_key=\(setup.serverPrivateKey.hex)")]

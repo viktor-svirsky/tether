@@ -71,6 +71,7 @@ final class NotificationsTests: TetherUITestCase {
         launch(.sharing)
         openSettings()
         XCTAssertTrue(element("notices.allow").waitForExistence(timeout: 5))
+        reveal(element("notices.footer")) // below New devices
         XCTAssertEqual(label(of: "notices.footer"), "Only while Tether is in the background. On screen, the screen shows it.")
         assertNowhere(element("notices.denied"))
     }
