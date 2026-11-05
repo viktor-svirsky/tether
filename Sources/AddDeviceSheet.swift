@@ -178,7 +178,7 @@ struct AddDeviceSheet: View {
                 .accessibilityIdentifier("add.kind")
                 switch kind {
                 case .phone: scan(code.qr)
-                case .computer: download(address: ConfigPage.url(host: host), file: code.file)
+                case .computer: download(address: ConfigPage.url(host: host), ipv6Only: host.contains(":"), file: code.file)
                 }
             }
         } else if model.wireGuardReady != nil {
@@ -210,7 +210,9 @@ struct AddDeviceSheet: View {
         windowNote(id: "add.codeWindow")
     }
 
-    @ViewBuilder private func download(address: String, file: URL?) -> some View {
+    /// `ipv6Only`: Tether listens on the iPhone's IPv6 address, on a carrier that gives it IPv6 only,
+    /// see `HotspotSession.deviceHost`. A computer with IPv6 off for the hotspot can't reach it then (#94).
+    @ViewBuilder private func download(address: String, ipv6Only: Bool, file: URL?) -> some View {
         Text("Open this in the computer's browser while Tether is on screen:")
             .font(.subheadline)
             .accessibilityIdentifier("add.laptop")
@@ -241,6 +243,11 @@ struct AddDeviceSheet: View {
         }
         .padding(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 6))
         .background(Color(.systemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        if ipv6Only {
+            Text("This network reaches Tether over IPv6 only. If the page doesn't open, turn on IPv6 for the computer's Wi-Fi.")
+                .font(.subheadline)
+                .accessibilityIdentifier("add.ipv6")
+        }
         if let file {
             HStack(spacing: 10) {
                 Rectangle().fill(Color(.separator)).frame(height: 1)

@@ -41,7 +41,10 @@ final class SettingsHelpTests: TetherUITestCase {
             launch(.sharing)
             openSettings()
             reveal(element("settings.logFooter"))
-            try audit(only: "settings.")
+            // Only the Help section: scrolled down to it, the list runs under the bar, and the system's
+            // Done button over it is no part of this.
+            try audit(only: "settings.log")
+            try audit(only: "settings.help")
             try audit(types: structuralAudit)
             app.terminate()
         }

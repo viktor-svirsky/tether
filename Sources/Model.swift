@@ -119,9 +119,11 @@ final class Model: ObservableObject {
     /// The `notificationsScreen` demo opens on the Settings sheet.
     var opensSettings: Bool { demo?.scenario == .notificationsScreen }
     /// Some demos open on the Add a device sheet.
-    var opensAddDevice: Bool { [.addDeviceScreen, .addDeviceComputer, .addDeviceWaiting, .addDeviceDone].contains(demo?.scenario) }
-    /// The `addDeviceComputer` demo opens the sheet with Computer picked.
-    var addDeviceStartsOnComputer: Bool { demo?.scenario == .addDeviceComputer }
+    var opensAddDevice: Bool {
+        [.addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6, .addDeviceWaiting, .addDeviceDone].contains(demo?.scenario)
+    }
+    /// The `addDeviceComputer` demos open the sheet with Computer picked.
+    var addDeviceStartsOnComputer: Bool { [.addDeviceComputer, .addDeviceComputerIPv6].contains(demo?.scenario) }
     /// In the `addDeviceWaiting` and `addDeviceDone` demos, the sheet follows a listed device, as if
     /// it had just claimed the code: the Windows PC isn't connected, the iPad is.
     var addDeviceFollows: WireGuardSetup.Peer.ID? {

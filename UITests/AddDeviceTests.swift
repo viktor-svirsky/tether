@@ -53,7 +53,18 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(reveal(element("add.airdrop")).label, "AirDrop it to a Mac, then open it in WireGuard.")
         // The file stops working like the code. A download from the page is listed at once, so it doesn't.
         XCTAssertEqual(reveal(element("add.fileWindow")).label, Self.windowNote)
-        assertNowhere(element("add.qr"), element("add.codeWindow"))
+        assertNowhere(element("add.qr"), element("add.codeWindow"), element("add.ipv6"), message: "172.20.10.1 needs no IPv6")
+    }
+
+    /// On a carrier that gives the iPhone IPv6 only, a computer reaches Tether only over IPv6, and
+    /// one with IPv6 off for that network can't (#94). The address says IPv6, and so does a line.
+    func testAnIPv6AddressSaysTheComputerNeedsIPv6() throws {
+        launch(.addDeviceComputerIPv6)
+        let address = reveal(element("add.address"))
+        XCTAssertEqual(address.value as? String, "http://[2001:db8::1]")
+        XCTAssertEqual(reveal(element("add.ipv6")).label,
+                       "This network reaches Tether over IPv6 only. If the page doesn't open, turn on IPv6 for the computer's Wi-Fi.")
+        try audit(only: "add.")
     }
 
     func testWithTheHotspotOnTheFirstStepIsTicked() {

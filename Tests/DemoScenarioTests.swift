@@ -12,7 +12,7 @@ final class DemoScenarioTests: XCTestCase {
     private let iPadConnected: Set<DemoScenario> = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying,
                                                     .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .oldAddress, .staleConfig]
     private let noSpeed: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro, .noDevices, .wireGuardUnsaved,
-                                              .addDeviceScreen, .addDeviceComputer]
+                                              .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6]
 
     func testTheHotspotIsOnExceptWhileWaiting() {
         for scenario in DemoScenario.allCases {

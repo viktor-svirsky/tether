@@ -48,6 +48,9 @@ enum DemoScenario: String, CaseIterable {
     case addDeviceScreen
     /// Like `addDeviceScreen`, with Computer picked.
     case addDeviceComputer
+    /// Like `addDeviceComputer`, on a carrier that gives the iPhone IPv6 only: Tether listens on a
+    /// documentation IPv6 address, so the page's address is IPv6 and the sheet says a computer needs it.
+    case addDeviceComputerIPv6
     /// Like `sharing`, opened on the Add a device sheet as if the Windows PC had just downloaded
     /// the code: its tunnel isn't on yet.
     case addDeviceWaiting
@@ -121,7 +124,7 @@ struct DemoState {
             running = false
             return
         }
-        if [.noDevices, .wireGuardUnsaved, .addDeviceScreen, .addDeviceComputer].contains(scenario) { return }
+        if [.noDevices, .wireGuardUnsaved, .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6].contains(scenario) { return }
         downSpeed = 3_200_000
         upSpeed = 400_000
     }
@@ -192,7 +195,7 @@ struct DemoState {
     func makeSession(log: @escaping @MainActor (String) -> Void = { _ in }) -> HotspotSession {
         let server = FakeServer()
         let clock = DemoClock()
-        let address = running ? Hotspot.host : nil
+        let address = running ? (scenario == .addDeviceComputerIPv6 ? "2001:db8::1" : Hotspot.host) : nil
         let session = HotspotSession(devices: WireGuardDevices(secrets: secrets()), server: server, keepAlive: FakeSound(),
                                      page: FakePage(), sceneActive: true, hotspotAddress: { address },
                                      now: { clock.now }, log: log)
