@@ -63,6 +63,9 @@ struct MonthlyUsage: Codable, Equatable {
     private var lastHandshakes: [UUID: Date] = [:]
     /// Each device's counters at the last read, in this launch only.
     private var seen: [UUID: TrafficTotals] = [:]
+    /// The last handshake read while each device was paused, in this launch only: the server forgets
+    /// it when it stops.
+    private var pausedHandshakes: [UUID: Date] = [:]
 
     private enum CodingKeys: String, CodingKey { case devices, marks, lastHandshakes }
 
@@ -81,8 +84,20 @@ struct MonthlyUsage: Codable, Equatable {
     /// server, keeps the one it had. One in the read always replaces it, even an earlier one: the
     /// server's only moves forward, so an earlier one means the clock was set back, and keeping the
     /// later one would show a time that hasn't come yet until the clock catches up.
-    mutating func record(_ counts: [UUID: TrafficTotals], handshakes: [UUID: Date] = [:], at date: Date, calendar: Calendar) {
-        lastHandshakes.merge(handshakes) { _, read in read }
+    ///
+    /// A paused device keeps handshaking with nothing getting through, which isn't connecting. Its
+    /// handshakes don't count, nor the last of them, which the server goes on reporting after Resume
+    /// until the device handshakes again. Its data counts either way.
+    mutating func record(_ counts: [UUID: TrafficTotals], handshakes: [UUID: Date] = [:], paused: Set<UUID> = [],
+                         at date: Date, calendar: Calendar) {
+        for (id, handshake) in handshakes {
+            if paused.contains(id) {
+                pausedHandshakes[id] = handshake
+            } else if pausedHandshakes[id] != handshake {
+                pausedHandshakes[id] = nil
+                lastHandshakes[id] = handshake
+            }
+        }
         let month = Month(date, calendar: calendar)
         for (id, now) in counts {
             let before = seen[id] ?? TrafficTotals()
@@ -120,6 +135,7 @@ struct MonthlyUsage: Codable, Equatable {
         devices = devices.filter { ids.contains($0.key) }
         marks = marks.filter { ids.contains($0.key) }
         lastHandshakes = lastHandshakes.filter { ids.contains($0.key) }
+        pausedHandshakes = pausedHandshakes.filter { ids.contains($0.key) }
         seen = seen.filter { ids.contains($0.key) }
     }
 

@@ -196,7 +196,7 @@ extension DeviceView {
                         .accessibilityIdentifier("device.overLimit")
                 }
             } else if used == 0 {
-                Text("Not used this month")
+                Text(Format.thisMonth(used))
                     .font(.headline)
                     .accessibilityIdentifier("device.thisMonth")
             } else {

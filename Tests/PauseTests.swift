@@ -150,6 +150,30 @@ final class PauseTests: XCTestCase {
         XCTAssertEqual(session.shortcutState().connected, 1)
     }
 
+    /// A paused device keeps handshaking with nothing getting through, so its handshakes don't move
+    /// when it last connected (#73), while what it used still counts. One that left while paused
+    /// keeps its time from before the pause after Resume too, though the server still reports the
+    /// handshake from the pause. Its next handshake counts.
+    func testAPausedDevicesHandshakesDontMoveWhenItLastConnected() throws {
+        let peer = try connectedDevice()
+        let before = Date(timeIntervalSince1970: 1_800_000_000)
+        server.handshakes = [peer.address: before]
+        session.sampleTraffic()
+        session.pauseWireGuardDevice(peer.id)
+        server.handshakes = [peer.address: before.addingTimeInterval(120)]
+        server.peerTraffic = [peer.address: TrafficTotals(bytesUp: 1, bytesDown: 2)]
+        session.sampleTraffic()
+        XCTAssertEqual(session.lastConnected(of: peer.id), before)
+        XCTAssertEqual(session.usage(of: peer.id).thisMonth, TrafficTotals(bytesUp: 1, bytesDown: 2), "its data still counts")
+        server.connected = [] // it left while paused
+        session.resumeWireGuardDevice(peer.id)
+        session.sampleTraffic()
+        XCTAssertEqual(session.lastConnected(of: peer.id), before, "not the pause's handshake, still reported after Resume")
+        server.handshakes = [peer.address: before.addingTimeInterval(600)]
+        session.sampleTraffic()
+        XCTAssertEqual(session.lastConnected(of: peer.id), before.addingTimeInterval(600))
+    }
+
     func testInTheBackgroundAPausedDeviceIsntConnected() throws {
         let peer = try connectedDevice()
         session.pauseWireGuardDevice(peer.id)

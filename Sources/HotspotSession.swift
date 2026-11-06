@@ -735,9 +735,10 @@ final class HotspotSession {
             counts[id] = stats.traffic
             handshakes[id] = stats.lastHandshake
         }
+        let paused = Set(devices.setup.peers.filter { $0.paused != nil }.map(\.id))
         let before = monthlyUsage
         let now = self.now()
-        monthlyUsage.record(counts, handshakes: handshakes, at: now, calendar: calendar)
+        monthlyUsage.record(counts, handshakes: handshakes, paused: paused, at: now, calendar: calendar)
         if monthlyUsage != before { usageUnsaved = true }
         checkLimits()
         if usageSavedAt.map({ now.timeIntervalSince($0) >= 60 }) ?? true { saveUsage() }

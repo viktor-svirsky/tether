@@ -109,6 +109,21 @@ final class MonthlyUsageTests: XCTestCase {
         XCTAssertNil(usage.lastConnected(ipad), "dropped with the device")
     }
 
+    /// A paused device's handshakes don't count, nor the same one read again after Resume. A new
+    /// one does.
+    func testAPausedDevicesHandshakeCountsOnlyOnceANewOneComes() {
+        var usage = MonthlyUsage()
+        usage.record([:], handshakes: [ipad: date(2026, 11, 5, 9)], at: date(2026, 11, 5, 9), calendar: calendar)
+        usage.record([:], handshakes: [ipad: date(2026, 11, 5, 10)], paused: [ipad], at: date(2026, 11, 5, 10), calendar: calendar)
+        XCTAssertEqual(usage.lastConnected(ipad), date(2026, 11, 5, 9))
+        usage.record([:], handshakes: [ipad: date(2026, 11, 5, 10)], at: date(2026, 11, 5, 11), calendar: calendar) // resumed
+        XCTAssertEqual(usage.lastConnected(ipad), date(2026, 11, 5, 9))
+        usage.record([:], handshakes: [ipad: date(2026, 11, 5, 12)], at: date(2026, 11, 5, 12), calendar: calendar)
+        XCTAssertEqual(usage.lastConnected(ipad), date(2026, 11, 5, 12))
+        usage.record([:], handshakes: [ipad: date(2026, 11, 5, 10)], at: date(2026, 11, 5, 13), calendar: calendar)
+        XCTAssertEqual(usage.lastConnected(ipad), date(2026, 11, 5, 10), "the pause's handshake is forgotten once a new one came")
+    }
+
     /// The clock was ahead, then set right: the next handshake shows, not the one from the clock that
     /// was ahead, which would read as a time still to come.
     func testAClockSetBackDoesntKeepAHandshakeFromTheFuture() {
