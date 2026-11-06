@@ -93,8 +93,9 @@ func read(t testing.TB, m []byte) (h dnsmessage.Header, answers int) {
 // dohServer is a DoH server on HTTP/2 that answers each lookup with records A records.
 type dohServer struct {
 	*httptest.Server
-	asked   chan []byte // each query as it arrived
-	records atomic.Int32
+	asked    chan []byte  // each query as it arrived
+	requests atomic.Int32 // every request, a refused one too
+	records  atomic.Int32
 	// While held, every answer waits for release or for its request to end.
 	held     atomic.Bool
 	free     chan struct{}
@@ -105,6 +106,7 @@ func newDoH(t *testing.T, records int) *dohServer {
 	d := &dohServer{asked: make(chan []byte, 100), free: make(chan struct{})}
 	d.records.Store(int32(records))
 	d.Server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d.requests.Add(1)
 		if r.Method != http.MethodPost || r.URL.Path != "/abc123" ||
 			r.Header.Get("Content-Type") != "application/dns-message" || r.Header.Get("Accept") != "application/dns-message" {
 			http.Error(w, "not a DoH request", http.StatusBadRequest)
@@ -388,39 +390,43 @@ func TestAnErrorFromTheServerIsNotAskedAgain(t *testing.T) {
 	s.SetDNS(&dnsUpstream{doh: d.URL + "/wrong"})
 	lines := make(chan string, 100)
 	heard := func(line string) {
-		select {
-		case lines <- line:
-		default:
+		if strings.HasPrefix(line, "DNS") {
+			select {
+			case lines <- line:
+			default:
+			}
 		}
 	}
 	s.heard.Store(&heard)
+	// The line comes from the lookup's goroutine, which on a busy runner ends after the device
+	// gave up waiting, so it's waited for.
+	next := func() string {
+		select {
+		case line := <-lines:
+			return line
+		case <-time.After(30 * time.Second):
+			t.Fatal("nothing logged")
+			return ""
+		}
+	}
 	if _, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), time.Second); err == nil {
 		t.Fatal("an answer from a server that refused")
 	}
-	var dns []string
-	for len(lines) > 0 {
-		if line := <-lines; strings.HasPrefix(line, "DNS") {
-			dns = append(dns, line)
-		}
-	}
 	// Once, and without the URL: its path is the user's Control D profile.
-	if len(dns) != 1 || dns[0] != "DNS over HTTPS: the server answered 400 Bad Request" {
-		t.Fatalf("logged %q", dns)
+	if line := next(); line != "DNS over HTTPS: the server answered 400 Bad Request" {
+		t.Fatalf("logged %q", line)
 	}
-	// The next failures of the run aren't logged, and the first answer after them is.
+	// The next failure of the run isn't logged, and the first answer after them is.
 	lookupUDP(c, lookupFor(t, 2, "example.com.", 0), time.Second)
 	viaDoH(s, d)
-	if _, err := lookupUDP(c, lookupFor(t, 3, "example.com.", 0), 5*time.Second); err != nil {
+	if _, err := lookupUDP(c, lookupFor(t, 3, "example.com.", 0), 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	dns = nil
-	for len(lines) > 0 {
-		if line := <-lines; strings.HasPrefix(line, "DNS") {
-			dns = append(dns, line)
-		}
+	if line := next(); line != "DNS over HTTPS answers again" {
+		t.Fatalf("then logged %q", line)
 	}
-	if len(dns) != 1 || dns[0] != "DNS over HTTPS answers again" {
-		t.Fatalf("then logged %q", dns)
+	if n := d.requests.Load(); n != 3 {
+		t.Fatalf("%d requests for 3 lookups", n)
 	}
 }
 
