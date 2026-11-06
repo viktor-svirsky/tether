@@ -196,6 +196,7 @@ func TestPausingARouterStopsItsClients(t *testing.T) {
 // A paused router still handshakes, so it looks online. If it kept the role, no other router could
 // take over until it was resumed (#95).
 func TestPausingTheRouterLetsAnotherRouterTakeOver(t *testing.T) {
+	fullSizeOnly(t)
 	s, a, b, cb, target := twoRouters(t)
 	if err := s.SetPeers([]Peer{{PublicKey: s.keyOf(a), Address: a, Paused: true}, {PublicKey: s.keyOf(b), Address: b}}); err != nil {
 		t.Fatal(err)
@@ -213,6 +214,7 @@ func TestPausingTheRouterLetsAnotherRouterTakeOver(t *testing.T) {
 
 // A resumed router gets the role back with its next packet for a client.
 func TestAResumedRouterGetsTheRoleBackByItsNextPacketForAClient(t *testing.T) {
+	fullSizeOnly(t)
 	s, c := setupRouter(t, netip.MustParseAddr("192.168.4.20"))
 	target := tcpServer(t, 10)
 	if _, err := fetch(t, c, target); err != nil {
@@ -234,6 +236,7 @@ func TestAResumedRouterGetsTheRoleBackByItsNextPacketForAClient(t *testing.T) {
 // The router you pause is often one that just kept another router out. That one takes over on its
 // next packet rather than waiting out its refusal, since the role is free now.
 func TestARouterKeptOutTakesOverOnceTheRouterIsPaused(t *testing.T) {
+	fullSizeOnly(t)
 	s, a, b, cb, target := twoRouters(t)
 	// The clock stops, so a refusal never wears off by itself.
 	now := time.Now()
