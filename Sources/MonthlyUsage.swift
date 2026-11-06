@@ -59,7 +59,8 @@ struct MonthlyUsage: Codable, Equatable {
 
     private var devices: [UUID: Device] = [:]
     private var marks: [UUID: Marks] = [:]
-    /// Each device's last handshake (#73). Kept here, since the server forgets it when it stops.
+    /// Each device's last handshake while it wasn't paused (#73), see `record`. Kept here, since the
+    /// server forgets it when it stops.
     private var lastHandshakes: [UUID: Date] = [:]
     /// Each device's counters at the last read, in this launch only.
     private var seen: [UUID: TrafficTotals] = [:]

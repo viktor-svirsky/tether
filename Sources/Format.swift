@@ -19,10 +19,13 @@ enum Format {
         }
     }
 
-    /// A device's row (#73): "3.12 GB this month", or "Not used this month" rather than "0 bytes
-    /// this month". Its screen says the same when it used nothing.
+    /// What a device that used nothing this month says, on its row and its screen (#73), rather
+    /// than "0 bytes this month".
+    static let notUsedThisMonth = "Not used this month"
+
+    /// A device's row (#73): "3.12 GB this month", or `notUsedThisMonth`.
     static func thisMonth(_ used: UInt64) -> String {
-        used == 0 ? "Not used this month" : "\(bytes(used)) this month"
+        used == 0 ? notUsedThisMonth : "\(bytes(used)) this month"
     }
 
     /// When a device last connected (#73): "Today at 4:00 PM", "Yesterday at ...", "October 3 at
