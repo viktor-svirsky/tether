@@ -14,12 +14,14 @@ struct SettingsView: View {
     /// Read by `HotspotSession` for each config it makes, see `DNSChoice`.
     @AppStorage private var dns: DNSChoice
     @AppStorage private var dnsOther: String
+    @AppStorage private var dnsControlD: String
 
     init(model: Model) {
         self.model = model
         _idleStopAfter = AppStorage(wrappedValue: .default, IdleStop.After.key, store: model.settingsDefaults)
         _dns = AppStorage(wrappedValue: .default, DNSChoice.key, store: model.settingsDefaults)
         _dnsOther = AppStorage(wrappedValue: "", DNSChoice.otherKey, store: model.settingsDefaults)
+        _dnsControlD = AppStorage(wrappedValue: "", DNSChoice.controlDKey, store: model.settingsDefaults)
     }
 
     var body: some View {
@@ -110,6 +112,7 @@ struct SettingsView: View {
                     .keyboardType(.numbersAndPunctuation)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .onSubmit { model.dnsChanged() }
                     .accessibilityIdentifier("newDevices.other")
                 if DNSChoice.servers(typed: dnsOther) == nil {
                     Text("One or two IPv4 addresses, like 9.9.9.10. Until then, new devices get 1.1.1.1.")
@@ -117,15 +120,36 @@ struct SettingsView: View {
                         .accessibilityIdentifier("newDevices.otherProblem")
                 }
             }
+            if dns == .controlD {
+                TextField("Resolver ID or DoH link", text: $dnsControlD, prompt: Text("Resolver ID or DoH link"))
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit { model.dnsChanged() }
+                    .accessibilityIdentifier("newDevices.controlD")
+                if DNSChoice.controlD(typed: dnsControlD) == nil {
+                    Text("Your profile's resolver ID or DoH link, from Control D's dashboard. Until then, new devices get 1.1.1.1.")
+                        .font(.subheadline)
+                        .accessibilityIdentifier("newDevices.controlDProblem")
+                }
+            }
         } header: {
             Text("New devices")
         } footer: {
-            Text("Devices you add from now on use it. A device you already added keeps its DNS: change it in that device's WireGuard app, under DNS servers. It can see which sites your devices visit.")
+            Text(dns == .controlD && DNSChoice.controlD(typed: dnsControlD) != nil ? Self.controlDFooter : Self.footer)
                 // In the label colour: this footer's grey just misses the contrast audit.
                 .foregroundStyle(Color(.label))
                 .accessibilityIdentifier("newDevices.footer")
         }
+        // A device whose config names Tether asks the new choice from its next lookup. What's typed is
+        // passed on when it's submitted or Settings closes, not each keystroke: every start of an ID
+        // looks like one, and the devices' lookups would go to each in turn.
+        .onChange(of: dns) { model.dnsChanged() }
+        .onDisappear { model.dnsChanged() }
     }
+
+    private static let footer = "Devices you add from now on use it. A device you already added keeps its DNS: change it in that device's WireGuard app, under DNS servers. It can see which sites your devices visit."
+    private static let controlDFooter = "Devices you add from now on ask Tether, and Tether asks your Control D profile over HTTPS. Pick the country sites see in Control D, under Redirect (a paid plan). A device you already added keeps its DNS: set it to 10.7.0.1 in that device's WireGuard app. Control D can see which sites your devices visit."
 
     @ViewBuilder private var notices: some View {
         if model.noticePermission == .notAsked {

@@ -18,7 +18,7 @@ final class HotspotSessionTests: XCTestCase {
     private var address: String?
     private var ipv6Only = false
     private var idleAfter = IdleStop.After.never
-    private var dns = "1.1.1.1, 1.0.0.1"
+    private var dns = DNSChoice.Setting(line: "1.1.1.1, 1.0.0.1", upstream: .servers(["1.1.1.1", "1.0.0.1"]))
     private let usageDefaults: UserDefaults = {
         let defaults = UserDefaults(suiteName: "HotspotSessionTests.usage")!
         defaults.removePersistentDomain(forName: "HotspotSessionTests.usage")
@@ -327,9 +327,25 @@ final class HotspotSessionTests: XCTestCase {
         session.openAddWindow()
         let ready = try XCTUnwrap(session.wireGuardReady)
         XCTAssertTrue(try XCTUnwrap(session.wireGuardConfig(for: ready)).contains("\nDNS = 1.1.1.1, 1.0.0.1\n"))
-        dns = "94.140.14.14, 94.140.15.15"
+        dns = .init(line: "94.140.14.14, 94.140.15.15", upstream: .servers(["94.140.14.14", "94.140.15.15"]))
         XCTAssertTrue(try XCTUnwrap(session.wireGuardConfig(for: ready)).contains("\nDNS = 94.140.14.14, 94.140.15.15\n"))
         XCTAssertTrue(body(page.ask(.config)).contains("\nDNS = 94.140.14.14, 94.140.15.15\n"))
+    }
+
+    /// Where Tether sends lookups to 10.7.0.1 goes with each start and each change of the setting (#100),
+    /// so a device set up with Control D follows the setting at once.
+    func testTheServerFollowsTheDNSSetting() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        XCTAssertEqual(server.lastDNS, .servers(["1.1.1.1", "1.0.0.1"]), "at start")
+        let controlD = DNSChoice.Upstream.doh(URL(string: "https://dns.controld.com/abcd1234")!)
+        dns = .init(line: "10.7.0.1", upstream: controlD)
+        session.dnsChanged()
+        XCTAssertEqual(server.lastDNS, controlD)
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertTrue(try XCTUnwrap(session.wireGuardConfig(for: ready)).contains("\nDNS = 10.7.0.1\n"))
     }
 
     /// Each device's data this month comes from its counters, on screen and in the background, and

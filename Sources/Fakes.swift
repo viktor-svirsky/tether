@@ -40,14 +40,16 @@ final class FakeServer: WireGuardServing {
     /// The addresses of each start, comma-separated.
     private(set) var starts: [String] = []
     private(set) var lastSetup: WireGuardSetup?
+    /// Where the last start or change sent lookups to Tether's own address.
+    private(set) var lastDNS: DNSChoice.Upstream?
 
-    func start(hosts: [String], setup: WireGuardSetup, port: UInt16) throws {
+    func start(hosts: [String], setup: WireGuardSetup, dns: DNSChoice.Upstream, port: UInt16) throws {
         stop()
         starts.append(hosts.joined(separator: ","))
         if let startError { throw startError }
         running = true
         do {
-            try setPeers(setup)
+            try setPeers(setup, dns: dns)
         } catch {
             running = false
             throw error
@@ -58,10 +60,11 @@ final class FakeServer: WireGuardServing {
         running = false
     }
 
-    func setPeers(_ setup: WireGuardSetup) throws {
+    func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream) throws {
         guard running else { return }
         if let refusedAddress, setup.serverPeers.contains(where: { $0.address == refusedAddress }) { throw Refused() }
         lastSetup = setup
+        lastDNS = dns
     }
 
     func snapshot() -> ServerSnapshot {

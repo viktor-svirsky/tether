@@ -7,9 +7,9 @@ protocol WireGuardServing: AnyObject {
     var running: Bool { get }
     /// Listens on each of `hosts`. Applies the setup's devices as `setPeers` does, and is left
     /// stopped when they're refused.
-    func start(hosts: [String], setup: WireGuardSetup, port: UInt16) throws
+    func start(hosts: [String], setup: WireGuardSetup, dns: DNSChoice.Upstream, port: UInt16) throws
     func stop()
-    func setPeers(_ setup: WireGuardSetup) throws
+    func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream) throws
     /// The counters, the totals and each device's, only grow, across restarts. Which devices are
     /// connected, only while running.
     func snapshot() -> ServerSnapshot
@@ -98,8 +98,9 @@ final class HotspotSession {
     private let carrierIPv6Only: () -> Bool
     /// The setting in Settings > Sharing, read each round, so a change counts at once.
     private let idleStopAfter: () -> IdleStop.After
-    /// The DNS line for the next device, picked in Settings > New devices, read for each config made.
-    private let dns: () -> String
+    /// Settings > New devices: the DNS line for the next device, read for each config made, and where
+    /// the server sends lookups to its own address, read for each start and change, see `dnsChanged`.
+    private let dns: () -> DNSChoice.Setting
     /// Where each device's data per month is saved, see `MonthlyUsage`. Nil keeps it in memory only.
     private let usageDefaults: UserDefaults?
     private let calendar: Calendar
@@ -139,7 +140,7 @@ final class HotspotSession {
 
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
-         idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> String = { DNSChoice.defaultServers },
+         idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> DNSChoice.Setting = { .default },
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .current, now: @escaping () -> Date = Date.init,
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
@@ -272,7 +273,7 @@ final class HotspotSession {
         guard devices.loaded else { return } // the setup's problem shows already
         let hosts = Self.hosts(for: hotspot)
         do {
-            try server.start(hosts: hosts, setup: serverSetup, port: WireGuardSetup.port)
+            try server.start(hosts: hosts, setup: serverSetup, dns: dns().upstream, port: WireGuardSetup.port)
             page.start(hosts: hosts, port: ConfigPage.port)
             startProblem = nil
             showProblem()
@@ -549,7 +550,7 @@ final class HotspotSession {
     }
 
     private func wireGuardConfig(for ready: WireGuardSetup.Ready, host: String?) -> String? {
-        host.map { devices.setup.clientConfig(for: ready, host: $0, dns: dns()) }
+        host.map { devices.setup.clientConfig(for: ready, host: $0, dns: dns().line) }
     }
 
     /// A page that listens again logs its next failure.
@@ -618,11 +619,17 @@ final class HotspotSession {
         devices.prepareReady() // a removal on a full subnet makes room for the QR code
         publishSetup()
         do {
-            try server.setPeers(serverSetup)
+            try server.setPeers(serverSetup, dns: dns().upstream)
         } catch {
             log("WireGuard devices: \(error), restarting")
             if running, let boundHost { startWireGuard(on: boundHost) }
         }
+    }
+
+    /// Settings > New devices changed. A device whose config names Tether's own address asks the new
+    /// choice from its next lookup. The next device's config is made when it's shown, so it follows too.
+    func dnsChanged() {
+        wireGuardPeersChanged()
     }
 
     /// A device is trying to connect with a config that no longer works (#89), by this session's clock.

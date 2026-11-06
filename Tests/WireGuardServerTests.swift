@@ -317,6 +317,33 @@ final class WireGuardServerTests: XCTestCase {
         let peer = (json?["peers"] as? [[String: Any]])?.first
         XCTAssertEqual(peer?["key"] as? String, Data(repeating: 7, count: 32).base64EncodedString())
         XCTAssertEqual(peer?["address"] as? String, "10.7.0.2")
+        XCTAssertNil(json?["dns"], "none given, none sent")
+    }
+
+    /// Where lookups to 10.7.0.1 go (#100), a DoH URL or plain servers, never both.
+    func testTheDeviceListCarriesTheDNS() throws {
+        func dns(_ upstream: DNSChoice.Upstream) throws -> [String: Any]? {
+            let message = WireGuardServer.ConfigMessage([], dns: upstream)
+            let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any]
+            return json?["dns"] as? [String: Any]
+        }
+        let doh = try dns(.doh(URL(string: "https://dns.controld.com/abcd1234")!))
+        XCTAssertEqual(doh?["doh"] as? String, "https://dns.controld.com/abcd1234")
+        XCTAssertNil(doh?["udp"])
+        let plain = try dns(.servers(["1.1.1.1", "1.0.0.1"]))
+        XCTAssertEqual(plain?["udp"] as? [String], ["1.1.1.1", "1.0.0.1"])
+        XCTAssertNil(plain?["doh"])
+    }
+
+    /// Go reads both kinds, at start and in a change.
+    func testTheServerTakesEachKindOfDNS() throws {
+        let server = WireGuardServer()
+        defer { server.stop() }
+        let setup = WireGuardSetup.new()
+        XCTAssertNoThrow(try server.start(hosts: ["127.0.0.1"], setup: setup, dns: .doh(URL(string: "https://dns.controld.com/abcd1234")!),
+                                          port: freePort()))
+        XCTAssertNoThrow(try server.setPeers(setup, dns: .servers(["9.9.9.9", "149.112.112.112"])))
+        XCTAssertThrowsError(try server.setPeers(setup, dns: .servers(["10.7.0.1"])), "a server lookups can't reach")
     }
 
     /// A device removed while the hotspot is off drops what it used then, so the next device given its

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"runtime/debug"
@@ -223,7 +224,16 @@ type Server struct {
 	dials     map[netip.Addr]int
 	conns     map[netip.Addr]int
 	// The caps, see the constants. Tests lower them.
-	maxCones, maxDials, maxConns, maxPings int
+	maxCones, maxDials, maxConns, maxPings, maxLookups int
+	// DNS on 10.7.0.1, see dns.go. Tests swap dohClient and dohTimeout.
+	upstream   atomic.Pointer[dnsUpstream]
+	dnsTurn    atomic.Uint32
+	dohClient  *http.Client
+	dohTimeout time.Duration
+	dohFailing atomic.Bool        // see dohResult
+	lookups    map[netip.Addr]int // each device's DoH lookups waiting, see maxLookups
+	// looking counts the DoH lookups and DNS-over-TCP connections, for Close to wait for.
+	looking sync.WaitGroup
 	// closed is set by Close. From then on handleTCP, track and cone let nothing new in.
 	closed bool
 	// forwarding counts the forwardTCP goroutines handleTCP let in, for Close to wait for.
@@ -241,6 +251,12 @@ type arrival struct {
 // Start listens for WireGuard on port at each of hosts, with the server's private key. An address
 // that can't be listened on fails it. Peers come from SetPeers.
 func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
+	// Go's default keepalive probes every idle connection every 15 s, which keeps the cellular
+	// radio awake. Probing is still needed: when the device closes first, forwardTCP half-closes
+	// and waits for the remote, so a remote that silently went away would hold it forever.
+	dialer := &net.Dialer{Timeout: dialTimeout, KeepAliveConfig: net.KeepAliveConfig{
+		Enable: true, Idle: 10 * time.Minute, Interval: 30 * time.Second, Count: 4,
+	}}
 	s := &Server{
 		peers:     map[[32]byte]netip.Addr{},
 		keys:      map[netip.Addr][32]byte{},
@@ -260,14 +276,9 @@ func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		maxDials:  maxDials,
 		maxConns:  maxConns,
 		maxPings:  maxPings,
-		// Go's default keepalive probes every idle connection every 15 s, which keeps the cellular
-		// radio awake. Probing is still needed: when the device closes first, forwardTCP half-closes
-		// and waits for the remote, so a remote that silently went away would hold it forever.
-		dial: (&net.Dialer{Timeout: dialTimeout, KeepAliveConfig: net.KeepAliveConfig{
-			Enable: true, Idle: 10 * time.Minute, Interval: 30 * time.Second, Count: 4,
-		}}).DialContext,
-		toNet:   func(a netip.AddrPort) netip.AddrPort { return a },
-		fromNet: func(a netip.AddrPort) netip.AddrPort { return a },
+		dial:      dialer.DialContext, // see dialer above
+		toNet:     func(a netip.AddrPort) netip.AddrPort { return a },
+		fromNet:   func(a netip.AddrPort) netip.AddrPort { return a },
 		sendTo: func(c *net.UDPConn, payload []byte, to netip.AddrPort) error {
 			_, err := c.WriteToUDPAddrPort(payload, to)
 			return err
@@ -277,6 +288,8 @@ func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		shake: make(chan struct{}, 1),
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
+	s.dohClient, s.dohTimeout = newDoHClient(dialer.DialContext), dohTimeout
 	s.stack = stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol},
@@ -363,6 +376,8 @@ func (s *Server) close() {
 		select {
 		case <-done:
 			s.conesRunning.Wait() // closing the socket ends them at once
+			s.looking.Wait()      // the cancelled context ends their requests
+			s.dohClient.CloseIdleConnections()
 			return
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -912,16 +927,15 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	}
 	src := addrPort(id.RemoteAddress, 0).Addr()
 	dst := addrPort(id.LocalAddress, id.LocalPort)
-	if a.refuse || !forwardable(dst.Addr()) {
+	var doh string
+	if dst == dnsAddr {
+		dst, doh = s.dnsRoute()
+	}
+	if a.refuse || doh == "" && !forwardable(dst.Addr()) {
 		refuse()
 		return
 	}
-	out, err := s.dial(s.ctx, "tcp", dst.String())
-	if noRoute(err) {
-		if via, ok := s.viaNAT64(s.ctx, dst); ok {
-			out, err = s.dial(s.ctx, "tcp", via.String())
-		}
-	}
+	out, err := s.dialOut(dst, doh)
 	if err != nil {
 		refuse()
 		return
@@ -1038,6 +1052,24 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	}()
 	wg.Wait()
 	closeBoth()
+}
+
+// dialOut makes the iPhone's side of a device's connection: a TCP connection to dst, through the
+// carrier's NAT64 when the iPhone has no IPv4 route, or DNS over TCP answered from the DoH server.
+func (s *Server) dialOut(dst netip.AddrPort, doh string) (net.Conn, error) {
+	if doh != "" {
+		if c := s.dohConn(doh); c != nil {
+			return c, nil
+		}
+		return nil, net.ErrClosed
+	}
+	out, err := s.dial(s.ctx, "tcp", dst.String())
+	if noRoute(err) {
+		if via, ok := s.viaNAT64(s.ctx, dst); ok {
+			out, err = s.dial(s.ctx, "tcp", via.String())
+		}
+	}
+	return out, err
 }
 
 // wake ends the handshake CreateEndpoint waits on: gVisor waits for the queue's next event, then

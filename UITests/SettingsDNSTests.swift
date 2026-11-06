@@ -17,7 +17,7 @@ final class SettingsDNSTests: TetherUITestCase {
         try audit(only: "newDevices.")
         menu.tap()
         for choice in [first, "Cloudflare (1.1.1.2, blocks malware)", "Quad9 (9.9.9.9, blocks malware)",
-                       "AdGuard (94.140.14.14, blocks ads)", "Other server"] {
+                       "AdGuard (94.140.14.14, blocks ads)", "Control D (your profile, over HTTPS)", "Other server"] {
             XCTAssertTrue(app.buttons[choice].waitForExistence(timeout: 3), choice)
         }
         app.buttons["AdGuard (94.140.14.14, blocks ads)"].tap()
@@ -26,6 +26,7 @@ final class SettingsDNSTests: TetherUITestCase {
         XCTAssertTrue(menu.label.contains(adGuard) || value(of: menu) == adGuard, "picked: \(menu.label)")
         // Right under the menu, on screen. Not assertNowhere: its drag to the top closes the sheet.
         XCTAssertFalse(element("newDevices.other").exists, "the address field is only for Other")
+        XCTAssertFalse(element("newDevices.controlD").exists, "the profile field is only for Control D")
         app.buttons["settings.done"].tap()
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5))
         openSettings()
@@ -51,4 +52,26 @@ final class SettingsDNSTests: TetherUITestCase {
         waitUntilGone(element("newDevices.otherProblem"))
         try audit(only: "newDevices.")
     }
+
+    /// Control D asks for the profile (#100), says what new devices get until it holds one, and its
+    /// footer then says where lookups go and how a device added before follows.
+    func testControlDTakesAProfile() throws {
+        launch(.sharing)
+        openSettings()
+        reveal(app.buttons["newDevices.dns"].firstMatch).tap()
+        let controlD = "Control D (your profile, over HTTPS)"
+        XCTAssertTrue(app.buttons[controlD].waitForExistence(timeout: 3))
+        app.buttons[controlD].tap()
+        let field = reveal(element("newDevices.controlD"))
+        XCTAssertEqual(label(of: "newDevices.controlDProblem"),
+                       "Your profile's resolver ID or DoH link, from Control D's dashboard. Until then, new devices get 1.1.1.1.")
+        XCTAssertEqual(label(of: "newDevices.footer"), Self.footer, "nothing typed, so nothing changes yet")
+        field.tap()
+        field.typeText("https://dns.controld.com/abcd1234")
+        waitUntilGone(element("newDevices.controlDProblem"))
+        XCTAssertEqual(label(of: "newDevices.footer"), Self.controlDFooter)
+        try audit(only: "newDevices.")
+    }
+
+    static let controlDFooter = "Devices you add from now on ask Tether, and Tether asks your Control D profile over HTTPS. Pick the country sites see in Control D, under Redirect (a paid plan). A device you already added keeps its DNS: set it to 10.7.0.1 in that device's WireGuard app. Control D can see which sites your devices visit."
 }
