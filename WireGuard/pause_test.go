@@ -245,11 +245,20 @@ func TestARouterKeptOutTakesOverOnceTheRouterIsPaused(t *testing.T) {
 	if _, err := cb.net.DialContext(ctx, "tcp", target); err == nil {
 		t.Fatal("another router got through while the router was online")
 	}
-	s.mu.Lock()
-	refused := s.refused
-	s.mu.Unlock()
-	if refused != b {
-		t.Fatalf("refused %v, want %v kept out before the pause", refused, b)
+	// The refresher refuses it on its own goroutine, which on a busy runner under -race can come
+	// after the device gave up its dial.
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		s.mu.Lock()
+		refused := s.refused
+		s.mu.Unlock()
+		if refused == b {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("refused %v, want %v kept out before the pause", refused, b)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if err := s.SetPeers([]Peer{{PublicKey: s.keyOf(a), Address: a, Paused: true}, {PublicKey: s.keyOf(b), Address: b}}); err != nil {
 		t.Fatal(err)
