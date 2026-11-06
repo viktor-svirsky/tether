@@ -192,7 +192,7 @@ final class WireGuardServerTests: XCTestCase {
                                                           lastHandshake: Date(timeIntervalSince1970: 1_793_718_000),
                                                           endpoint: "172.20.10.3:51820"))
         XCTAssertEqual(stats.peers["10.7.0.3"], PeerStats(), "never connected: no handshake, no endpoint")
-        XCTAssertEqual(stats.stale, StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030)))
+        XCTAssertEqual(stats.stale, StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030), from: "172.20.10.9:51820"))
     }
 
     /// Go sends an empty kind until a config that no longer works knocks, see stale.go.
@@ -201,7 +201,11 @@ final class WireGuardServerTests: XCTestCase {
             try WireGuardServer.Stats.read(Data(#"{"v":1,"up":0,"down":0,"peers":[],\#(json)}"#.utf8)).stale
         }
         XCTAssertNil(try stale(#""stale":{"kind":"","at":0}"#))
+        XCTAssertEqual(try stale(#""stale":{"kind":"server","at":7,"from":""}"#), StaleConfig(kind: .server, at: Date(timeIntervalSince1970: 7)),
+                       "a config for other server keys says nowhere")
         XCTAssertEqual(try stale(#""stale":{"kind":"server","at":7}"#), StaleConfig(kind: .server, at: Date(timeIntervalSince1970: 7)))
+        XCTAssertEqual(try stale(#""stale":{"kind":"device","at":7,"from":"[2001:db8::5]:51820"}"#),
+                       StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 7), from: "[2001:db8::5]:51820"))
         XCTAssertNil(try stale(#""stale":{"kind":"router","at":7}"#), "a kind this app doesn't know says nothing")
     }
 

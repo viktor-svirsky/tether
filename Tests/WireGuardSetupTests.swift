@@ -548,6 +548,21 @@ final class WireGuardSetupTests: XCTestCase {
         XCTAssertFalse(devices.remove(peer.id))
         XCTAssertEqual(devices.setup.peers.map(\.id), [peer.id])
     }
+
+    /// A page request names its client by address, a handshake by address and port, so the two
+    /// compare by the address alone.
+    func testTheAddressOfAPageClientOrAHandshake() {
+        let cases: [(String, String, UInt)] = [
+            ("172.20.10.3", "172.20.10.3", #line),
+            ("172.20.10.3:51820", "172.20.10.3", #line),
+            ("2001:db8::5", "2001:db8::5", #line),
+            ("[2001:db8::5]:51820", "2001:db8::5", #line),
+            ("", "", #line),
+        ]
+        for (client, address, line) in cases {
+            XCTAssertEqual(Hotspot.address(of: client), address, line: line)
+        }
+    }
 }
 
 /// Uses a Keychain item of its own, so the app's real setup is never touched. Where the Mac's

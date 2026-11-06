@@ -145,6 +145,7 @@ final class WireGuardServer {
             struct Stale: Decodable {
                 let kind: String // "" for none yet
                 let at: Int64 // Unix seconds
+                let from: String? // "" for nowhere
             }
         }
 
@@ -170,7 +171,9 @@ final class WireGuardServer {
             }
             // A kind this app doesn't know says nothing, like one that isn't there.
             let stale = m.stale.flatMap { s in
-                StaleConfig.Kind(rawValue: s.kind).map { StaleConfig(kind: $0, at: Date(timeIntervalSince1970: TimeInterval(s.at))) }
+                StaleConfig.Kind(rawValue: s.kind).map {
+                    StaleConfig(kind: $0, at: Date(timeIntervalSince1970: TimeInterval(s.at)), from: s.from.flatMap { $0.isEmpty ? nil : $0 })
+                }
             }
             return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, stale: stale)
         }

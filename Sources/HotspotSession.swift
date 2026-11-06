@@ -528,9 +528,7 @@ final class HotspotSession {
     /// request ("ip") came from: 172.20.10.1 from IPv4 while Tether listens there, else
     /// `deviceHost`. A device whose last handshake isn't known goes by `deviceHost` too.
     private func host(reachedFrom client: String?) -> String? {
-        let parts = client?.split(separator: ":", omittingEmptySubsequences: false) ?? []
-        let ip = parts.count <= 2 ? parts.first : nil
-        if let ip, IPv4Address(String(ip)) != nil, boundHosts.contains(Hotspot.host) { return Hotspot.host }
+        if let client, IPv4Address(Hotspot.address(of: client)) != nil, boundHosts.contains(Hotspot.host) { return Hotspot.host }
         return deviceHost
     }
 
@@ -572,7 +570,9 @@ final class HotspotSession {
         let now = self.now()
         let host = host(reachedFrom: client)
         let inputs = ConfigPageHandler.Inputs(letIn: readyLetIn, onScreen: sceneActive, ready: ready, host: host,
-                                              config: ready.flatMap { wireGuardConfig(for: $0, host: host) }, now: now)
+                                              config: ready.flatMap { wireGuardConfig(for: $0, host: host) },
+                                              // Read now: only the on-screen sampler keeps the knock.
+                                              stale: server.snapshot().stale, hosts: boundHosts, now: now)
         switch pageHandler.answer(request, from: client, inputs) {
         case let .answer(response):
             return response
