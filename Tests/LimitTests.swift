@@ -79,7 +79,7 @@ final class LimitTests: XCTestCase {
         let status = DeviceStatus(peer, connected: ["10.7.0.2"])
         XCTAssertEqual(status.label, "Paused")
         XCTAssertEqual(status.title, "Paused at its limit")
-        XCTAssertEqual(status.detail, "It used its data for this month. It connects again on the 1st, or when you resume it.")
+        XCTAssertEqual(status.detail(resets: "December 1"), "It used its data for this month. It connects again on December 1, or when you resume it.")
     }
 
     func testTheLimitChoices() {
@@ -279,7 +279,7 @@ final class LimitTests: XCTestCase {
         XCTAssertEqual(notifier.check(round([near])), [], "once")
         let posted = notifier.check(round([near, reached]))
         XCTAssertEqual(posted.map(\.title), ["Travel router paused at its limit"])
-        XCTAssertEqual(posted.first?.body, "It used 10 GB this month. It connects again on 1 December, or when you resume it.")
+        XCTAssertTrue(posted.first?.body.hasPrefix("It used 10 GB this month. It connects again on ") == true)
         XCTAssertEqual(posted.first?.kind, .limit)
 
         var onScreen = Notifier(defaults: defaults, calendar: calendar)
@@ -292,6 +292,16 @@ final class LimitTests: XCTestCase {
         _ = off.check(round([]))
         XCTAssertEqual(off.check(round([near])), [], "its switch off")
         XCTAssertEqual(NoticeKind.limit.label, "A device nears or reaches its limit")
+    }
+
+    /// The day the count resets, the way the iPhone's region writes dates.
+    func testTheResetDayFollowsTheRegion() {
+        let first = date(2026, 12, 1)
+        XCTAssertEqual(LimitAlert.day(first, calendar: calendar, locale: Locale(identifier: "en_US")), "December 1")
+        XCTAssertEqual(LimitAlert.day(first, calendar: calendar, locale: Locale(identifier: "en_GB")), "1 December")
+        let reached = LimitAlert(device: UUID(), name: "iPad", kind: .reached, used: 1, limit: 10_000_000_000, resets: first)
+        XCTAssertEqual(reached.notice(calendar: calendar, locale: Locale(identifier: "en_US")).body,
+                       "It used 10 GB this month. It connects again on December 1, or when you resume it.")
     }
 
     func testTheNearNoticeSaysHowMuch() {

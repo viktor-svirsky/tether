@@ -19,8 +19,8 @@ final class DNSChoiceTests: XCTestCase {
         XCTAssertEqual(DNSChoice.allCases, [.cloudflare, .cloudflareMalware, .quad9, .adGuard, .other])
         XCTAssertEqual(DNSChoice.default, .cloudflare)
         XCTAssertEqual(DNSChoice.allCases.map(\.label),
-                       ["Cloudflare (1.1.1.1, no filtering)", "Cloudflare blocks malware (1.1.1.2)", "Quad9 (9.9.9.9, blocks malware)",
-                        "AdGuard (94.140.14.14, blocks ads)", "Other server"], "as signed off in #79")
+                       ["Cloudflare (1.1.1.1, no filtering)", "Cloudflare (1.1.1.2, blocks malware)", "Quad9 (9.9.9.9, blocks malware)",
+                        "AdGuard (94.140.14.14, blocks ads)", "Other server"], "as signed off in #79, the second one put in the same shape by the design review")
         // Each with its second server, so a device still looks names up when one doesn't answer.
         XCTAssertEqual(DNSChoice.allCases.map(\.servers),
                        ["1.1.1.1, 1.0.0.1", "1.1.1.2, 1.0.0.2", "9.9.9.9, 149.112.112.112", "94.140.14.14, 94.140.15.15", nil])

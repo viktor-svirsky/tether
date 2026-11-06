@@ -255,10 +255,17 @@ struct AddDeviceSheet: View {
     private func addressRow(_ address: String, id: String, copyID: String) -> some View {
         HStack(spacing: 10) {
             if let url = URL(string: address) {
-                Link(address, destination: url)
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
+                // An IPv6 address is up to 47 characters with http:// and its brackets, with no space
+                // to break a line at. A zero-width space after each colon lets it wrap to a second
+                // line at a readable size. The link and the copy button keep the address as it is.
+                Link(destination: url) {
+                    Text(address.replacingOccurrences(of: ":", with: ":\u{200B}"))
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     // VoiceOver says what it is, then the address, which as a label alone fails the audit.
                     .accessibilityLabel("Page address")

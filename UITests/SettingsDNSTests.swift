@@ -3,7 +3,7 @@ import XCTest
 /// Settings > New devices: the DNS server the next device's config names (#79). What each choice puts
 /// on the config's DNS line is covered by the unit tests (DNSChoiceTests, HotspotSessionTests).
 final class SettingsDNSTests: TetherUITestCase {
-    static let footer = "Devices you add from now on use it. A device you already added keeps its DNS: change it in that device's WireGuard app, under DNS servers. The DNS server sees the names your devices look up."
+    static let footer = "Devices you add from now on use it. A device you already added keeps its DNS: change it in that device's WireGuard app, under DNS servers. It can see which sites your devices visit."
 
     func testDNSIsAMenuKeptAfterClosing() throws {
         launch(.sharing)
@@ -16,7 +16,7 @@ final class SettingsDNSTests: TetherUITestCase {
         XCTAssertTrue(sectionHeader("New devices").exists)
         try audit(only: "newDevices.")
         menu.tap()
-        for choice in [first, "Cloudflare blocks malware (1.1.1.2)", "Quad9 (9.9.9.9, blocks malware)",
+        for choice in [first, "Cloudflare (1.1.1.2, blocks malware)", "Quad9 (9.9.9.9, blocks malware)",
                        "AdGuard (94.140.14.14, blocks ads)", "Other server"] {
             XCTAssertTrue(app.buttons[choice].waitForExistence(timeout: 3), choice)
         }
@@ -41,7 +41,7 @@ final class SettingsDNSTests: TetherUITestCase {
         XCTAssertTrue(app.buttons["Other server"].waitForExistence(timeout: 3))
         app.buttons["Other server"].tap()
         let field = reveal(element("newDevices.other"))
-        let problem = "New devices get 1.1.1.1 until this is one or two IPv4 addresses."
+        let problem = "One or two IPv4 addresses, like 9.9.9.10. Until then, new devices get 1.1.1.1."
         XCTAssertEqual(label(of: "newDevices.otherProblem"), problem, "nothing typed yet")
         field.tap()
         // Only digits and punctuation: the field's keyboard has no letters. A name is DNSChoiceTests' case.

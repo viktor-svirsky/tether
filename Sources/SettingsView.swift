@@ -112,7 +112,7 @@ struct SettingsView: View {
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("newDevices.other")
                 if DNSChoice.servers(typed: dnsOther) == nil {
-                    Text("New devices get 1.1.1.1 until this is one or two IPv4 addresses.")
+                    Text("One or two IPv4 addresses, like 9.9.9.10. Until then, new devices get 1.1.1.1.")
                         .font(.subheadline)
                         .accessibilityIdentifier("newDevices.otherProblem")
                 }
@@ -120,7 +120,7 @@ struct SettingsView: View {
         } header: {
             Text("New devices")
         } footer: {
-            Text("Devices you add from now on use it. A device you already added keeps its DNS: change it in that device's WireGuard app, under DNS servers. The DNS server sees the names your devices look up.")
+            Text("Devices you add from now on use it. A device you already added keeps its DNS: change it in that device's WireGuard app, under DNS servers. It can see which sites your devices visit.")
                 // In the label colour: this footer's grey just misses the contrast audit.
                 .foregroundStyle(Color(.label))
                 .accessibilityIdentifier("newDevices.footer")

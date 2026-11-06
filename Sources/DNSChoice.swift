@@ -19,11 +19,11 @@ enum DNSChoice: String, CaseIterable {
     /// The default's servers, for a config when nothing else is usable.
     static let defaultServers = "1.1.1.1, 1.0.0.1"
 
-    /// In the menu, as signed off in #79.
+    /// In the menu, "name (address, what it does)", as signed off in #79 and put in one shape by the design review.
     var label: String {
         switch self {
         case .cloudflare: "Cloudflare (1.1.1.1, no filtering)"
-        case .cloudflareMalware: "Cloudflare blocks malware (1.1.1.2)"
+        case .cloudflareMalware: "Cloudflare (1.1.1.2, blocks malware)"
         case .quad9: "Quad9 (9.9.9.9, blocks malware)"
         case .adGuard: "AdGuard (94.140.14.14, blocks ads)"
         case .other: "Other server"

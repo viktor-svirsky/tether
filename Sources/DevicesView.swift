@@ -115,7 +115,7 @@ struct DeviceView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         DeviceStatusLabel(status: status, text: status.title)
                             .accessibilityIdentifier("device.status")
-                        if let detail = status.detail {
+                        if let detail = status.detail(resets: model.nextResetDay) {
                             // The label colour, like the status: grey text on the card fails the contrast audit.
                             Text(detail)
                                 .font(.subheadline)
@@ -146,9 +146,11 @@ struct DeviceView: View {
             Button("Set") {
                 if let bytes = DataLimit.bytes(typedGB: typedLimit) { model.setLimit(peer.id, bytes) }
             }
+            // Nothing to set until it's an amount, rather than closing as if it were.
+            .disabled(DataLimit.bytes(typedGB: typedLimit) == nil)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Data both ways this month, in GB.")
+            Text("Per month, both ways, in GB.")
         }
         .confirmationDialog("Remove \(current.name)?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
@@ -172,7 +174,7 @@ extension DeviceView {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("\(Format.bytes(used)) of \(Format.bytes(limit)) this month")
                         .font(.headline)
-                    LimitMeter(fraction: limit == 0 ? 1 : min(1, Double(used) / Double(limit)))
+                    LimitMeter(fraction: limit == 0 ? 1 : min(1, Double(used) / Double(limit)), over: used >= limit)
                     Text("Resets on \(resets)")
                         .font(.subheadline)
                 }
@@ -213,7 +215,9 @@ extension DeviceView {
         } header: {
             Text("Data through Tether")
         } footer: {
-            Text("Counts data both ways. When \(current.name) reaches it, Tether pauses \(current.name) until the count resets on \(resets). You can resume it sooner.")
+            Text(current.limit == nil
+                 ? "Counts data both ways. With a limit, Tether pauses \(current.name) when it reaches it, until the count resets on \(resets)."
+                 : "Counts data both ways. When \(current.name) reaches it, Tether pauses \(current.name) until the count resets on \(resets). You can resume it sooner.")
                 // In the label colour: this footer's grey just misses the contrast audit.
                 .foregroundStyle(Color(.label))
                 .accessibilityIdentifier("device.limitFooter")
@@ -299,16 +303,18 @@ private enum LimitPick: Hashable {
     case other
 }
 
-/// This month's data against the limit, in the app icon's blue-to-teal.
+/// This month's data against the limit, in the app icon's blue-to-teal, or orange, the pause's
+/// colour, at the limit or over it, so a full bar never reads as all well.
 private struct LimitMeter: View {
     let fraction: Double
+    let over: Bool
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule().fill(Color(.tertiarySystemFill))
                 Capsule()
-                    .fill(LinearGradient(colors: StatusOrb.iconColors, startPoint: .leading, endPoint: .trailing))
+                    .fill(over ? AnyShapeStyle(Color.orange) : AnyShapeStyle(LinearGradient(colors: StatusOrb.iconColors, startPoint: .leading, endPoint: .trailing)))
                     .frame(width: max(8, geometry.size.width * fraction))
             }
         }

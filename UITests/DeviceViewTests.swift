@@ -22,18 +22,20 @@ final class DeviceViewTests: TetherUITestCase {
         launch(.sharing)
         openDevice("iPad")
         let thisMonth = reveal(element("device.thisMonth"))
-        XCTAssertTrue(thisMonth.label.contains("3.12 GB of 10 GB this month") && thisMonth.label.contains("Resets on 1 "), thisMonth.label)
+        XCTAssertTrue(thisMonth.label.contains("3.12 GB of 10 GB this month") && thisMonth.label.contains("Resets on November 1"), thisMonth.label)
         let lastMonth = reveal(element("device.lastMonth"))
         XCTAssertTrue(lastMonth.label.contains("Last month") && lastMonth.label.contains("0 bytes"), lastMonth.label)
         XCTAssertTrue(sectionHeader("Data through Tether").exists)
         let footer = reveal(element("device.limitFooter")).label
-        XCTAssertTrue(footer.hasPrefix("Counts data both ways. When iPad reaches it, Tether pauses iPad until the count resets on 1 "), footer)
+        XCTAssertTrue(footer.hasPrefix("Counts data both ways. When iPad reaches it, Tether pauses iPad until the count resets on November 1"), footer)
         XCTAssertTrue(footer.hasSuffix(". You can resume it sooner."), footer)
         try audit(only: "device.")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         openDevice("Windows PC")
         let plain = reveal(element("device.thisMonth"))
         XCTAssertTrue(plain.label.contains("This month") && plain.label.contains("0 bytes"), "no limit, no meter: \(plain.label)")
+        XCTAssertEqual(reveal(element("device.limitFooter")).label,
+                       "Counts data both ways. With a limit, Tether pauses Windows PC when it reaches it, until the count resets on November 1.")
     }
 
     /// The limit is a menu: None, 5, 10, 20, 50 GB and Other amount, which asks for GB.

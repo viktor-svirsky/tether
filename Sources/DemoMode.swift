@@ -200,7 +200,8 @@ struct DemoState {
     func makeSession(log: @escaping @MainActor (String) -> Void = { _ in }) -> HotspotSession {
         let server = FakeServer()
         let clock = DemoClock()
-        let address = running ? (scenario == .addDeviceComputerIPv6 ? "2001:db8::1" : Hotspot.host) : nil
+        // As long as a carrier's address gets, in the documentation range, so the screen is tried at full length.
+        let address = running ? (scenario == .addDeviceComputerIPv6 ? "2001:db8:9e74:4eaa:459:5cd0:7ec7:f792" : Hotspot.host) : nil
         let session = HotspotSession(devices: WireGuardDevices(secrets: secrets()), server: server, keepAlive: FakeSound(),
                                      page: FakePage(), sceneActive: true, hotspotAddress: { address },
                                      dns: { DNSChoice.servers(in: UserDefaults(suiteName: Self.settingsSuite)!) },

@@ -66,7 +66,7 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(reveal(element("add.macLabel")).label, "On a Mac, or if that one doesn't open:")
         let mac = reveal(element("add.addressMac"))
         XCTAssertEqual(mac.label, "Page address")
-        XCTAssertEqual(mac.value as? String, "http://[2001:db8::1]")
+        XCTAssertEqual(mac.value as? String, "http://[2001:db8:9e74:4eaa:459:5cd0:7ec7:f792]")
         XCTAssertEqual(element("add.copyMac").label, "Copy the address")
         XCTAssertEqual(reveal(element("add.ipv6")).label, "If neither opens, turn on IPv6 for the computer's Wi-Fi.")
         try audit(only: "add.")

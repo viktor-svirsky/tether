@@ -51,25 +51,20 @@ struct LimitAlert: Equatable {
     var id: String { "\(kind.rawValue)-\(device)-\(Int(resets.timeIntervalSince1970))-\(limit)" }
 
     /// One notice per device, so "paused" takes the place of "near" in Notification Center.
-    func notice(calendar: Calendar) -> Notice {
+    func notice(calendar: Calendar, locale: Locale = .current) -> Notice {
         switch kind {
         case .near:
             Notice(kind: .limit, id: "limit-\(device)", title: "\(name) is near its limit",
                    body: "It used \(Format.bytes(used)) of its \(Format.bytes(limit)) this month.")
         case .reached:
             Notice(kind: .limit, id: "limit-\(device)", title: "\(name) paused at its limit",
-                   body: "It used \(Format.bytes(limit)) this month. It connects again on \(Self.day(resets, calendar: calendar)), or when you resume it.")
+                   body: "It used \(Format.bytes(limit)) this month. It connects again on \(Self.day(resets, calendar: calendar, locale: locale)), or when you resume it.")
         }
     }
 
-    /// "1 December".
-    static func day(_ date: Date, calendar: Calendar) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "d MMMM"
-        return formatter.string(from: date)
+    /// "December 1" in the US, "1 December" in the UK: the day and the month, as the region writes them.
+    static func day(_ date: Date, calendar: Calendar, locale: Locale = .current) -> String {
+        date.formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).day().month(.wide))
     }
 }
 

@@ -33,10 +33,11 @@ enum DeviceStatus: Equatable {
         }
     }
 
-    /// The line under the title on its screen, for a paused device only.
-    var detail: String? {
+    /// The line under the title on its screen, for a paused device only. `resets` is the day the
+    /// count starts over, like "December 1".
+    func detail(resets: String) -> String? {
         switch self {
-        case let .paused(pause): pause.detail
+        case let .paused(pause): pause.detail(resets: resets)
         default: nil
         }
     }
@@ -50,10 +51,10 @@ extension WireGuardSetup.Pause {
         }
     }
 
-    var detail: String {
+    func detail(resets: String) -> String {
         switch self {
         case .byYou: "It can't connect until you resume it."
-        case .atLimit: "It used its data for this month. It connects again on the 1st, or when you resume it."
+        case .atLimit: "It used its data for this month. It connects again on \(resets), or when you resume it."
         }
     }
 }
