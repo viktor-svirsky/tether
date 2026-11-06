@@ -95,6 +95,53 @@ final class MonthlyUsageTests: XCTestCase {
         XCTAssertEqual(MonthlyUsage.load(from: defaults), MonthlyUsage(), "unreadable starts over")
     }
 
+    /// When each device last connected (#73): each read's handshake replaces the last, and a read
+    /// with none, such as a stopped server, keeps it.
+    func testTheLastHandshakeIsKeptByDeviceUntilAReadHasOne() {
+        var usage = MonthlyUsage()
+        XCTAssertNil(usage.lastConnected(ipad), "never connected")
+        usage.record([ipad: t(0, 1)], handshakes: [ipad: date(2026, 11, 5, 9), mac: date(2026, 11, 5, 10)], at: date(2026, 11, 5), calendar: calendar)
+        usage.record([ipad: t(0, 1)], handshakes: [ipad: date(2026, 11, 5, 11)], at: date(2026, 11, 5, 11), calendar: calendar)
+        usage.record([ipad: t(0, 1)], at: date(2026, 11, 5, 13), calendar: calendar) // stopped: no handshake
+        XCTAssertEqual(usage.lastConnected(ipad), date(2026, 11, 5, 11))
+        XCTAssertEqual(usage.lastConnected(mac), date(2026, 11, 5, 10), "kept with no data")
+        usage.keep(only: [mac])
+        XCTAssertNil(usage.lastConnected(ipad), "dropped with the device")
+    }
+
+    /// The clock was ahead, then set right: the next handshake shows, not the one from the clock that
+    /// was ahead, which would read as a time still to come.
+    func testAClockSetBackDoesntKeepAHandshakeFromTheFuture() {
+        var usage = MonthlyUsage()
+        usage.record([:], handshakes: [ipad: date(2026, 11, 5, 21)], at: date(2026, 11, 5, 21), calendar: calendar)
+        usage.record([:], handshakes: [ipad: date(2026, 11, 5, 15)], at: date(2026, 11, 5, 15), calendar: calendar)
+        XCTAssertEqual(usage.lastConnected(ipad), date(2026, 11, 5, 15))
+    }
+
+    /// Saved with the data, so it outlives a relaunch, where the server knows no handshake yet.
+    func testTheLastHandshakeSurvivesARelaunch() {
+        let defaults = UserDefaults(suiteName: "MonthlyUsageTests.handshakes")!
+        defaults.removePersistentDomain(forName: "MonthlyUsageTests.handshakes")
+        defer { defaults.removePersistentDomain(forName: "MonthlyUsageTests.handshakes") }
+        var usage = MonthlyUsage()
+        usage.record([:], handshakes: [ipad: date(2026, 11, 5, 9)], at: date(2026, 11, 5), calendar: calendar)
+        XCTAssertNotEqual(usage, MonthlyUsage(), "a new handshake is a change to save")
+        usage.save(to: defaults)
+        XCTAssertEqual(MonthlyUsage.load(from: defaults).lastConnected(ipad), date(2026, 11, 5, 9))
+    }
+
+    /// Data saved before Tether kept handshakes still reads, and its devices say Never until they
+    /// connect again.
+    func testDataSavedBeforeHandshakesWereKeptReadsWithNone() throws {
+        var usage = MonthlyUsage()
+        usage.record([ipad: t(0, 100)], handshakes: [ipad: date(2026, 11, 5, 9)], at: date(2026, 11, 5), calendar: calendar)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(usage)) as? [String: Any])
+        XCTAssertNotNil(json.removeValue(forKey: "lastHandshakes"))
+        let old = try JSONDecoder().decode(MonthlyUsage.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(old.of(ipad, at: date(2026, 11, 5), calendar: calendar).thisMonth, t(0, 100))
+        XCTAssertNil(old.lastConnected(ipad))
+    }
+
     func testTheTotalIsBothWays() {
         XCTAssertEqual(t(3, 4).total, 7)
         XCTAssertEqual(t(.max, 4).total, .max, "never wraps")

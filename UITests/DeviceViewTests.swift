@@ -14,15 +14,17 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertEqual(staticText("device.status").label, "Connected")
         XCTAssertTrue(element("device.remove").exists)
         assertNowhere(element("wireguard.qr"), text(containing: "10.7.0.2"), message: "no per-device code or address any more")
+        assertNowhere(element("device.lastConnected"), message: "connected says it")
     }
 
-    /// What a device used this month and last, through Tether (#75). The demo's iPad used 3.12 GB of
-    /// its 10 GB limit, and the Windows PC has no limit.
+    /// What a device used this month and last, through Tether (#75), with down and up under it (#73).
+    /// The demo's iPad used 3.12 GB of its 10 GB limit, and the Windows PC has no limit and used nothing.
     func testADeviceShowsItsDataThisMonthAndLast() throws {
         launch(.sharing)
         openDevice("iPad")
         let thisMonth = reveal(element("device.thisMonth"))
         XCTAssertTrue(thisMonth.label.contains("3.12 GB of 10 GB this month") && thisMonth.label.contains("Resets on November 1"), thisMonth.label)
+        XCTAssertTrue(thisMonth.label.contains("3 GB down, 120 MB up"), "read as words, not arrows: \(thisMonth.label)")
         let lastMonth = reveal(element("device.lastMonth"))
         XCTAssertTrue(lastMonth.label.contains("Last month") && lastMonth.label.contains("0 bytes"), lastMonth.label)
         XCTAssertTrue(sectionHeader("Data through Tether").exists)
@@ -32,8 +34,7 @@ final class DeviceViewTests: TetherUITestCase {
         try audit(only: "device.")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         openDevice("Windows PC")
-        let plain = reveal(element("device.thisMonth"))
-        XCTAssertTrue(plain.label.contains("This month") && plain.label.contains("0 bytes"), "no limit, no meter: \(plain.label)")
+        XCTAssertEqual(reveal(element("device.thisMonth")).label, "Not used this month", "no limit, no meter, no 0 bytes")
         XCTAssertEqual(reveal(element("device.limitFooter")).label,
                        "Counts data both ways. With a limit, Tether pauses Windows PC when it reaches it, until the count resets on November 1.")
     }
@@ -61,10 +62,33 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertTrue(reveal(app.buttons["device.limit"].firstMatch).label.contains("7.5 GB") || value(of: app.buttons["device.limit"].firstMatch) == "7.5 GB")
     }
 
+    /// And when it last connected (#73): two hours before the demo's 6 PM.
     func testAnUnconnectedDeviceSaysNotConnected() {
         launch(.sharing)
         openDevice("Windows PC")
         XCTAssertEqual(staticText("device.status").label, "Not connected")
+        let last = reveal(element("device.lastConnected")).label
+        XCTAssertTrue(last.contains("Last connected") && last.contains("Today at 4:00"), last)
+    }
+
+    /// Without a limit, this month is a big number with down and up under it (#73).
+    func testWithoutALimitThisMonthIsABigNumberWithDownAndUp() {
+        launch(.sharing)
+        openDevice("iPad")
+        reveal(app.buttons["device.limit"].firstMatch).tap()
+        XCTAssertTrue(app.buttons["None"].waitForExistence(timeout: 3))
+        app.buttons["None"].tap()
+        let thisMonth = reveal(element("device.thisMonth")).label
+        XCTAssertTrue(thisMonth.contains("3.12 GB") && thisMonth.contains("this month") && thisMonth.contains("3 GB down, 120 MB up"), thisMonth)
+        assertNowhere(text(containing: "of 10 GB"), text(containing: "Resets on"), message: "no meter without a limit")
+    }
+
+    /// A paused device says why it can't connect, not when it last did (#73).
+    func testAPausedDeviceDoesntSayWhenItLastConnected() {
+        launch(.paused)
+        openDevice("iPad")
+        XCTAssertEqual(staticText("device.status").label, "Paused")
+        assertNowhere(element("device.lastConnected"))
     }
 
     func testBackReturnsToTheMainScreen() {

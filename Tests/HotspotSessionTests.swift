@@ -388,6 +388,26 @@ final class HotspotSessionTests: XCTestCase {
                        TrafficTotals(bytesUp: 30, bytesDown: 5000))
     }
 
+    /// When a device last connected outlives the hotspot going (#73). Sharing stops the server before
+    /// its last read, and a stopped server knows no handshake, so the date kept is the last read's.
+    func testTheLastConnectedTimeOutlivesTheHotspotGoing() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let scanned = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertNil(session.lastConnected(of: scanned.id), "never connected")
+        server.connected = [scanned.address]
+        server.handshakes = [scanned.address: minutes(-1)]
+        session.sampleTraffic()
+        XCTAssertEqual(session.lastConnected(of: scanned.id), minutes(-1))
+        server.handshakes = [scanned.address: minutes(0)] // after that read, gone with the server
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertEqual(session.lastConnected(of: scanned.id), minutes(-1))
+        XCTAssertEqual(MonthlyUsage.load(from: usageDefaults).lastConnected(scanned.id), minutes(-1), "saved, for a relaunch")
+    }
+
     /// A removed device's data goes with it.
     func testARemovedDevicesDataIsDropped() throws {
         makeSession()

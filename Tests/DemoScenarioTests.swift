@@ -38,6 +38,13 @@ final class DemoScenarioTests: XCTestCase {
         }
     }
 
+    /// The Windows PC last connected two hours before the demo's clock, so its screen says when (#73).
+    func testTheWindowsPCLastConnectedTwoHoursBefore() throws {
+        let session = DemoState(.sharing).makeSession()
+        let pc = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "Windows PC" })
+        XCTAssertEqual(session.lastConnected(of: pc.id), DemoScenario.now.addingTimeInterval(-2 * 3600))
+    }
+
     func testTheProblemDemosShowTheirProblem() {
         for scenario in DemoScenario.allCases {
             let session = DemoState(scenario).makeSession()

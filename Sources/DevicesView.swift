@@ -122,6 +122,12 @@ struct DeviceView: View {
                                 .accessibilityIdentifier("device.statusDetail")
                         }
                     }
+                    // Only while it isn't connected (#73): connected says it all, and a paused one says why.
+                    if status == .notConnected {
+                        LabeledContent("Last connected", value: model.lastConnected(of: peer.id))
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("device.lastConnected")
+                    }
                 }
                 pauseSection
                 usageSection
@@ -164,7 +170,8 @@ struct DeviceView: View {
 extension DeviceView {
     /// What it used, both ways, counted the way the main screen counts (#75). iOS Settings > Cellular
     /// adds the iPhone's own headers on top, so it says "through Tether".
-    /// With a limit, a meter of this month against it and when the count resets (#75).
+    /// With a limit, a meter of this month against it and when the count resets (#75). Without one,
+    /// this month as a big number (#73). Either way down and up under it, once there's any.
     private var usageSection: some View {
         let usage = model.usage(of: peer.id)
         let used = usage.thisMonth.total
@@ -174,6 +181,7 @@ extension DeviceView {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("\(Format.bytes(used)) of \(Format.bytes(limit)) this month")
                         .font(.headline)
+                    if used > 0 { downAndUp(usage.thisMonth) }
                     LimitMeter(fraction: limit == 0 ? 1 : min(1, Double(used) / Double(limit)), over: used >= limit)
                     Text("Resets on \(resets)")
                         .font(.subheadline)
@@ -187,10 +195,20 @@ extension DeviceView {
                         .font(.subheadline)
                         .accessibilityIdentifier("device.overLimit")
                 }
-            } else {
-                LabeledContent("This month", value: Format.bytes(used))
-                    .accessibilityElement(children: .combine)
+            } else if used == 0 {
+                Text("Not used this month")
+                    .font(.headline)
                     .accessibilityIdentifier("device.thisMonth")
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    // One text, so it wraps with large text instead of squeezing the number.
+                    Text("\(Text(Format.bytes(used)).font(.title.bold())) this month")
+                        .font(.headline)
+                    downAndUp(usage.thisMonth)
+                }
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("device.thisMonth")
             }
             LabeledContent("Last month", value: Format.bytes(usage.lastMonth.total))
                 .accessibilityElement(children: .combine)
@@ -222,6 +240,14 @@ extension DeviceView {
                 .foregroundStyle(Color(.label))
                 .accessibilityIdentifier("device.limitFooter")
         }
+    }
+
+    /// "↓ 3 GB ↑ 120 MB", which VoiceOver reads as "3 GB down, 120 MB up" rather than the arrows.
+    private func downAndUp(_ month: TrafficTotals) -> some View {
+        let down = Format.bytes(month.bytesDown), up = Format.bytes(month.bytesUp)
+        return Text("↓ \(down) ↑ \(up)")
+            .font(.subheadline)
+            .accessibilityLabel("\(down) down, \(up) up")
     }
 
     /// The menu's choices, with a typed amount the device has, then Other amount.

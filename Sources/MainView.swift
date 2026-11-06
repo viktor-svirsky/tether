@@ -89,6 +89,9 @@ struct MainView: View {
                                         DeviceStatusLabel(status: DeviceStatus(peer, connected: model.wireGuardConnected))
                                             .font(.subheadline)
                                     }
+                                    // The label colour: grey text on the card fails the contrast audit.
+                                    Text(Format.thisMonth(model.usage(of: peer.id).thisMonth.total))
+                                        .font(.subheadline)
                                     if model.needsNewConfig(peer) { OldAddressLabel().font(.footnote) }
                                 }
                             }

@@ -344,6 +344,16 @@ final class Model: ObservableObject {
     /// See `HotspotSession.usage(of:)`.
     func usage(of id: WireGuardSetup.Peer.ID) -> MonthlyUsage.Usage { session.usage(of: id) }
 
+    /// "Today at 4:00 PM", or "Never": see `HotspotSession.lastConnected(of:)`. A demo goes by its own
+    /// clock, like the expiry warning.
+    func lastConnected(of id: WireGuardSetup.Peer.ID) -> String {
+        var now = Date()
+        #if DEBUG
+        if demo != nil { now = DemoScenario.now }
+        #endif
+        return Format.lastConnected(session.lastConnected(of: id), now: now, calendar: .current)
+    }
+
     /// See `HotspotSession.setLimit`.
     func setLimit(_ id: WireGuardSetup.Peer.ID, _ limit: UInt64?) { session.setLimit(id, limit) }
 

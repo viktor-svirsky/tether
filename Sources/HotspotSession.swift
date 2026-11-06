@@ -718,6 +718,10 @@ final class HotspotSession {
         monthlyUsage.of(id, at: now(), calendar: calendar)
     }
 
+    /// The device's last handshake, kept through restarts and relaunches (#73). Nil for never, and for
+    /// a device that hasn't connected since the version that started keeping it.
+    func lastConnected(of id: WireGuardSetup.Peer.ID) -> Date? { monthlyUsage.lastConnected(id) }
+
     /// Adds what each device's counters grew by to this month, and saves at most once a minute. A
     /// crash loses up to that minute, never counts anything twice.
     private func countUsage(_ peers: [String: PeerStats]) {
@@ -725,10 +729,15 @@ final class HotspotSession {
         for peer in devices.setup.peers { ids[peer.address] = peer.id }
         if let ready = devices.setup.ready { ids[ready.address] = ready.id }
         var counts: [WireGuardSetup.Peer.ID: TrafficTotals] = [:]
-        for (address, stats) in peers { if let id = ids[address] { counts[id] = stats.traffic } }
+        var handshakes: [WireGuardSetup.Peer.ID: Date] = [:]
+        for (address, stats) in peers {
+            guard let id = ids[address] else { continue }
+            counts[id] = stats.traffic
+            handshakes[id] = stats.lastHandshake
+        }
         let before = monthlyUsage
         let now = self.now()
-        monthlyUsage.record(counts, at: now, calendar: calendar)
+        monthlyUsage.record(counts, handshakes: handshakes, at: now, calendar: calendar)
         if monthlyUsage != before { usageUnsaved = true }
         checkLimits()
         if usageSavedAt.map({ now.timeIntervalSince($0) >= 60 }) ?? true { saveUsage() }

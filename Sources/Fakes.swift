@@ -32,6 +32,9 @@ final class FakeServer: WireGuardServing {
     var peerTraffic: [String: TrafficTotals] = [:]
     /// Where a connected device's last handshake came from, ip:port, by tunnel address.
     var endpoints: [String: String] = [:]
+    /// Each device's last handshake, by tunnel address. Reported only while running, as the real
+    /// server forgets them when it stops.
+    var handshakes: [String: Date] = [:]
     /// Reported only while running, as the real server's knocks go with it.
     var stale: StaleConfig?
     /// The addresses of each start, comma-separated.
@@ -69,6 +72,7 @@ final class FakeServer: WireGuardServing {
                 peers[address, default: PeerStats()].connected = true
                 peers[address]?.endpoint = endpoints[address]
             }
+            for (address, handshake) in handshakes { peers[address, default: PeerStats()].lastHandshake = handshake }
         }
         return ServerSnapshot(totals: totals, peers: peers, stale: running ? stale : nil)
     }
