@@ -145,29 +145,56 @@ func TestKnocksCountOnlyCloseTogetherAndByKind(t *testing.T) {
 	}
 }
 
-// A device added again connects from where it knocked, and isn't told for the rest of the minute that
-// its config no longer works. A knock after it connected is a stale config again.
-func TestADeviceThatConnectsFromWhereItKnockedIsNoLongerStale(t *testing.T) {
+// connectedOne starts a server with one device connected, and returns them with another port at
+// the device's address: where a stale config on it, or behind it, knocks from.
+func connectedOne(t *testing.T) (*Server, time.Time, string) {
+	t.Helper()
 	s, c := setup(t)
 	fetchAndShake(t, s, c, tcpServer(t, 10))
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	ep, err := netip.ParseAddrPort(s.endpoints[netip.MustParseAddr("10.7.0.2")])
-	shook := s.shaken[netip.MustParseAddr("10.7.0.2")]
-	old := netip.AddrPortFrom(ep.Addr(), ep.Port()^1).String() // its old tunnel had another port
-	s.knocks.heard(staleDevice, old, shook.Add(-10*time.Second))
-	s.knocks.heard(staleDevice, old, shook.Add(-5*time.Second))
-	s.mu.Unlock()
 	if err != nil {
 		t.Fatalf("no endpoint for the device: %v", err)
 	}
-	if st := s.statsMessage().Stale; st != (staleStats{}) {
-		t.Fatalf("stale %+v, want none once it connected from there", st)
-	}
+	return s, s.shaken[netip.MustParseAddr("10.7.0.2")], netip.AddrPortFrom(ep.Addr(), ep.Port()^1).String()
+}
+
+// knockTwice is a stale device knocking from from, the second time at at.
+func knockTwice(s *Server, from string, at time.Time) {
 	s.mu.Lock()
-	s.knocks.heard(staleDevice, old, shook.Add(5*time.Second))
+	defer s.mu.Unlock()
+	s.knocks.heard(staleDevice, from, at.Add(-5*time.Second))
+	s.knocks.heard(staleDevice, from, at)
+}
+
+// A device added again connects from where it knocked, so the page doesn't tell it for the rest of
+// the minute that its config no longer works. The main screen still says a device knocked.
+func TestADeviceThatConnectsFromWhereItKnockedIsNoLongerNamed(t *testing.T) {
+	s, shook, old := connectedOne(t)
+	knockTwice(s, old, shook.Add(-5*time.Second))
+	if st := s.statsMessage().Stale; st.Kind != staleDevice || st.From != "" {
+		t.Fatalf("stale %+v, want a stale device from nowhere once one connected from there", st)
+	}
+	// Once that device is gone, a knock from there names it again.
+	later := shook.Add(onlineWithin + time.Minute)
+	s.mu.Lock()
+	s.now = func() time.Time { return later }
 	s.mu.Unlock()
-	if st := s.statsMessage().Stale; st.From != old {
-		t.Fatalf("stale %+v, want the knock that came after it connected", st)
+	knockTwice(s, old, later)
+	if st := s.statsMessage().Stale; st.Kind != staleDevice || st.From != old {
+		t.Fatalf("stale %+v, want a stale device from %s", st, old)
+	}
+}
+
+// A travel router's clients share its address, and the router handshakes only every 2 minutes,
+// so a stale config behind it knocks after the router's last handshake. The page can't tell which
+// device that is, so it names none, or every device behind the router would hear it.
+func TestAKnockFromBehindARouterNamesNoDevice(t *testing.T) {
+	s, shook, behind := connectedOne(t)
+	knockTwice(s, behind, shook.Add(time.Minute))
+	if st := s.statsMessage().Stale; st.Kind != staleDevice || st.From != "" {
+		t.Fatalf("stale %+v, want a stale device from nowhere", st)
 	}
 }
 

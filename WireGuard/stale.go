@@ -46,9 +46,10 @@ func (k *knocks) heard(kind, from string, at time.Time) {
 	k.last[kind] = at
 }
 
-// staleLocked is the stale config for the stats, unless a device has connected from where it knocked
-// since: it was added again, and the config page mustn't tell it to do that again for the rest of the
-// minute. Its old tunnel may have had another port, so only the address counts. Runs with s.mu held.
+// staleLocked is the stale config for the stats, naming nowhere when a connected device has its
+// address: that device was added again, or it's a travel router whose clients share its address, so
+// the config page can't tell which device knocked. Its old tunnel may have had another port, so only
+// the address counts. The main screen still says a device knocked. Runs with s.mu held.
 func (s *Server) staleLocked() staleStats {
 	st := s.knocks.stale
 	from, err := netip.ParseAddrPort(st.From)
@@ -57,8 +58,9 @@ func (s *Server) staleLocked() staleStats {
 	}
 	for addr, ep := range s.endpoints {
 		e, err := netip.ParseAddrPort(ep)
-		if at, ok := s.shaken[addr]; ok && at.Unix() >= st.At && err == nil && e.Addr() == from.Addr() {
-			return staleStats{}
+		if at, ok := s.shaken[addr]; ok && s.now().Sub(at) < onlineWithin && err == nil && e.Addr() == from.Addr() {
+			st.From = ""
+			return st
 		}
 	}
 	return st
