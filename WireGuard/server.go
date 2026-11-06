@@ -1116,15 +1116,17 @@ type stackTun struct {
 	dropped atomic.Uint64
 }
 
+// It sends no up event, unlike wireguard-go's netstack TUN. Start brings the device up itself, and
+// the event would bring it up a second time on another goroutine. When that one failed on a taken
+// port, wireguard-go set its port to 0, and Start's Up then listened on a random port (#39).
 func newStackTun() *stackTun {
 	t := &stackTun{
 		ep:       channel.New(queueLen, MTU, ""),
-		events:   make(chan tun.Event, 1),
+		events:   make(chan tun.Event),
 		incoming: make(chan *buffer.View, queueLen),
 		done:     make(chan struct{}),
 	}
 	t.ep.AddNotify(t)
-	t.events <- tun.EventUp
 	return t
 }
 

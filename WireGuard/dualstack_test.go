@@ -98,6 +98,32 @@ func TestAnAddressThatFailsStopsTheStart(t *testing.T) {
 	}
 }
 
+// A taken port fails the start too. The TUN's up event used to bring the device up a second time
+// beside Start's own Up, and when that one failed first, Start listened on a random port and
+// reported success, about one start in 400 (#39).
+func TestAServerNeverStartsOnATakenPort(t *testing.T) {
+	if raceEnabled {
+		t.Skip("too few starts fit the race run's time to catch it")
+	}
+	taken, err := net.ListenUDP("udp", &net.UDPAddr{IP: loopback.AsSlice()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	port := taken.LocalAddr().(*net.UDPAddr).Port
+	sPriv, _ := keyPair(t)
+	for range 2000 {
+		s, err := Start([]netip.Addr{loopback}, port, sPriv)
+		if err == nil {
+			s.Close()
+			t.Fatal("started on a port that is taken")
+		}
+		if !strings.Contains(err.Error(), "address already in use") {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestTheBindKeepsOneSocketPerFamily(t *testing.T) {
 	b := &hostBind{hosts: []netip.Addr{loopback, netip.IPv6Loopback()}}
 	fns, port, err := b.Open(0)
