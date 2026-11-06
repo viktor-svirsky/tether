@@ -374,6 +374,7 @@ func (s *Server) close() {
 // connections are closed, so a device that gets its tunnel address later can't receive them.
 // A paused device stays in wireguard-go, so its session and handshake go on, but its traffic is
 // refused (see ownerLocked) and its open connections are closed, the way a removed device's are.
+// A paused router gives up the role, so another router can take over meanwhile.
 func (s *Server) SetPeers(peers []Peer) error {
 	want := map[[32]byte]netip.Addr{}
 	paused := map[[32]byte]bool{}
@@ -385,11 +386,13 @@ func (s *Server) SetPeers(peers []Peer) error {
 	}
 	s.applying.Lock()
 	defer s.applying.Unlock()
-	// The router stays the router while its key keeps its address.
+	// The router stays the router while its key keeps its address and isn't paused. A paused router
+	// still handshakes, so it would look online to makeRouter and keep every other router out. Once
+	// resumed, its next packet for a client asks for the role back like any device's, see makeRouter.
 	s.mu.Lock()
 	router := s.router
 	for key, addr := range s.peers {
-		if addr == router && want[key] != router {
+		if addr == router && (want[key] != router || paused[key]) {
 			router = netip.Addr{}
 		}
 	}
@@ -564,6 +567,8 @@ func (s *Server) apply(want map[[32]byte]netip.Addr, router netip.Addr) error {
 	s.setPeersLocked(kept)
 	if router != wasRouter {
 		s.router, s.routed = netip.Addr{}, false
+		// A device kept out for the old router may have the role on its next packet.
+		s.refused = netip.Addr{}
 	}
 	var closing []io.Closer
 	for key, addr := range have {
