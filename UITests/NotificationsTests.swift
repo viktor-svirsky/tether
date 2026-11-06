@@ -17,13 +17,15 @@ final class NotificationsTests: TetherUITestCase {
         launch(.sharing)
         openSettings()
         for kind in ["connected", "disconnected", "sharingStopped", "idleStopped", "limit", "closed", "expiring"] {
-            XCTAssertTrue(toggle(kind).waitForExistence(timeout: 5), kind)
+            // Seven switches run past the screen, under New devices.
+            XCTAssertTrue(reveal(toggle(kind)).exists, kind)
             XCTAssertEqual(value(of: toggle(kind)), "1", kind)
         }
         XCTAssertEqual(toggle("connected").label, "A device connects")
         XCTAssertEqual(toggle("closed").label, "iOS stops Tether in the background")
         XCTAssertEqual(toggle("idleStopped").label, "Sharing stops while idle")
         XCTAssertEqual(toggle("expiring").label, "Tether stops opening soon")
+        XCTAssertEqual(toggle("limit").label, "A device nears or reaches its limit")
     }
 
     /// Settings > Sharing (#76): Never at first, the four choices, and the choice kept.

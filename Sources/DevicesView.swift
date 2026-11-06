@@ -143,7 +143,6 @@ struct DeviceView: View {
         .alert("Data limit", isPresented: $typingLimit) {
             TextField("GB", text: $typedLimit)
                 .keyboardType(.decimalPad)
-                .accessibilityIdentifier("device.limitAmount")
             Button("Set") {
                 if let bytes = DataLimit.bytes(typedGB: typedLimit) { model.setLimit(peer.id, bytes) }
             }
@@ -215,6 +214,8 @@ extension DeviceView {
             Text("Data through Tether")
         } footer: {
             Text("Counts data both ways. When \(current.name) reaches it, Tether pauses \(current.name) until the count resets on \(resets). You can resume it sooner.")
+                // In the label colour: this footer's grey just misses the contrast audit.
+                .foregroundStyle(Color(.label))
                 .accessibilityIdentifier("device.limitFooter")
         }
     }

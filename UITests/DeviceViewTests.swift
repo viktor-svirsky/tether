@@ -47,10 +47,13 @@ final class DeviceViewTests: TetherUITestCase {
             XCTAssertTrue(app.buttons[choice].waitForExistence(timeout: 3), choice)
         }
         app.buttons["Other amount"].tap()
-        let amount = app.textFields["device.limitAmount"]
-        XCTAssertTrue(amount.waitForExistence(timeout: 3))
+        // A SwiftUI alert doesn't pass its text field's identifier on, so it's found in the alert.
+        let alert = app.alerts["Data limit"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 3))
+        let amount = alert.textFields.firstMatch
+        amount.tap()
         amount.typeText("7.5")
-        app.alerts.buttons["Set"].tap()
+        alert.buttons["Set"].tap()
         let meter = reveal(element("device.thisMonth"))
         XCTAssertTrue(meter.label.contains("0 bytes of 7.5 GB this month"), meter.label)
         XCTAssertTrue(reveal(app.buttons["device.limit"].firstMatch).label.contains("7.5 GB") || value(of: app.buttons["device.limit"].firstMatch) == "7.5 GB")
