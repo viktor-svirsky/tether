@@ -2,8 +2,9 @@ import XCTest
 @testable import TetherCore
 
 final class KeepAliveAudioEventTests: XCTestCase {
-    func testPlaysTheSamePlayerAgainAfterACall() {
-        XCTAssertEqual(KeepAlivePolicy.restart(after: .interruptionEnded, started: true), .resume)
+    /// Right after a call the Phone app can still hold the audio, so a single try fails (#106).
+    func testHoldsOnUntilTheSoundPlaysAfterACall() {
+        XCTAssertEqual(KeepAlivePolicy.restart(after: .interruptionEnded, started: true), .holdOn)
     }
 
     func testRebuildsEverythingAfterAMediaServicesReset() {
