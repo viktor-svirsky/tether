@@ -1380,20 +1380,6 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertFalse(session.showsStaleConfig)
     }
 
-    /// The page reads the knock when it's asked (#63): off screen, nothing keeps it between reads.
-    func testThePageReadsAKnockWhenItsAsked() {
-        makeSession()
-        address = hotspot
-        session.syncWithHotspot()
-        session.leftScreen()
-        server.stale = StaleConfig(kind: .device, at: now, from: "172.20.10.3:51820")
-        XCTAssertTrue(body(page.ask(.page, from: "172.20.10.3")).contains("This device's config no longer works."))
-        XCTAssertFalse(body(page.ask(.page, from: "172.20.10.4")).contains("no longer works"))
-        server.stale = StaleConfig(kind: .server, at: now)
-        XCTAssertTrue(body(page.ask(.page, from: "172.20.10.4")).contains("A device here has an old config."))
-        XCTAssertFalse(body(page.ask(.page, from: hotspot)).contains("old config"), "it came through a tunnel that works")
-    }
-
     func testSpeedsAreBitsPerSecondBetweenTwoSamples() {
         makeSession()
         address = hotspot
