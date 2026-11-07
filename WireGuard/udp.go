@@ -104,14 +104,16 @@ func (s *Server) handleUDP(id stack.TransportEndpointID, pkt *stack.PacketBuffer
 		return true // handled: dropped
 	}
 	viaTether := dst == dnsAddr
+	allowed := s.leaves(dst.Addr())
 	if viaTether {
 		var doh string
 		if dst, doh = s.dnsRoute(); doh != "" {
 			s.askDoH(device, doh, pkt.Data().AsRange().ToSlice())
 			return true
 		}
+		allowed = forwardable(dst.Addr()) // Tether's choice, see forwardTCP
 	}
-	if !forwardable(dst.Addr()) {
+	if !allowed {
 		return true
 	}
 	c := s.cone(device)

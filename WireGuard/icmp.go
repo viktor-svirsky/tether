@@ -128,7 +128,7 @@ func (s *Server) sendPing(p []byte) {
 	ip := header.IPv4(p)
 	src, dst := netip.AddrFrom4(ip.SourceAddress().As4()), netip.AddrFrom4(ip.DestinationAddress().As4())
 	m := header.ICMPv4(ip.Payload())
-	if !forwardable(dst) {
+	if !s.leaves(dst) {
 		return
 	}
 	owner := s.owner(src)

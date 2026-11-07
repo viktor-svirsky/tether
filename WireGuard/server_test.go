@@ -450,7 +450,8 @@ func TestLocalDestinationsStayInside(t *testing.T) {
 			t.Errorf("%s should stay inside", a)
 		}
 	}
-	for _, a := range []string{"1.1.1.1", "172.20.10.1", "2606:4700::1111"} {
+	// Another device on the hotspot. The iPhone's own 172.20.10.1 is refused by the server, see own_test.go.
+	for _, a := range []string{"1.1.1.1", "172.20.10.2", "2606:4700::1111"} {
 		if !forwardable(netip.MustParseAddr(a)) {
 			t.Errorf("%s should go out", a)
 		}
