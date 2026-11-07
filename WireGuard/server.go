@@ -13,11 +13,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -94,6 +96,11 @@ const (
 	// WireGuard makes a new one every 2 minutes while packets flow, and the client config's
 	// PersistentKeepalive keeps them flowing on an idle tunnel.
 	onlineWithin = 3 * time.Minute
+	// localEvery is how often the iPhone's own addresses are read again, see refreshLocal. So a VPN
+	// that comes up, or a new cellular address, is out of the devices' reach within it.
+	localEvery = 5 * time.Second
+	// pagePort is the config page's, ConfigPage.port in Swift. It listens where WireGuard does.
+	pagePort = 80
 )
 
 func init() {
@@ -234,6 +241,17 @@ type Server struct {
 	lookups    map[netip.Addr]int // each device's DoH lookups waiting, see maxLookups
 	// looking counts the DoH lookups and DNS-over-TCP connections, for Close to wait for.
 	looking sync.WaitGroup
+	// local is the iPhone's own addresses, which no device reaches, see refreshLocal. The packet
+	// path reads it without a lock. listAddrs lists them, and tests swap it. listing keeps two reads
+	// from storing out of order.
+	local     atomic.Pointer[map[netip.Addr]struct{}]
+	listAddrs func() ([]net.Addr, error)
+	listing   sync.Mutex
+	// page is where Tether's config page listens: pagePort on each address WireGuard listens on. A
+	// device whose tunnel works opens it through the tunnel, so it's the one own address that stays
+	// reachable, over TCP only. Set by Start. Tests swap it under s.mu before any traffic, and
+	// forwardTCP reads it after taking s.mu.
+	page []netip.AddrPort
 	// closed is set by Close. From then on handleTCP, track and cone let nothing new in.
 	closed bool
 	// forwarding counts the forwardTCP goroutines handleTCP let in, for Close to wait for.
@@ -283,10 +301,16 @@ func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 			_, err := c.WriteToUDPAddrPort(payload, to)
 			return err
 		},
-		stop:  make(chan struct{}),
-		found: make(chan struct{}, 1),
-		shake: make(chan struct{}, 1),
+		stop:      make(chan struct{}),
+		found:     make(chan struct{}, 1),
+		shake:     make(chan struct{}, 1),
+		listAddrs: net.InterfaceAddrs,
 	}
+	for _, h := range hosts {
+		s.page = append(s.page, netip.AddrPortFrom(h.Unmap(), pagePort))
+	}
+	s.local.Store(&map[netip.Addr]struct{}{})
+	s.refreshLocal() // before any device's packet can come in
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
 	s.dohClient, s.dohTimeout = newDoHClient(dialer.DialContext), dohTimeout
@@ -337,7 +361,7 @@ func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		return nil, err
 	}
 	s.stopped.Add(1)
-	go s.refreshHandshakes()
+	go s.refresh()
 	return s, nil
 }
 
@@ -629,13 +653,20 @@ func (s *Server) Stats() Stats {
 	return st
 }
 
-func (s *Server) refreshHandshakes() {
+// refresh reads the handshakes and the iPhone's own addresses again on their tickers, and makes a
+// newly found router, until Close.
+func (s *Server) refresh() {
 	defer s.stopped.Done()
 	t := time.NewTicker(handshakeEvery)
 	defer t.Stop()
+	local := time.NewTicker(localEvery)
+	defer local.Stop()
+	s.readHandshakes()
 	for {
-		s.readHandshakes()
 		select {
+		case <-local.C:
+			s.refreshLocal()
+			continue // not a reason to read the handshakes
 		case <-t.C:
 		case <-s.shake:
 		case <-s.found:
@@ -647,6 +678,7 @@ func (s *Server) refreshHandshakes() {
 		case <-s.stop:
 			return
 		}
+		s.readHandshakes()
 	}
 }
 
@@ -695,13 +727,63 @@ func (s *Server) readHandshakes() {
 	s.endpoints = where
 }
 
-// forwardable says whether a device may reach dst through the iPhone. The iPhone's own loopback,
-// the tunnel's addresses, multicast and broadcast stay inside: an mDNS query from the iPad would
-// otherwise become a flow spraying multicast from the iPhone.
+// forwardable says whether a device may reach dst through the iPhone, by the address alone. The
+// iPhone's own loopback, the tunnel's addresses, multicast and broadcast stay inside: an mDNS query
+// from the iPad would otherwise become a flow spraying multicast from the iPhone. The iPhone's other
+// own addresses change, so the server checks them too, see leaves.
 func forwardable(dst netip.Addr) bool {
 	return dst.IsValid() && !dst.IsLoopback() && !dst.IsMulticast() && !dst.IsUnspecified() &&
 		!dst.IsLinkLocalUnicast() && dst != netip.AddrFrom4([4]byte{255, 255, 255, 255}) &&
 		!tunnelNet.Contains(dst)
+}
+
+// leaves says whether a device's packet for dst may go out through the iPhone: forwardable, and
+// not to one of the iPhone's own addresses. Those reach whatever listens on the iPhone itself,
+// other apps' local servers included, and no device needs them (#27).
+func (s *Server) leaves(dst netip.Addr) bool {
+	_, own := (*s.local.Load())[dst]
+	return forwardable(dst) && !own
+}
+
+// refreshLocal reads the iPhone's own addresses: the hotspot's, cellular, Wi-Fi and a VPN's tunnel
+// address. Exact addresses only, never their networks: a cellular address in 100.64.0.0/10 shares
+// that range with the other nodes of a Tailscale network, which the devices still reach. On an
+// error the last ones are kept. A change goes into the log.
+func (s *Server) refreshLocal() {
+	s.listing.Lock()
+	defer s.listing.Unlock()
+	s.mu.Lock()
+	listAddrs := s.listAddrs
+	s.mu.Unlock()
+	addrs, err := listAddrs()
+	if err != nil {
+		serverLog.add(time.Now(), "can't read the iPhone's own addresses: "+err.Error())
+		return
+	}
+	own := map[netip.Addr]struct{}{}
+	for _, a := range addrs {
+		n, ok := a.(*net.IPNet) // all InterfaceAddrs gives
+		if !ok {
+			continue
+		}
+		// Loopback and link-local stay inside anyway, see forwardable.
+		if addr, ok := netip.AddrFromSlice(n.IP); ok && forwardable(addr.Unmap()) {
+			own[addr.Unmap()] = struct{}{}
+		}
+	}
+	if maps.Equal(*s.local.Load(), own) {
+		return
+	}
+	s.local.Store(&own)
+	shown := "none"
+	if len(own) > 0 {
+		var each []string
+		for _, a := range slices.SortedFunc(maps.Keys(own), netip.Addr.Compare) {
+			each = append(each, a.String())
+		}
+		shown = strings.Join(each, ", ")
+	}
+	serverLog.add(time.Now(), "the iPhone's own addresses, which devices can't reach: "+shown)
 }
 
 var tunnelNet = netip.MustParsePrefix("10.7.0.0/24")
@@ -923,10 +1005,16 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	src := addrPort(id.RemoteAddress, 0).Addr()
 	dst := addrPort(id.LocalAddress, id.LocalPort)
 	var doh string
+	var allowed bool
 	if dst == dnsAddr {
+		// Where lookups go is Tether's choice, not the device's, so it may be one of the iPhone's
+		// own addresses. A device asking that address itself is refused.
 		dst, doh = s.dnsRoute()
+		allowed = forwardable(dst.Addr())
+	} else {
+		allowed = s.leaves(dst.Addr()) || slices.Contains(s.page, dst)
 	}
-	if a.refuse || doh == "" && !forwardable(dst.Addr()) {
+	if a.refuse || doh == "" && !allowed {
 		refuse()
 		return
 	}
