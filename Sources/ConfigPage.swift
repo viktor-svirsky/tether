@@ -122,28 +122,11 @@ enum ConfigPage {
         case noConfig
     }
 
-    /// A config that no longer works knocked in the last minute (#63), said before the rest: it's
-    /// why the device can't connect. Only these two can be told. Whether a tunnel works can't: a
-    /// request through one comes from the iPhone, whichever device sent it.
-    enum Stale: Equatable {
-        /// A device key the server doesn't let in, from the address that asks.
-        case thisDevice
-        /// A config for other server keys, from somewhere: wireguard-go doesn't say where.
-        case oldKeys
-
-        var line: String {
-            switch self {
-            case .thisDevice: "This device's config no longer works. Delete its tunnel in WireGuard and add it again."
-            case .oldKeys: "A device here has an old config. If it's this one, delete its tunnel in WireGuard and add it again."
-            }
-        }
+    static func page(_ state: State, status: Status = .ok) -> Response {
+        Response(status: status, contentType: "text/html; charset=utf-8", body: Data(html(state).utf8))
     }
 
-    static func page(_ state: State, stale: Stale? = nil, status: Status = .ok) -> Response {
-        Response(status: status, contentType: "text/html; charset=utf-8", body: Data(html(state, stale).utf8))
-    }
-
-    private static func html(_ state: State, _ stale: Stale?) -> String {
+    private static func html(_ state: State) -> String {
         let content = switch state {
         case .ready:
             """
@@ -173,7 +156,6 @@ enum ConfigPage {
             <p>Tether can't make a config for a new device right now. Tether's screen on the iPhone says why.</p>
             """
         }
-        let notice = stale.map { "<p class=\"stale\">\($0.line)</p>\n" } ?? ""
         return """
         <!doctype html>
         <html lang="en">
@@ -191,14 +173,13 @@ enum ConfigPage {
         summary { cursor: pointer; }
         ul { padding-left: 20px; margin: 8px 0 0; }
         code { font: 15px ui-monospace, Menlo, Consolas, monospace; }
-        .stale { color: var(--text); font-weight: 600; }
         .button { display: block; text-align: center; text-decoration: none; font-weight: 600; padding: 14px; border-radius: 12px; background: var(--accent); color: var(--on-accent); }
         </style>
         </head>
         <body>
         <main>
         <h1>Connect to Tether</h1>
-        \(notice)\(content)
+        \(content)
         </main>
         </body>
         </html>

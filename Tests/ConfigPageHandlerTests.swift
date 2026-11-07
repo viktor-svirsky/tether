@@ -13,10 +13,9 @@ final class ConfigPageHandlerTests: XCTestCase {
     private let config = "[Interface]\nPrivateKey = x\n"
 
     private func inputs(letIn: Bool = true, onScreen: Bool = true, noReady: Bool = false,
-                        host: String? = "172.20.10.1", config: String? = nil, stale: StaleConfig? = nil,
-                        at: Date? = nil) -> ConfigPageHandler.Inputs {
+                        host: String? = "172.20.10.1", config: String? = nil, at: Date? = nil) -> ConfigPageHandler.Inputs {
         ConfigPageHandler.Inputs(letIn: letIn, onScreen: onScreen, ready: noReady ? nil : ready, host: host,
-                                 config: config ?? self.config, stale: stale, hosts: ["172.20.10.1", "2001:db8::1"], now: at ?? start)
+                                 config: config ?? self.config, now: at ?? start)
     }
 
     func testThePageSaysWhatsMissing() {
@@ -92,65 +91,6 @@ final class ConfigPageHandlerTests: XCTestCase {
         XCTAssertEqual(handler.answer(.notFound, from: "x", inputs()), .answer(ConfigPage.notFound))
         XCTAssertEqual(handler.answer(.notGet, from: "x", inputs()), .answer(ConfigPage.notGet))
         XCTAssertEqual(handler.answer(.malformed, from: "x", inputs()), .answer(ConfigPage.malformed))
-    }
-
-    // MARK: A config that no longer works (#63)
-
-    /// A device whose config no longer works can't send through its tunnel, so it opens the page
-    /// from the address it knocks from. The page says so for a minute after its last knock, like the
-    /// main screen, and only to that device: another one's tunnel may work.
-    func testTheDeviceWhoseConfigNoLongerWorksIsToldSo() {
-        let handler = ConfigPageHandler()
-        let knock = StaleConfig(kind: .device, at: start, from: "172.20.10.3:51820")
-        let cases: [(client: String, at: Date, said: ConfigPage.Stale?, line: UInt)] = [
-            ("172.20.10.3", start, .thisDevice, #line),
-            ("172.20.10.3", start.addingTimeInterval(StaleConfig.shownFor - 1), .thisDevice, #line),
-            ("172.20.10.3", start.addingTimeInterval(StaleConfig.shownFor), nil, #line), // it stopped trying
-            ("172.20.10.4", start, nil, #line),
-        ]
-        for c in cases {
-            XCTAssertEqual(handler.answer(.page, from: c.client, inputs(stale: knock, at: c.at)),
-                           .answer(ConfigPage.page(.ready, stale: c.said)), line: c.line)
-        }
-        XCTAssertEqual(handler.answer(.page, from: "172.20.10.3", inputs(stale: StaleConfig(kind: .device, at: start))),
-                       .answer(ConfigPage.page(.ready)), "a knock that says nowhere is no device's")
-        let v6 = StaleConfig(kind: .device, at: start, from: "[2001:db8::5]:51820")
-        XCTAssertEqual(handler.answer(.page, from: "2001:db8::5", inputs(stale: v6)), .answer(ConfigPage.page(.ready, stale: .thisDevice)),
-                       "a handshake's endpoint has brackets and a port, a page client doesn't")
-    }
-
-    /// wireguard-go doesn't say where a config for old server keys knocks from, so each device that
-    /// opens the page hears it may be the one. Not a request from where Tether listens: that came
-    /// through a tunnel that works, or from the iPhone itself.
-    func testAConfigForOldKeysMayBeAnyDeviceButOneThatCameThroughTether() {
-        let handler = ConfigPageHandler()
-        let knock = StaleConfig(kind: .server, at: start)
-        let cases: [(client: String, at: Date, said: ConfigPage.Stale?, line: UInt)] = [
-            ("172.20.10.3", start, .oldKeys, #line),
-            ("2001:db8::5", start, .oldKeys, #line),
-            ("172.20.10.3", start.addingTimeInterval(StaleConfig.shownFor), nil, #line),
-            ("172.20.10.1", start, nil, #line),
-            ("2001:db8::1", start, nil, #line),
-        ]
-        for c in cases {
-            XCTAssertEqual(handler.answer(.page, from: c.client, inputs(stale: knock, at: c.at)),
-                           .answer(ConfigPage.page(.ready, stale: c.said)), line: c.line)
-        }
-    }
-
-    /// The device has to hear it whatever else the page says, and a download link it can't use
-    /// says it too.
-    func testTheLineComesWithEveryPage() {
-        let handler = ConfigPageHandler()
-        let knock = StaleConfig(kind: .device, at: start, from: "172.20.10.3:51820")
-        XCTAssertEqual(handler.answer(.page, from: "172.20.10.3", inputs(onScreen: false, stale: knock)),
-                       .answer(ConfigPage.page(.openTether, stale: .thisDevice)))
-        XCTAssertEqual(handler.answer(.pageHead, from: "172.20.10.3", inputs(letIn: false, stale: knock)),
-                       .answer(ConfigPage.page(.openAddDevice, stale: .thisDevice).forHead))
-        XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(noReady: true, stale: knock)),
-                       .answer(ConfigPage.page(.noConfig, stale: .thisDevice, status: .notFound)))
-        XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(stale: knock)),
-                       .download(ready, host: "172.20.10.1", config: config), "a new config is what it needs")
     }
 
     /// A page that fails every round is logged once, and again after it listened in between.

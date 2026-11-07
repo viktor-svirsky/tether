@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net/netip"
 	"strings"
 	"time"
 )
@@ -18,11 +17,9 @@ import (
 //   - "Received packet with invalid mac1": the config was made for other server keys, so Tether
 //     started over with new ones since. It names no endpoint.
 //
-// Two of a kind within knockWithin is a stale config, so one stray packet isn't. It keeps where the
-// knock that made it came from, so the config page can tell that device (#63). A hotspot sees one
-// stale device at a time, so the latest one is enough. wireguard-go reads handshakes on several
-// goroutines at once, so this runs under s.mu. Under load wireguard-go answers with a cookie before
-// it reads a handshake, which takes 128 queued handshakes: not on a hotspot.
+// Two of a kind within knockWithin is a stale config, so one stray packet isn't. wireguard-go reads
+// handshakes on several goroutines at once, so this runs under s.mu. Under load wireguard-go answers
+// with a cookie before it reads a handshake, which takes 128 queued handshakes: not on a hotspot.
 
 const (
 	staleDevice = "device" // a device key the server doesn't let in
@@ -38,37 +35,17 @@ type knocks struct {
 
 func newKnocks() knocks { return knocks{last: map[string]time.Time{}} }
 
-// heard counts one knock of kind from from ("" when wireguard-go doesn't say) at at.
-func (k *knocks) heard(kind, from string, at time.Time) {
+// heard counts one knock of kind at at.
+func (k *knocks) heard(kind string, at time.Time) {
 	if prev, ok := k.last[kind]; ok && at.Sub(prev) < knockWithin {
-		k.stale = staleStats{Kind: kind, At: at.Unix(), From: from}
+		k.stale = staleStats{Kind: kind, At: at.Unix()}
 	}
 	k.last[kind] = at
 }
 
-// staleLocked is the stale config for the stats, naming nowhere when a connected device has its
-// address: that device was added again, or it's a travel router whose clients share its address, so
-// the config page can't tell which device knocked. Its old tunnel may have had another port, so only
-// the address counts. The main screen still says a device knocked. Runs with s.mu held.
-func (s *Server) staleLocked() staleStats {
-	st := s.knocks.stale
-	from, err := netip.ParseAddrPort(st.From)
-	if err != nil {
-		return st
-	}
-	for addr, ep := range s.endpoints {
-		e, err := netip.ParseAddrPort(ep)
-		if at, ok := s.shaken[addr]; ok && s.now().Sub(at) < onlineWithin && err == nil && e.Addr() == from.Addr() {
-			st.From = ""
-			return st
-		}
-	}
-	return st
-}
-
 // noticeStale counts a handshake the server dropped because its config no longer works.
 func (s *Server) noticeStale(format string, args ...any) {
-	var kind, from string
+	var kind string
 	switch {
 	case format == "Received packet with invalid mac1":
 		kind = staleServer
@@ -80,12 +57,12 @@ func (s *Server) noticeStale(format string, args ...any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if kind == staleDevice {
-		from = fmt.Sprint(args[0])
+		from := fmt.Sprint(args[0])
 		for _, ep := range s.endpoints {
 			if ep == from {
 				return
 			}
 		}
 	}
-	s.knocks.heard(kind, from, s.now())
+	s.knocks.heard(kind, s.now())
 }
