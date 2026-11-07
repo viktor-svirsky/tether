@@ -48,6 +48,9 @@ struct StaleConfig: Equatable {
     let kind: Kind
     /// Its last handshake the server dropped.
     let at: Date
+    /// Where that came from, "ip:port", so the config page can tell that device (#63). Nil for
+    /// other server keys: wireguard-go doesn't say.
+    var from: String?
 
     /// How long it shows after its last handshake. A device that still tries sends one every 5 s.
     static let shownFor: TimeInterval = 60

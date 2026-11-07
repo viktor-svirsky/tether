@@ -126,6 +126,24 @@ final class ConfigPageTests: XCTestCase {
         XCTAssertTrue(none.contains("can't make a config"))
     }
 
+    /// A config that no longer works is why the device can't connect, so the page says it first.
+    func testAConfigThatNoLongerWorksIsSaidFirst() throws {
+        func html(_ state: ConfigPage.State, _ stale: ConfigPage.Stale?) throws -> String {
+            try XCTUnwrap(String(data: parts(ConfigPage.page(state, stale: stale)).body, encoding: .utf8))
+        }
+        let device = "This device's config no longer works. Delete its tunnel in WireGuard and add it again."
+        let oldKeys = "A device here has an old config. If it's this one, delete its tunnel in WireGuard and add it again."
+        let ready = try html(.ready, .thisDevice)
+        let line = try XCTUnwrap(ready.range(of: device))
+        XCTAssertLessThan(line.lowerBound, try XCTUnwrap(ready.range(of: "Download the config")).lowerBound)
+        XCTAssertTrue(try html(.openTether, .oldKeys).contains(oldKeys))
+        XCTAssertTrue(try html(.openTether, .oldKeys).contains("Open Tether on the iPhone"))
+        for state in [ConfigPage.State.ready, .openTether, .openAddDevice, .noConfig] {
+            let plain = try html(state, nil)
+            XCTAssertFalse(plain.contains("no longer works") || plain.contains("old config"), "\(state)")
+        }
+    }
+
     func testTheAddressLeavesOutPort80() {
         XCTAssertEqual(ConfigPage.url(host: "172.20.10.1", port: 80), "http://172.20.10.1")
         XCTAssertEqual(ConfigPage.url(host: "172.20.10.1", port: 8080), "http://172.20.10.1:8080")

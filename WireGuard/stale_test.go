@@ -62,15 +62,20 @@ func TestACodeThatExpiredIsAStaleDevice(t *testing.T) {
 	if st.Kind != staleDevice || st.At < before {
 		t.Fatalf("stale %+v, want a stale device from now on", st)
 	}
+	// Where it knocked from, for the config page to tell that device (#63).
+	if from, err := netip.ParseAddrPort(st.From); err != nil || from.Addr() != loopback {
+		t.Fatalf("stale from %q, want the device's ip:port", st.From)
+	}
 }
 
+// wireguard-go doesn't say where a handshake with a bad mac1 came from.
 func TestAConfigForOtherServerKeysIsAStaleServer(t *testing.T) {
 	s, _ := startOneDevice(t)
 	_, other := keyPair(t) // the keys Tether had before it started over
 	knock(t, s, other)
 	knock(t, s, other)
-	if st := staleAfter(s); st.Kind != staleServer {
-		t.Fatalf("stale %+v, want a config for other server keys", st)
+	if st := staleAfter(s); st.Kind != staleServer || st.From != "" {
+		t.Fatalf("stale %+v, want a config for other server keys, from nowhere", st)
 	}
 }
 
@@ -110,7 +115,7 @@ func TestAKnownDevicesDroppedHandshakeIsNoStaleConfig(t *testing.T) {
 	}
 	s.notice("Received invalid initiation message from %s", "172.20.10.9:51820")
 	s.notice("Received invalid initiation message from %s", "172.20.10.9:51820")
-	if st := s.statsMessage().Stale; st.Kind != staleDevice {
+	if st := s.statsMessage().Stale; st.Kind != staleDevice || st.From != "172.20.10.9:51820" {
 		t.Fatalf("stale %+v, want a stale device from somewhere else", st)
 	}
 }
@@ -118,23 +123,89 @@ func TestAKnownDevicesDroppedHandshakeIsNoStaleConfig(t *testing.T) {
 func TestKnocksCountOnlyCloseTogetherAndByKind(t *testing.T) {
 	t0 := time.Unix(1_800_000_000, 0)
 	k := newKnocks()
-	k.heard(staleDevice, t0)
-	k.heard(staleServer, t0.Add(time.Second))
+	k.heard(staleDevice, "172.20.10.9:51820", t0)
+	k.heard(staleServer, "", t0.Add(time.Second))
 	if k.stale.Kind != "" {
 		t.Fatalf("stale %+v from two kinds, want none", k.stale)
 	}
-	k.heard(staleDevice, t0.Add(knockWithin+time.Second))
+	k.heard(staleDevice, "172.20.10.9:51820", t0.Add(knockWithin+time.Second))
 	if k.stale.Kind != "" {
 		t.Fatalf("stale %+v from knocks %v apart, want none", k.stale, knockWithin+time.Second)
 	}
-	k.heard(staleDevice, t0.Add(knockWithin+6*time.Second))
-	if want := (staleStats{Kind: staleDevice, At: t0.Add(knockWithin + 6*time.Second).Unix()}); k.stale != want {
+	k.heard(staleDevice, "172.20.10.9:51820", t0.Add(knockWithin+6*time.Second))
+	want := staleStats{Kind: staleDevice, At: t0.Add(knockWithin + 6*time.Second).Unix(), From: "172.20.10.9:51820"}
+	if k.stale != want {
 		t.Fatalf("stale %+v, want %+v", k.stale, want)
 	}
-	// The latest one is kept.
-	k.heard(staleServer, t0.Add(knockWithin+7*time.Second))
-	k.heard(staleServer, t0.Add(knockWithin+8*time.Second))
-	if k.stale.Kind != staleServer {
+	// The latest one is kept, with where it came from: nowhere for the server kind.
+	k.heard(staleServer, "", t0.Add(knockWithin+7*time.Second))
+	k.heard(staleServer, "", t0.Add(knockWithin+8*time.Second))
+	if k.stale.Kind != staleServer || k.stale.From != "" {
 		t.Fatalf("stale %+v, want the server kind that came last", k.stale)
+	}
+}
+
+// connectedOne starts a server with one device connected, and returns them with another port at
+// the device's address: where a stale config on it, or behind it, knocks from.
+func connectedOne(t *testing.T) (*Server, time.Time, string) {
+	t.Helper()
+	s, c := setup(t)
+	fetchAndShake(t, s, c, tcpServer(t, 10))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ep, err := netip.ParseAddrPort(s.endpoints[netip.MustParseAddr("10.7.0.2")])
+	if err != nil {
+		t.Fatalf("no endpoint for the device: %v", err)
+	}
+	return s, s.shaken[netip.MustParseAddr("10.7.0.2")], netip.AddrPortFrom(ep.Addr(), ep.Port()^1).String()
+}
+
+// knockTwice is a stale device knocking from from, the second time at at.
+func knockTwice(s *Server, from string, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.knocks.heard(staleDevice, from, at.Add(-5*time.Second))
+	s.knocks.heard(staleDevice, from, at)
+}
+
+// A device added again connects from where it knocked, so the page doesn't tell it for the rest of
+// the minute that its config no longer works. The main screen still says a device knocked.
+func TestADeviceThatConnectsFromWhereItKnockedIsNoLongerNamed(t *testing.T) {
+	s, shook, old := connectedOne(t)
+	knockTwice(s, old, shook.Add(-5*time.Second))
+	if st := s.statsMessage().Stale; st.Kind != staleDevice || st.From != "" {
+		t.Fatalf("stale %+v, want a stale device from nowhere once one connected from there", st)
+	}
+	// Once that device is gone, a knock from there names it again.
+	later := shook.Add(onlineWithin + time.Minute)
+	s.mu.Lock()
+	s.now = func() time.Time { return later }
+	s.mu.Unlock()
+	knockTwice(s, old, later)
+	if st := s.statsMessage().Stale; st.Kind != staleDevice || st.From != old {
+		t.Fatalf("stale %+v, want a stale device from %s", st, old)
+	}
+}
+
+// A travel router's clients share its address, and the router handshakes only every 2 minutes,
+// so a stale config behind it knocks after the router's last handshake. The page can't tell which
+// device that is, so it names none, or every device behind the router would hear it.
+func TestAKnockFromBehindARouterNamesNoDevice(t *testing.T) {
+	s, shook, behind := connectedOne(t)
+	knockTwice(s, behind, shook.Add(time.Minute))
+	if st := s.statsMessage().Stale; st.Kind != staleDevice || st.From != "" {
+		t.Fatalf("stale %+v, want a stale device from nowhere", st)
+	}
+}
+
+// One stale device at a time is what a hotspot sees, so the knock that made it names where it's from.
+func TestAStaleDeviceIsWhereItsLatestKnockCameFrom(t *testing.T) {
+	t0 := time.Unix(1_800_000_000, 0)
+	k := newKnocks()
+	k.heard(staleDevice, "172.20.10.9:51820", t0)
+	k.heard(staleDevice, "172.20.10.9:51820", t0.Add(5*time.Second))
+	k.heard(staleDevice, "172.20.10.4:60000", t0.Add(10*time.Second))
+	if k.stale.From != "172.20.10.4:60000" {
+		t.Fatalf("stale from %q, want the latest knock's", k.stale.From)
 	}
 }
