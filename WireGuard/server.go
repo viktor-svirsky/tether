@@ -149,6 +149,7 @@ type Stats struct {
 }
 
 type Server struct {
+	bind  *hostBind
 	dev   *device.Device
 	stack *stack.Stack
 	tun   *stackTun
@@ -180,7 +181,10 @@ type Server struct {
 	stop    chan struct{}
 	found   chan struct{} // asks the refresher to look at candidate
 	shake   chan struct{} // asks the refresher to read the handshakes now, see noticeHandshake
+	dead    chan struct{} // asks the refresher to listen again, see reopen
 	stopped sync.WaitGroup
+	// reopened is when the refresher last tried to listen again. Only the refresher reads it.
+	reopened time.Time
 	// closeOnce makes Close safe to call twice: close(stop) would panic.
 	closeOnce sync.Once
 	reading   sync.Mutex
@@ -286,6 +290,7 @@ func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		stop:  make(chan struct{}),
 		found: make(chan struct{}, 1),
 		shake: make(chan struct{}, 1),
+		dead:  make(chan struct{}, 1),
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
@@ -323,7 +328,8 @@ func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	s.stack.SetTransportProtocolHandler(udp.ProtocolNumber, s.handleUDP)
 
 	logger := &device.Logger{Verbosef: s.notice, Errorf: s.noticeError}
-	s.dev = device.NewDevice(s.tun, &hostBind{hosts: hosts}, logger)
+	s.bind = &hostBind{hosts: hosts, died: s.socketDied}
+	s.dev = device.NewDevice(s.tun, s.bind, logger)
 	if err := s.dev.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\n", hex.EncodeToString(privateKey[:]), port)); err != nil {
 		s.dev.Close()
 		s.stack.Close()
@@ -644,10 +650,46 @@ func (s *Server) refreshHandshakes() {
 			s.candidate = netip.Addr{}
 			s.mu.Unlock()
 			s.makeRouter(addr)
+		case <-s.dead:
+			s.reopen()
 		case <-s.stop:
 			return
 		}
 	}
+}
+
+// socketDied asks the refresher to listen again. The bind calls it from wireguard-go's receive
+// routine, which listening again waits for, so it can't do it itself.
+func (s *Server) socketDied() {
+	select {
+	case s.dead <- struct{}{}:
+	default:
+	}
+}
+
+// reopen listens again on the same port after iOS closed the server's socket while Tether was
+// suspended, during a phone call say (#106). wireguard-go never reads a failed socket again, so
+// before this the devices got nothing back until Tether was relaunched: opening it didn't help.
+// Their sessions stay, so they carry on as soon as it listens. A try that fails, the hotspot's
+// address not back yet say, is tried again. There's at most one try a second, so a socket that
+// keeps failing can't spin, and the refresher reads the handshakes between them.
+func (s *Server) reopen() {
+	if wait := time.Until(s.reopened.Add(time.Second)); wait > 0 {
+		time.AfterFunc(wait, s.socketDied)
+		return
+	}
+	s.reopened = time.Now()
+	s.bind.mu.Lock()
+	port := s.bind.port
+	s.bind.mu.Unlock()
+	// A listen_port line closes the sockets and opens them again on that port. BindUpdate alone
+	// would lose the port after a try that fails.
+	if err := s.dev.IpcSet(fmt.Sprintf("listen_port=%d\n", port)); err != nil {
+		s.keep("error: ", "can't listen again on port %d: %v", []any{port, err})
+		time.AfterFunc(time.Second, s.socketDied) // after Close nobody reads it, so the tries end
+		return
+	}
+	s.keep("", "listening again on port %d after its socket was closed", []any{port})
 }
 
 // readHandshakes reads each peer's last handshake from wireguard-go's status text. The map is
