@@ -24,7 +24,9 @@ enum KeepAlivePolicy {
 
     /// What the audio system tells `KeepAlive` that can leave the sound silent.
     enum AudioEvent {
-        /// A phone call, Siri or an alarm is over. iOS does not resume the sound by itself.
+        /// A phone call, Siri or an alarm is over. iOS does not resume the sound by itself. Right
+        /// after a call the Phone app can still hold the audio, so one try to play can fail, and
+        /// with no sound iOS suspends Tether again until it is opened (#106).
         case interruptionEnded
         /// The media server died, after a crash or Reset Media Services in Settings. Without a sound
         /// iOS suspends Tether in the background within seconds, and `mediaServicesReset` only
@@ -36,9 +38,7 @@ enum KeepAlivePolicy {
     }
 
     enum AudioRestart {
-        /// Play the same player again.
-        case resume
-        /// Ask iOS for background time, and keep starting a new player in it until one plays.
+        /// Ask iOS for background time, and keep starting the sound in it until it plays.
         case holdOn
         /// Drop the player and set the session up again with a new one, as Apple asks after a reset.
         case rebuild
@@ -48,8 +48,7 @@ enum KeepAlivePolicy {
     static func restart(after event: AudioEvent, started: Bool) -> AudioRestart? {
         guard started else { return nil }
         switch event {
-        case .interruptionEnded: return .resume
-        case .mediaServicesLost: return .holdOn
+        case .interruptionEnded, .mediaServicesLost: return .holdOn
         case .mediaServicesReset: return .rebuild
         }
     }
