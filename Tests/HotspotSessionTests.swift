@@ -229,6 +229,36 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(WireGuardDevices(secrets: secrets).setup.peers.map(\.host), [v6], "saved")
     }
 
+    /// A connected device's screen shows where its handshake comes from, the address alone (#73).
+    /// None while the server doesn't say, and none while it's paused or gone, though a paused
+    /// device's tunnel is up and the server still says.
+    func testAConnectedDeviceConnectsFromItsHandshakesAddress() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let scanned = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertNil(session.connectsFrom(of: scanned.id), "never connected")
+        server.connected = [scanned.address]
+        session.sampleTraffic()
+        XCTAssertNil(session.connectsFrom(of: scanned.id), "connected, but the server doesn't say from where")
+        server.endpoints = [scanned.address: "172.20.10.2:52345"]
+        session.sampleTraffic()
+        XCTAssertEqual(session.connectsFrom(of: scanned.id), "172.20.10.2")
+        server.endpoints = [scanned.address: "[2600:380:abcd::1]:52345"]
+        session.sampleTraffic()
+        XCTAssertEqual(session.connectsFrom(of: scanned.id), "2600:380:abcd::1")
+        session.pauseWireGuardDevice(scanned.id)
+        session.sampleTraffic()
+        XCTAssertNil(session.connectsFrom(of: scanned.id), "paused, with its tunnel up")
+        session.resumeWireGuardDevice(scanned.id)
+        session.sampleTraffic()
+        XCTAssertEqual(session.connectsFrom(of: scanned.id), "2600:380:abcd::1")
+        server.connected = []
+        session.sampleTraffic()
+        XCTAssertNil(session.connectsFrom(of: scanned.id), "gone")
+    }
+
     /// Before a device joins, the hotspot has no bridge, so there's no IPv6 address to give yet. The
     /// carrier's own interface, pdp_ip0, already says whether there will be IPv4 (#64).
     func testTheCarrierIsIPv6OnlyWhenTheInternetHasNoIPv4() {

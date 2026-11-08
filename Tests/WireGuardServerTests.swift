@@ -195,6 +195,31 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertEqual(stats.stale, StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030)))
     }
 
+    /// A device's screen shows where it connects from without the port (#73), and the session goes
+    /// by the same address for where a device reaches Tether. Go sends netip's "ip:port", or
+    /// "[ip]:port" for IPv6, with a zone for a link-local one. A config page client has no port.
+    func testTheAddressAloneIsReadFromAnEndpoint() {
+        let cases: [(endpoint: String?, address: String?, line: UInt)] = [
+            ("172.20.10.2:52345", "172.20.10.2", #line),
+            ("[2600:380:abcd::1]:52345", "2600:380:abcd::1", #line),
+            ("[fe80::1%bridge100]:52345", "fe80::1", #line), // the zone names this iPhone's interface, not the device
+            ("172.20.10.2", "172.20.10.2", #line), // a config page client
+            ("2600:380:abcd::1", "2600:380:abcd::1", #line),
+            ("fe80::1%en0", "fe80::1", #line), // a config page client on a link-local address
+            (nil, nil, #line),
+            ("", nil, #line),
+            ("not an address", nil, #line),
+            ("example.com:51820", nil, #line),
+            ("300.20.10.2:52345", nil, #line),
+            ("[2600:380:abcd::1", nil, #line),
+            ("[2600:380:abcd::1]junk", nil, #line),
+            ("[]:52345", nil, #line),
+        ]
+        for c in cases {
+            XCTAssertEqual(PeerStats.address(c.endpoint), c.address, line: c.line)
+        }
+    }
+
     /// Go sends an empty kind until a config that no longer works knocks, see stale.go.
     func testNoStaleConfigUntilOneKnocks() throws {
         func stale(_ json: String) throws -> StaleConfig? {

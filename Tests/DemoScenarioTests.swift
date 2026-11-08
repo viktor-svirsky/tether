@@ -45,6 +45,15 @@ final class DemoScenarioTests: XCTestCase {
         XCTAssertEqual(session.lastConnected(of: pc.id), DemoScenario.now.addingTimeInterval(-2 * 3600))
     }
 
+    /// The iPad connects from an address on the hotspot, so its screen says it (#73). Not while it's paused.
+    func testTheIPadConnectsFromAHotspotAddress() throws {
+        for scenario in [DemoScenario.sharing, .paused] {
+            let session = DemoState(scenario).makeSession()
+            let ipad = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "iPad" })
+            XCTAssertEqual(session.connectsFrom(of: ipad.id), scenario == .sharing ? "172.20.10.2" : nil, "\(scenario)")
+        }
+    }
+
     func testTheProblemDemosShowTheirProblem() {
         for scenario in DemoScenario.allCases {
             let session = DemoState(scenario).makeSession()

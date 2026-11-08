@@ -529,9 +529,7 @@ final class HotspotSession {
     /// request ("ip") came from: 172.20.10.1 from IPv4 while Tether listens there, else
     /// `deviceHost`. A device whose last handshake isn't known goes by `deviceHost` too.
     private func host(reachedFrom client: String?) -> String? {
-        let parts = client?.split(separator: ":", omittingEmptySubsequences: false) ?? []
-        let ip = parts.count <= 2 ? parts.first : nil
-        if let ip, IPv4Address(String(ip)) != nil, boundHosts.contains(Hotspot.host) { return Hotspot.host }
+        if let ip = PeerStats.address(client), IPv4Address(ip) != nil, boundHosts.contains(Hotspot.host) { return Hotspot.host }
         return deviceHost
     }
 
@@ -728,6 +726,13 @@ final class HotspotSession {
     /// The device's last handshake, kept through restarts and relaunches (#73). Nil for never, and for
     /// a device that hasn't connected since the version that started keeping it.
     func lastConnected(of id: WireGuardSetup.Peer.ID) -> Date? { monthlyUsage.lastConnected(id) }
+
+    /// Where a connected device's last handshake came from, the address alone, for its screen (#73).
+    /// Nil while it isn't connected, a paused one included, and while the server doesn't say.
+    func connectsFrom(of id: WireGuardSetup.Peer.ID) -> String? {
+        guard let peer = devices.setup.peers.first(where: { $0.id == id }), wireGuardConnected.contains(peer.address) else { return nil }
+        return PeerStats.address(wireGuardPeerStats[peer.address]?.endpoint)
+    }
 
     /// Adds what each device's counters grew by to this month, and saves at most once a minute. A
     /// crash loses up to that minute, never counts anything twice.
