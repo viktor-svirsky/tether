@@ -1389,6 +1389,12 @@ final class HotspotSessionTests: XCTestCase {
         server.stale = StaleConfig(kind: .device, at: now, from: "172.20.10.3:51820")
         XCTAssertTrue(body(page.ask(.page, from: "172.20.10.3")).contains("This device's config no longer works."))
         XCTAssertFalse(body(page.ask(.page, from: "172.20.10.4")).contains("no longer works"))
+        // Another device knocked since: each one's page still tells it.
+        server.earlierStale = [StaleConfig(kind: .device, at: now, from: "172.20.10.3:51820")]
+        server.stale = StaleConfig(kind: .device, at: now, from: "172.20.10.4:51820")
+        XCTAssertTrue(body(page.ask(.page, from: "172.20.10.3")).contains("This device's config no longer works."))
+        XCTAssertTrue(body(page.ask(.page, from: "172.20.10.4")).contains("This device's config no longer works."))
+        server.earlierStale = []
         server.stale = StaleConfig(kind: .server, at: now)
         XCTAssertTrue(body(page.ask(.page, from: "172.20.10.4")).contains("A device here has an old config."))
         XCTAssertFalse(body(page.ask(.page, from: hotspot)).contains("old config"), "it came through a tunnel that works")

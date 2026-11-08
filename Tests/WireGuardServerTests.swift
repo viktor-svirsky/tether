@@ -193,6 +193,8 @@ final class WireGuardServerTests: XCTestCase {
                                                           endpoint: "172.20.10.3:51820"))
         XCTAssertEqual(stats.peers["10.7.0.3"], PeerStats(), "never connected: no handshake, no endpoint")
         XCTAssertEqual(stats.stale, StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030), from: "172.20.10.9:51820"))
+        XCTAssertEqual(stats.recentStale, [StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_010), from: "172.20.10.4:51820"),
+                                           StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030), from: "172.20.10.9:51820")])
     }
 
     /// Go sends an empty kind until a config that no longer works knocks, see stale.go.
@@ -308,6 +310,7 @@ final class WireGuardServerTests: XCTestCase {
         let json = #"{"v":1,"up":1,"down":2,"peers":[{"address":"10.7.0.2","connected":true,"up":1,"down":2,"handshake":5,"endpoint":"","paused":true}],"new":0}"#
         XCTAssertEqual(try WireGuardServer.Stats.read(Data(json.utf8)).connected, ["10.7.0.2"])
         XCTAssertNil(try WireGuardServer.Stats.read(Data(json.utf8)).stale, "no stale key, no stale config")
+        XCTAssertEqual(try WireGuardServer.Stats.read(Data(json.utf8)).recentStale, [], "no recent key, none")
     }
 
     func testTheDeviceListIsTheMessageGoReads() throws {

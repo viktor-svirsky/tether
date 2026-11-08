@@ -1,8 +1,10 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 )
@@ -18,9 +20,10 @@ import (
 //   - "Received packet with invalid mac1": the config was made for other server keys, so Tether
 //     started over with new ones since. It names no endpoint.
 //
-// Two of a kind within knockWithin is a stale config, so one stray packet isn't. It keeps where the
-// knock that made it came from, so the config page can tell that device (#63). A hotspot sees one
-// stale device at a time, so the latest one is enough. wireguard-go reads handshakes on several
+// Two of a kind from one address within knockWithin is a stale config, so one stray packet isn't,
+// also not one from another device. Each address keeps its own for staleFor, with where the knock
+// that made it came from, so the config page can tell each device its own (#63): two removed devices
+// may keep trying at once. The main screen says the latest. wireguard-go reads handshakes on several
 // goroutines at once, so this runs under s.mu. Under load wireguard-go answers with a cookie before
 // it reads a handshake, which takes 128 queued handshakes: not on a hotspot.
 
@@ -28,30 +31,84 @@ const (
 	staleDevice = "device" // a device key the server doesn't let in
 	staleServer = "server" // a config for other server keys
 	knockWithin = 30 * time.Second
+	// staleFor is how long a stale config is kept after it last knocked, the minute Swift shows it
+	// for (StaleConfig.shownFor).
+	staleFor = time.Minute
+	// knockersKept bounds the addresses remembered: a hotspot has a few devices, and anyone on it
+	// can send handshakes from many.
+	knockersKept = 16
 )
 
-// knocks remembers when each kind last knocked, and the last stale config they made.
+// knockKey is where a knock came from, the address alone ("" when wireguard-go doesn't say), and
+// its kind.
+type knockKey struct{ kind, addr string }
+
+// knocks remembers when each address last knocked with each kind, the stale configs they made, and
+// the latest of those.
 type knocks struct {
-	last  map[string]time.Time
-	stale staleStats
+	last   map[knockKey]time.Time
+	stale  map[knockKey]staleStats
+	latest staleStats
 }
 
-func newKnocks() knocks { return knocks{last: map[string]time.Time{}} }
+func newKnocks() knocks {
+	return knocks{last: map[knockKey]time.Time{}, stale: map[knockKey]staleStats{}}
+}
 
 // heard counts one knock of kind from from ("" when wireguard-go doesn't say) at at.
 func (k *knocks) heard(kind, from string, at time.Time) {
-	if prev, ok := k.last[kind]; ok && at.Sub(prev) < knockWithin {
-		k.stale = staleStats{Kind: kind, At: at.Unix(), From: from}
+	key := knockKey{kind, from}
+	if ap, err := netip.ParseAddrPort(from); err == nil {
+		key.addr = ap.Addr().String()
 	}
-	k.last[kind] = at
+	if prev, ok := k.last[key]; ok && at.Sub(prev) < knockWithin {
+		k.latest = staleStats{Kind: kind, At: at.Unix(), From: from}
+		k.stale[key] = k.latest
+	}
+	k.last[key] = at
+	k.forget(at)
 }
 
-// staleLocked is the stale config for the stats, naming nowhere when a connected device has its
-// address: that device was added again, or it's a travel router whose clients share its address, so
-// the config page can't tell which device knocked. Its old tunnel may have had another port, so only
-// the address counts. The main screen still says a device knocked. Runs with s.mu held.
-func (s *Server) staleLocked() staleStats {
-	st := s.knocks.stale
+// forget drops what knocked staleFor before now, and the addresses that knocked longest ago beyond
+// knockersKept.
+func (k *knocks) forget(now time.Time) {
+	for key, at := range k.last {
+		if now.Sub(at) >= staleFor {
+			delete(k.last, key)
+			delete(k.stale, key)
+		}
+	}
+	for len(k.last) > knockersKept {
+		var oldest knockKey // the zero key is none: a knock always has a kind
+		for key, at := range k.last {
+			if prev, ok := k.last[oldest]; !ok || at.Before(prev) {
+				oldest = key
+			}
+		}
+		delete(k.last, oldest)
+		delete(k.stale, oldest)
+	}
+}
+
+// recentAt is each address's stale config that knocked less than staleFor before now, oldest first.
+func (k *knocks) recentAt(now time.Time) []staleStats {
+	recent := []staleStats{}
+	for _, st := range k.stale {
+		if now.Sub(time.Unix(st.At, 0)) < staleFor {
+			recent = append(recent, st)
+		}
+	}
+	slices.SortFunc(recent, func(a, b staleStats) int {
+		return cmp.Or(cmp.Compare(a.At, b.At), strings.Compare(a.Kind, b.Kind), strings.Compare(a.From, b.From))
+	})
+	return recent
+}
+
+// namedLocked is st for the stats, naming nowhere when a connected device has its address: that
+// device was added again, or it's a travel router whose clients share its address, so the config
+// page can't tell which device knocked. Its old tunnel may have had another port, so only the
+// address counts. The main screen still says a device knocked. Runs with s.mu held.
+func (s *Server) namedLocked(st staleStats) staleStats {
 	from, err := netip.ParseAddrPort(st.From)
 	if err != nil {
 		return st

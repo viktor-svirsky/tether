@@ -58,12 +58,14 @@ struct StaleConfig: Equatable {
     func shown(at now: Date) -> Bool { now.timeIntervalSince(at) < Self.shownFor }
 }
 
-/// What the server reports at one moment: its totals, each device by tunnel address, and the last
-/// config that knocked but no longer works.
+/// What the server reports at one moment: its totals, each device by tunnel address, the last
+/// config that knocked but no longer works, and each address's from the last minute.
 struct ServerSnapshot: Equatable {
     var totals = TrafficTotals()
     var peers: [String: PeerStats] = [:]
     var stale: StaleConfig?
+    /// For the config page to tell each device its own (#63): two removed devices may keep trying.
+    var recentStale: [StaleConfig] = []
 
     var connected: Set<String> { Set(peers.filter(\.value.connected).keys) }
 }

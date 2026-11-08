@@ -37,6 +37,8 @@ final class FakeServer: WireGuardServing {
     var handshakes: [String: Date] = [:]
     /// Reported only while running, as the real server's knocks go with it.
     var stale: StaleConfig?
+    /// Other addresses' configs that knocked before `stale`, which the config page reads with it.
+    var earlierStale: [StaleConfig] = []
     /// The addresses of each start, comma-separated.
     private(set) var starts: [String] = []
     private(set) var lastSetup: WireGuardSetup?
@@ -77,7 +79,8 @@ final class FakeServer: WireGuardServing {
             }
             for (address, handshake) in handshakes { peers[address, default: PeerStats()].lastHandshake = handshake }
         }
-        return ServerSnapshot(totals: totals, peers: peers, stale: running ? stale : nil)
+        return ServerSnapshot(totals: totals, peers: peers, stale: running ? stale : nil,
+                              recentStale: running ? earlierStale + [stale].compactMap(\.self) : [])
     }
 
     func freeMemory() {}

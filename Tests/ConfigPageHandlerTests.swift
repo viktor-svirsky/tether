@@ -13,7 +13,7 @@ final class ConfigPageHandlerTests: XCTestCase {
     private let config = "[Interface]\nPrivateKey = x\n"
 
     private func inputs(letIn: Bool = true, onScreen: Bool = true, noReady: Bool = false,
-                        host: String? = "172.20.10.1", config: String? = nil, stale: StaleConfig? = nil,
+                        host: String? = "172.20.10.1", config: String? = nil, stale: [StaleConfig] = [],
                         at: Date? = nil) -> ConfigPageHandler.Inputs {
         ConfigPageHandler.Inputs(letIn: letIn, onScreen: onScreen, ready: noReady ? nil : ready, host: host,
                                  config: config ?? self.config, stale: stale, hosts: ["172.20.10.1", "2001:db8::1"], now: at ?? start)
@@ -109,14 +109,34 @@ final class ConfigPageHandlerTests: XCTestCase {
             ("172.20.10.4", start, nil, #line),
         ]
         for c in cases {
-            XCTAssertEqual(handler.answer(.page, from: c.client, inputs(stale: knock, at: c.at)),
+            XCTAssertEqual(handler.answer(.page, from: c.client, inputs(stale: [knock], at: c.at)),
                            .answer(ConfigPage.page(.ready, stale: c.said)), line: c.line)
         }
-        XCTAssertEqual(handler.answer(.page, from: "172.20.10.3", inputs(stale: StaleConfig(kind: .device, at: start))),
+        XCTAssertEqual(handler.answer(.page, from: "172.20.10.3", inputs(stale: [StaleConfig(kind: .device, at: start)])),
                        .answer(ConfigPage.page(.ready)), "a knock that says nowhere is no device's")
         let v6 = StaleConfig(kind: .device, at: start, from: "[2001:db8::5]:51820")
-        XCTAssertEqual(handler.answer(.page, from: "2001:db8::5", inputs(stale: v6)), .answer(ConfigPage.page(.ready, stale: .thisDevice)),
+        XCTAssertEqual(handler.answer(.page, from: "2001:db8::5", inputs(stale: [v6])), .answer(ConfigPage.page(.ready, stale: .thisDevice)),
                        "a handshake's endpoint has brackets and a port, a page client doesn't")
+    }
+
+    /// Two removed devices may keep trying at once, and each hears about its own config, whichever
+    /// knocked last. A device that knocked hears about itself before old server keys anyone may have.
+    func testEachDeviceIsToldAboutItsOwnConfig() {
+        let handler = ConfigPageHandler()
+        let three = StaleConfig(kind: .device, at: start, from: "172.20.10.3:51820")
+        let four = StaleConfig(kind: .device, at: start.addingTimeInterval(5), from: "172.20.10.4:51820")
+        let oldKeys = StaleConfig(kind: .server, at: start)
+        let cases: [(client: String, stale: [StaleConfig], said: ConfigPage.Stale?, line: UInt)] = [
+            ("172.20.10.3", [three, four], .thisDevice, #line),
+            ("172.20.10.4", [three, four], .thisDevice, #line),
+            ("172.20.10.5", [three, four], nil, #line),
+            ("172.20.10.5", [three, oldKeys], .oldKeys, #line),
+            ("172.20.10.3", [oldKeys, three], .thisDevice, #line),
+        ]
+        for c in cases {
+            XCTAssertEqual(handler.answer(.page, from: c.client, inputs(stale: c.stale, at: start.addingTimeInterval(10))),
+                           .answer(ConfigPage.page(.ready, stale: c.said)), line: c.line)
+        }
     }
 
     /// wireguard-go doesn't say where a config for old server keys knocks from, so each device that
@@ -133,7 +153,7 @@ final class ConfigPageHandlerTests: XCTestCase {
             ("2001:db8::1", start, nil, #line),
         ]
         for c in cases {
-            XCTAssertEqual(handler.answer(.page, from: c.client, inputs(stale: knock, at: c.at)),
+            XCTAssertEqual(handler.answer(.page, from: c.client, inputs(stale: [knock], at: c.at)),
                            .answer(ConfigPage.page(.ready, stale: c.said)), line: c.line)
         }
     }
@@ -143,13 +163,13 @@ final class ConfigPageHandlerTests: XCTestCase {
     func testTheLineComesWithEveryPage() {
         let handler = ConfigPageHandler()
         let knock = StaleConfig(kind: .device, at: start, from: "172.20.10.3:51820")
-        XCTAssertEqual(handler.answer(.page, from: "172.20.10.3", inputs(onScreen: false, stale: knock)),
+        XCTAssertEqual(handler.answer(.page, from: "172.20.10.3", inputs(onScreen: false, stale: [knock])),
                        .answer(ConfigPage.page(.openTether, stale: .thisDevice)))
-        XCTAssertEqual(handler.answer(.pageHead, from: "172.20.10.3", inputs(letIn: false, stale: knock)),
+        XCTAssertEqual(handler.answer(.pageHead, from: "172.20.10.3", inputs(letIn: false, stale: [knock])),
                        .answer(ConfigPage.page(.openAddDevice, stale: .thisDevice).forHead))
-        XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(noReady: true, stale: knock)),
+        XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(noReady: true, stale: [knock])),
                        .answer(ConfigPage.page(.noConfig, stale: .thisDevice, status: .notFound)))
-        XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(stale: knock)),
+        XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(stale: [knock])),
                        .download(ready, host: "172.20.10.1", config: config), "a new config is what it needs")
     }
 

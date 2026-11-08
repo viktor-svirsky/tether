@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 )
@@ -125,23 +126,23 @@ func TestKnocksCountOnlyCloseTogetherAndByKind(t *testing.T) {
 	k := newKnocks()
 	k.heard(staleDevice, "172.20.10.9:51820", t0)
 	k.heard(staleServer, "", t0.Add(time.Second))
-	if k.stale.Kind != "" {
-		t.Fatalf("stale %+v from two kinds, want none", k.stale)
+	if k.latest.Kind != "" {
+		t.Fatalf("stale %+v from two kinds, want none", k.latest)
 	}
 	k.heard(staleDevice, "172.20.10.9:51820", t0.Add(knockWithin+time.Second))
-	if k.stale.Kind != "" {
-		t.Fatalf("stale %+v from knocks %v apart, want none", k.stale, knockWithin+time.Second)
+	if k.latest.Kind != "" {
+		t.Fatalf("stale %+v from knocks %v apart, want none", k.latest, knockWithin+time.Second)
 	}
 	k.heard(staleDevice, "172.20.10.9:51820", t0.Add(knockWithin+6*time.Second))
 	want := staleStats{Kind: staleDevice, At: t0.Add(knockWithin + 6*time.Second).Unix(), From: "172.20.10.9:51820"}
-	if k.stale != want {
-		t.Fatalf("stale %+v, want %+v", k.stale, want)
+	if k.latest != want {
+		t.Fatalf("stale %+v, want %+v", k.latest, want)
 	}
 	// The latest one is kept, with where it came from: nowhere for the server kind.
 	k.heard(staleServer, "", t0.Add(knockWithin+7*time.Second))
 	k.heard(staleServer, "", t0.Add(knockWithin+8*time.Second))
-	if k.stale.Kind != staleServer || k.stale.From != "" {
-		t.Fatalf("stale %+v, want the server kind that came last", k.stale)
+	if k.latest.Kind != staleServer || k.latest.From != "" {
+		t.Fatalf("stale %+v, want the server kind that came last", k.latest)
 	}
 }
 
@@ -198,14 +199,73 @@ func TestAKnockFromBehindARouterNamesNoDevice(t *testing.T) {
 	}
 }
 
-// One stale device at a time is what a hotspot sees, so the knock that made it names where it's from.
-func TestAStaleDeviceIsWhereItsLatestKnockCameFrom(t *testing.T) {
+// A knock counts only toward its own address, so one packet from another device names no device
+// (#63). The same address from another port is the same device: its tunnel started again.
+func TestAKnockCountsOnlyTowardItsOwnAddress(t *testing.T) {
 	t0 := time.Unix(1_800_000_000, 0)
 	k := newKnocks()
 	k.heard(staleDevice, "172.20.10.9:51820", t0)
 	k.heard(staleDevice, "172.20.10.9:51820", t0.Add(5*time.Second))
 	k.heard(staleDevice, "172.20.10.4:60000", t0.Add(10*time.Second))
-	if k.stale.From != "172.20.10.4:60000" {
-		t.Fatalf("stale from %q, want the latest knock's", k.stale.From)
+	if k.latest.From != "172.20.10.9:51820" {
+		t.Fatalf("stale from %q after one knock from 172.20.10.4, want 172.20.10.9's still", k.latest.From)
+	}
+	k.heard(staleDevice, "172.20.10.4:60001", t0.Add(15*time.Second))
+	if k.latest.From != "172.20.10.4:60001" {
+		t.Fatalf("stale from %q, want 172.20.10.4's second knock", k.latest.From)
+	}
+}
+
+// setNow sets the server's clock, under s.mu as the stats read it.
+func setNow(s *Server, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.now = func() time.Time { return now }
+}
+
+// Two removed devices that keep trying each keep their own stale config for a minute, so each
+// one's page tells it, while the main screen says the latest (#63).
+func TestEachStaleDeviceIsKeptForAMinute(t *testing.T) {
+	s, _ := startOneDevice(t)
+	t0 := time.Unix(1_800_000_000, 0)
+	nine, four := "172.20.10.9:51820", "172.20.10.4:60000"
+	knockTwice(s, nine, t0.Add(10*time.Second))
+	knockTwice(s, four, t0.Add(20*time.Second))
+	knockTwice(s, nine, t0.Add(30*time.Second))
+	setNow(s, t0.Add(30*time.Second))
+	wantNine := staleStats{Kind: staleDevice, At: t0.Add(30 * time.Second).Unix(), From: nine}
+	wantFour := staleStats{Kind: staleDevice, At: t0.Add(20 * time.Second).Unix(), From: four}
+	m := s.statsMessage()
+	if m.Stale != wantNine {
+		t.Fatalf("stale %+v, want the latest %+v", m.Stale, wantNine)
+	}
+	if want := []staleStats{wantFour, wantNine}; !slices.Equal(m.Recent, want) {
+		t.Fatalf("recent %+v, want %+v", m.Recent, want)
+	}
+	// A minute after its last knock, a device that stopped trying is gone.
+	setNow(s, t0.Add(20*time.Second+staleFor))
+	if m := s.statsMessage(); !slices.Equal(m.Recent, []staleStats{wantNine}) {
+		t.Fatalf("recent %+v, want only %+v", m.Recent, wantNine)
+	}
+}
+
+// A hotspot has a few devices, so a flood of addresses keeps only the latest knockersKept.
+func TestOnlyTheLatestAddressesAreKept(t *testing.T) {
+	t0 := time.Unix(1_800_000_000, 0)
+	k := newKnocks()
+	var froms []string
+	for i := range knockersKept + 2 {
+		from := netip.AddrPortFrom(netip.AddrFrom4([4]byte{172, 20, 10, byte(10 + i)}), 51820).String()
+		froms = append(froms, from)
+		at := t0.Add(time.Duration(i) * time.Second)
+		k.heard(staleDevice, from, at)
+		k.heard(staleDevice, from, at.Add(time.Millisecond))
+	}
+	got := k.recentAt(t0.Add(time.Duration(knockersKept+2) * time.Second))
+	if len(got) != knockersKept || got[0].From != froms[2] || got[len(got)-1].From != froms[len(froms)-1] {
+		t.Fatalf("recent %+v, want the latest %d, from %s on", got, knockersKept, froms[2])
+	}
+	if len(k.last) > knockersKept {
+		t.Fatalf("%d addresses remembered, want at most %d", len(k.last), knockersKept)
 	}
 }

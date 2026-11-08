@@ -573,7 +573,7 @@ final class HotspotSession {
         let inputs = ConfigPageHandler.Inputs(letIn: readyLetIn, onScreen: sceneActive, ready: ready, host: host,
                                               config: ready.flatMap { wireGuardConfig(for: $0, host: host) },
                                               // Read now: only the on-screen sampler keeps the knock.
-                                              stale: server.snapshot().stale, hosts: boundHosts, now: now)
+                                              stale: server.snapshot().recentStale, hosts: boundHosts, now: now)
         switch pageHandler.answer(request, from: client, inputs) {
         case let .answer(response):
             return response

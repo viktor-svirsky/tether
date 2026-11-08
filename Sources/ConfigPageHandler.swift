@@ -15,8 +15,8 @@ struct ConfigPageHandler {
         let host: String?
         /// The ready device's config pointing at `host`.
         let config: String?
-        /// The last config that knocked but no longer works, read for this request.
-        let stale: StaleConfig?
+        /// Each address's config that knocked but no longer works, read for this request.
+        let stale: [StaleConfig]
         /// Where Tether listens. A request from there came through a tunnel that works, or from the
         /// iPhone itself, so a stale config isn't its.
         let hosts: [String]
@@ -40,13 +40,10 @@ struct ConfigPageHandler {
         let state: ConfigPage.State = !inputs.letIn ? .openAddDevice : !inputs.onScreen ? .openTether
             : inputs.ready == nil ? .noConfig : .ready
         let address = Hotspot.address(of: client)
-        let stale: ConfigPage.Stale? = inputs.stale.flatMap { knock in
-            guard knock.shown(at: inputs.now), !inputs.hosts.contains(address) else { return nil }
-            switch knock.kind {
-            case .device: return knock.from.map(Hotspot.address(of:)) == address ? .thisDevice : nil
-            case .server: return .oldKeys
-            }
-        }
+        // Its own knock first (#63): other devices may knock too, and old keys may be anyone's.
+        let knocks = inputs.hosts.contains(address) ? [] : inputs.stale.filter { $0.shown(at: inputs.now) }
+        let stale: ConfigPage.Stale? = knocks.contains { $0.kind == .device && $0.from.map(Hotspot.address(of:)) == address } ? .thisDevice
+            : knocks.contains { $0.kind == .server } ? .oldKeys : nil
         let repeated = lastDownload.flatMap {
             $0.client == client && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil
         }

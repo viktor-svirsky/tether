@@ -143,6 +143,7 @@ final class WireGuardServer {
             let down: UInt64
             let peers: [Peer]
             let stale: Stale?
+            let recent: [Stale]?
 
             struct Peer: Decodable {
                 let address: String
@@ -181,12 +182,13 @@ final class WireGuardServer {
                                              endpoint: p.endpoint.isEmpty ? nil : p.endpoint)
             }
             // A kind this app doesn't know says nothing, like one that isn't there.
-            let stale = m.stale.flatMap { s in
+            func stale(_ s: Message.Stale) -> StaleConfig? {
                 StaleConfig.Kind(rawValue: s.kind).map {
                     StaleConfig(kind: $0, at: Date(timeIntervalSince1970: TimeInterval(s.at)), from: s.from.flatMap { $0.isEmpty ? nil : $0 })
                 }
             }
-            return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, stale: stale)
+            return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, stale: m.stale.flatMap(stale),
+                                  recentStale: (m.recent ?? []).compactMap(stale))
         }
     }
 }
