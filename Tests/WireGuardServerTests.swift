@@ -205,6 +205,7 @@ final class WireGuardServerTests: XCTestCase {
             ("[fe80::1%bridge100]:52345", "fe80::1", #line), // the zone names this iPhone's interface, not the device
             ("172.20.10.2", "172.20.10.2", #line), // a config page client
             ("2600:380:abcd::1", "2600:380:abcd::1", #line),
+            ("fe80::1%en0", "fe80::1", #line), // a config page client on a link-local address
             (nil, nil, #line),
             ("", nil, #line),
             ("not an address", nil, #line),

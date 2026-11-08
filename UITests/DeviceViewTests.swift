@@ -16,8 +16,7 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(element("wireguard.qr"), text(containing: "10.7.0.2"), message: "no per-device code or address any more")
         assertNowhere(element("device.lastConnected"), message: "connected says it")
         // Where its handshake comes from, without the port (#73).
-        let from = reveal(element("device.connectsFrom")).label
-        XCTAssertTrue(from.contains("Connects from") && from.contains("172.20.10.2") && !from.contains("52345"), from)
+        XCTAssertEqual(reveal(staticText("device.connectsFrom")).label, "Connects from 172.20.10.2")
     }
 
     /// What a device used this month and last, through Tether (#75), with down and up under it (#73).

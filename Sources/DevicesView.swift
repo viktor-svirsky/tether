@@ -122,10 +122,11 @@ struct DeviceView: View {
                                 .accessibilityIdentifier("device.statusDetail")
                         }
                         // While it's connected, the address its handshake comes from, once the server says (#73).
-                        // A line under the status like a pause's, not a row of its own, so Resume takes Pause's spot.
+                        // It goes under the status like a paused device's detail line, so the Pause and Resume
+                        // button stays in the same place.
                         if status == .connected, let address = model.connectsFrom(of: peer.id) {
-                            LabeledContent("Connects from", value: address)
-                                .accessibilityElement(children: .combine)
+                            Text("Connects from \(address)")
+                                .font(.subheadline)
                                 .accessibilityIdentifier("device.connectsFrom")
                         }
                     }
