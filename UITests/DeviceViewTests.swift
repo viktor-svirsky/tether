@@ -15,6 +15,9 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertTrue(element("device.remove").exists)
         assertNowhere(element("wireguard.qr"), text(containing: "10.7.0.2"), message: "no per-device code or address any more")
         assertNowhere(element("device.lastConnected"), message: "connected says it")
+        // Where its handshake comes from, without the port (#73).
+        let from = reveal(element("device.connectsFrom")).label
+        XCTAssertTrue(from.contains("Connects from") && from.contains("172.20.10.2") && !from.contains("52345"), from)
     }
 
     /// What a device used this month and last, through Tether (#75), with down and up under it (#73).
@@ -69,6 +72,7 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertEqual(staticText("device.status").label, "Not connected")
         let last = reveal(element("device.lastConnected")).label
         XCTAssertTrue(last.contains("Last connected") && last.contains("Today at 4:00"), last)
+        assertNowhere(element("device.connectsFrom"), message: "only while connected")
     }
 
     /// Without a limit, this month is a big number with down and up under it (#73).
@@ -83,12 +87,13 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(text(containing: "of 10 GB"), text(containing: "Resets on"), message: "no meter without a limit")
     }
 
-    /// A paused device says why it can't connect, not when it last did (#73).
+    /// A paused device says why it can't connect, not when it last did or from where (#73).
     func testAPausedDeviceDoesntSayWhenItLastConnected() {
         launch(.paused)
         openDevice("iPad")
         XCTAssertEqual(staticText("device.status").label, "Paused")
         assertNowhere(element("device.lastConnected"))
+        assertNowhere(element("device.connectsFrom"), message: "its tunnel is up, but it isn't connected")
     }
 
     func testBackReturnsToTheMainScreen() {
