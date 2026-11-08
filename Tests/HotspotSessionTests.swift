@@ -789,6 +789,66 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(page.starts, ["\(hotspot):80"])
     }
 
+    // MARK: The page through the tunnel (#27)
+
+    /// The devices reach the iPhone's own addresses only for the config page, and only where its
+    /// listener is ready: each address as it gets ready, not all once one is.
+    func testThePageOpensThroughTheTunnelWhereItListens() {
+        makeSession()
+        let v6 = "2607:fb91:88a2:e822::a"
+        address = v6
+        session.syncWithHotspot()
+        XCTAssertEqual(server.page, [], "not before a listener is ready")
+        page.becomeReady([hotspot])
+        XCTAssertEqual(server.page, [hotspot])
+        page.becomeReady([hotspot, v6])
+        XCTAssertEqual(server.page, [hotspot, v6])
+    }
+
+    /// Another app has port 80: Tether's page fails, WireGuard goes on, and the devices must not
+    /// reach that app through the tunnel. Not on the next round's try either.
+    func testAPageThatFailsStaysClosedThroughTheTunnel() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        page.fail()
+        XCTAssertTrue(server.running)
+        XCTAssertEqual(server.page, [])
+        session.syncWithHotspot()
+        page.fail()
+        XCTAssertEqual(page.starts.count, 2)
+        XCTAssertEqual(server.page, [])
+        session.syncWithHotspot()
+        page.becomeReady()
+        page.fail()
+        XCTAssertEqual(server.page, [], "it listened, then failed")
+    }
+
+    func testAPageThatStopsClosesThroughTheTunnel() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        page.becomeReady()
+        XCTAssertEqual(server.page, [hotspot])
+        page.stop()
+        XCTAssertTrue(server.running)
+        XCTAssertEqual(server.page, [])
+    }
+
+    /// A new WireGuard server opens the page nowhere, so it's opened again once the page listens again.
+    func testARestartedServerOpensThePageAgain() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        page.becomeReady()
+        server.stop() // as if it went away. The next round starts it again
+        session.syncWithHotspot()
+        XCTAssertEqual(server.starts.count, 2)
+        XCTAssertEqual(server.page, [], "not before the page listens again")
+        page.becomeReady()
+        XCTAssertEqual(server.page, [hotspot])
+    }
+
     private func body(_ response: ConfigPage.Response) -> String { String(decoding: response.body, as: UTF8.self) }
 
     /// A download is a device added: it's listed, and the next one gets a new key, so two devices never share one.

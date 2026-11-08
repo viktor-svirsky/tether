@@ -365,6 +365,21 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertFalse(server.running)
     }
 
+    /// Where the config page listens goes to Go, which opens it to the devices there (#27). Go's
+    /// tests cover the traffic. An address Go can't read is logged.
+    func testThePagesAddressesReachGo() throws {
+        var logged: [String] = []
+        server = WireGuardServer(log: { logged.append($0) })
+        server.setPage(["127.0.0.1"]) // stopped: nothing to tell
+        try start()
+        server.setPage(["127.0.0.1", "::1"])
+        server.setPage([])
+        XCTAssertEqual(logged, [])
+        server.setPage(["not an address"])
+        XCTAssertEqual(logged.count, 1)
+        XCTAssertTrue(logged.first?.contains("page address") == true, "\(logged)")
+    }
+
     func testFreeingMemoryIsSafeStoppedOrRunning() throws {
         server.freeMemory()
         try start()

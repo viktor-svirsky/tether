@@ -10,6 +10,9 @@ protocol WireGuardServing: AnyObject {
     func start(hosts: [String], setup: WireGuardSetup, dns: DNSChoice.Upstream, port: UInt16) throws
     func stop()
     func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream) throws
+    /// Opens the config page to the devices on exactly `hosts`, see `ConfigPageServing.readyHosts`.
+    /// A start opens it nowhere.
+    func setPage(_ hosts: [String])
     /// The counters, the totals and each device's, only grow, across restarts. Which devices are
     /// connected, only while running.
     func snapshot() -> ServerSnapshot
@@ -22,12 +25,15 @@ extension WireGuardServer: WireGuardServing {}
 @MainActor
 protocol ConfigPageServing: AnyObject {
     var respond: @MainActor (ConfigPage.Request, _ client: String) -> ConfigPage.Response { get set }
+    /// Called when `readyHosts` changes.
     var onChange: @MainActor () -> Void { get set }
     var onFailure: @MainActor (Error) -> Void { get set }
     /// Started, and not failed or stopped since.
     var running: Bool { get }
     /// Taking connections.
     var listening: Bool { get }
+    /// The addresses whose listener is taking connections.
+    var readyHosts: [String] { get }
     func start(hosts: [String], port: UInt16)
     func stop()
 }
@@ -555,9 +561,12 @@ final class HotspotSession {
         host.map { devices.setup.clientConfig(for: ready, host: $0, dns: dns().line) }
     }
 
-    /// A page that listens again logs its next failure.
+    /// A page that listens again logs its next failure. The devices reach the page's port only where
+    /// Tether's page listens: where it failed, another app may have the port (#27). Each WireGuard
+    /// start is followed by a page start, which says again once it listens.
     private func pageChanged() {
         if page.listening { pageHandler.listening() }
+        server.setPage(page.readyHosts)
     }
 
     private func pageFailed(_ error: Error) {

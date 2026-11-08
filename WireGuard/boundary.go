@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strings"
 )
 
 const messageVersion = 1
@@ -118,6 +119,31 @@ func configure(js string) error {
 	}
 	server.SetDNS(dns)
 	return server.SetPeers(peers)
+}
+
+// setPage opens the config page to the devices at hosts, comma-separated, "" for nowhere: the
+// addresses where Swift's page listener is ready, on pagePort. One it can't read closes the page
+// everywhere, so an address the page left stays closed. With no server it only checks them: a new
+// server opens the page nowhere until Swift says again.
+func setPage(hosts string) error {
+	var page []netip.AddrPort
+	var err error
+	if hosts != "" {
+		for _, h := range strings.Split(hosts, ",") {
+			a, e := netip.ParseAddr(h)
+			if e != nil {
+				page, err = nil, fmt.Errorf("page address: %w", e)
+				break
+			}
+			page = append(page, netip.AddrPortFrom(a.Unmap(), pagePort))
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if server != nil {
+		server.SetPage(page)
+	}
+	return err
 }
 
 // statsJSON is the running server's statsMessage, and false when no server runs.

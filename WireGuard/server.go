@@ -247,11 +247,10 @@ type Server struct {
 	local     atomic.Pointer[map[netip.Addr]struct{}]
 	listAddrs func() ([]net.Addr, error)
 	listing   sync.Mutex
-	// page is where Tether's config page listens: pagePort on each address WireGuard listens on. A
-	// device whose tunnel works opens it through the tunnel, so it's the one own address that stays
-	// reachable, over TCP only. Set by Start. Tests swap it under s.mu before any traffic, and
-	// forwardTCP reads it after taking s.mu.
-	page []netip.AddrPort
+	// page is where Tether's config page listens, see SetPage. A device whose tunnel works opens it
+	// through the tunnel, so it's the one own address that stays reachable, over TCP only. The
+	// packet path reads it without a lock.
+	page atomic.Pointer[[]netip.AddrPort]
 	// closed is set by Close. From then on handleTCP, track and cone let nothing new in.
 	closed bool
 	// forwarding counts the forwardTCP goroutines handleTCP let in, for Close to wait for.
@@ -312,9 +311,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 		shake:     make(chan struct{}, 1),
 		listAddrs: listAddrs,
 	}
-	for _, h := range hosts {
-		s.page = append(s.page, netip.AddrPortFrom(h.Unmap(), pagePort))
-	}
+	s.page.Store(&[]netip.AddrPort{})
 	s.local.Store(&map[netip.Addr]struct{}{})
 	// Before any device's packet can come in. Without it every own address is open, so a failed
 	// read fails the start and Swift tries again on its next round. Nothing is running yet.
@@ -757,6 +754,15 @@ func (s *Server) leaves(dst netip.Addr) bool {
 	return forwardable(dst) && !own
 }
 
+// SetPage opens exactly these own addresses to the devices, over TCP: where Tether's config page
+// listens now. Swift says so as each of its listeners gets ready, and gives none once the page fails
+// or stops. Opening them from WireGuard's addresses alone would let the devices reach another app
+// that holds the page's port where Tether's page failed (#27). A new server opens none.
+func (s *Server) SetPage(page []netip.AddrPort) {
+	page = slices.Clone(page)
+	s.page.Store(&page)
+}
+
 // refreshLocal reads the iPhone's own addresses: the hotspot's, cellular, Wi-Fi and a VPN's tunnel
 // address. Exact addresses only, never their networks: a cellular address in 100.64.0.0/10 shares
 // that range with the other nodes of a Tailscale network, which the devices still reach. On an
@@ -1025,7 +1031,7 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 		dst, doh = s.dnsRoute()
 		allowed = forwardable(dst.Addr())
 	} else {
-		allowed = s.leaves(dst.Addr()) || slices.Contains(s.page, dst)
+		allowed = s.leaves(dst.Addr()) || slices.Contains(*s.page.Load(), dst)
 	}
 	if a.refuse || doh == "" && !allowed {
 		refuse()
