@@ -151,7 +151,8 @@ func waitAsked(t *testing.T, d *dohServer) []byte {
 	}
 }
 
-// viaDoH points s's lookups at d.
+// viaDoH points s's lookups at d. Call it before the first lookup: they read dohClient without
+// a lock, and one may still run after its device gave up. SetDNS changes the URL at any time.
 func viaDoH(s *Server, d *dohServer) {
 	s.dohClient = d.Client()
 	s.SetDNS(&dnsUpstream{doh: d.URL + "/abc123"})
@@ -418,7 +419,7 @@ func TestAnErrorFromTheServerIsNotAskedAgain(t *testing.T) {
 	}
 	// The next failure of the run isn't logged, and the first answer after them is.
 	lookupUDP(c, lookupFor(t, 2, "example.com.", 0), time.Second)
-	viaDoH(s, d)
+	s.SetDNS(&dnsUpstream{doh: d.URL + "/abc123"})
 	if _, err := lookupUDP(c, lookupFor(t, 3, "example.com.", 0), 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
