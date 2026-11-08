@@ -34,8 +34,8 @@ const (
 	// staleFor is how long a stale config is kept after it last knocked, the minute Swift shows it
 	// for (StaleConfig.shownFor).
 	staleFor = time.Minute
-	// knockersKept bounds the addresses remembered: a hotspot has a few devices, and anyone on it
-	// can send handshakes from many.
+	// knockersKept bounds the (kind, address) keys remembered: a hotspot has a few devices, and
+	// anyone on it can send handshakes from many addresses.
 	knockersKept = 16
 )
 
@@ -62,6 +62,8 @@ func (k *knocks) heard(kind, from string, at time.Time) {
 		key.addr = ap.Addr().String()
 	}
 	if prev, ok := k.last[key]; ok && at.Sub(prev) < knockWithin {
+		// Kept apart from k.stale: under a flood of more than knockersKept keys, forget can drop the
+		// key behind it, so the main screen can say a knock the page no longer has.
 		k.latest = staleStats{Kind: kind, At: at.Unix(), From: from}
 		k.stale[key] = k.latest
 	}

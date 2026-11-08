@@ -224,8 +224,10 @@ final class WireGuardServerTests: XCTestCase {
             stale = server.snapshot().stale
         }
         XCTAssertEqual(stale?.kind, .server)
+        XCTAssertEqual(server.snapshot().recentStale.map(\.kind), [.server], "the config page reads the recent ones (#63)")
         server.stop()
         XCTAssertNil(server.snapshot().stale, "a stopped server knows of no knock")
+        XCTAssertEqual(server.snapshot().recentStale, [])
     }
 
     /// Junk handshakes, as a config made for other server keys sends: a handshake initiation is type 1

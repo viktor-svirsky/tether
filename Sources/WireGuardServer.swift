@@ -79,10 +79,12 @@ final class WireGuardServer {
     }
 
     /// Counters that only grow, across restarts, the totals and each device's. Which devices are
-    /// connected, and the last config that knocked but no longer works, only while running.
+    /// connected, the last config that knocked but no longer works, and each address's from the last
+    /// minute for the config page (#63), only while running.
     func snapshot() -> ServerSnapshot {
         let run = running ? currentRun() : ServerSnapshot()
-        return ServerSnapshot(totals: carried.apply(to: run.totals), peers: carriedDevices.apply(to: run.peers), stale: run.stale)
+        return ServerSnapshot(totals: carried.apply(to: run.totals), peers: carriedDevices.apply(to: run.peers), stale: run.stale,
+                              recentStale: run.recentStale)
     }
 
     /// This run's stats. Stats it can't read leave the last counters it read, so a stop still carries
@@ -238,6 +240,7 @@ private extension ServerSnapshot {
         var s = self
         for address in s.peers.keys { s.peers[address]?.connected = false }
         s.stale = nil
+        s.recentStale = []
         return s
     }
 }
