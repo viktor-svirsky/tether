@@ -30,6 +30,7 @@ final class ConfigPageServerTests: XCTestCase {
             }
         }
         let ready = expectation(description: "listening")
+        ready.assertForOverFulfill = false // once for each address that gets ready
         server.onChange = { [unowned self] in if server.listening { ready.fulfill() } }
         server.start(hosts: hosts, port: port)
         XCTAssertTrue(server.running, "running from the start, before it's ready")
@@ -113,6 +114,7 @@ final class ConfigPageServerTests: XCTestCase {
         server.stop()
         XCTAssertFalse(server.running)
         XCTAssertFalse(server.listening)
+        XCTAssertEqual(server.readyHosts, [])
         XCTAssertNil(server.port)
         let reply = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port)
         XCTAssertNil(reply, "connection refused")
@@ -164,6 +166,7 @@ final class ConfigPageServerTests: XCTestCase {
         await fulfillment(of: [failed], timeout: 5)
         XCTAssertFalse(second.running)
         XCTAssertFalse(second.listening)
+        XCTAssertEqual(second.readyHosts, [], "WireGuard mustn't open the port to the devices: it's another listener's (#27)")
         second.stop()
     }
 
@@ -176,6 +179,7 @@ final class ConfigPageServerTests: XCTestCase {
             XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200 OK"), "\(host): \(reply)")
         }
         XCTAssertEqual(asked.map(\.1), ["127.0.0.1", "::1"])
+        XCTAssertEqual(Set(server.readyHosts), ["127.0.0.1", "::1"])
         server.stop()
         let after = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port, host: "::1")
         XCTAssertNil(after, "both stopped")
@@ -200,6 +204,7 @@ final class ConfigPageServerTests: XCTestCase {
         await fulfillment(of: [failed], timeout: 5)
         XCTAssertFalse(server.running)
         XCTAssertFalse(server.listening)
+        XCTAssertEqual(server.readyHosts, [], "the IPv4 one may have been ready before")
         let reply = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port)
         XCTAssertNil(reply, "the IPv4 one stopped too")
     }

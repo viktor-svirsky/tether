@@ -4,7 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -94,6 +96,40 @@ func TestConfigureReplacesTheDevices(t *testing.T) {
 	}
 	if got := strings.Join(s.addresses(), " "); got != "10.7.0.5 10.7.0.6" {
 		t.Fatalf("devices %q, want the two configured", got)
+	}
+}
+
+// Swift says where its config page listens as each listener gets ready, and "" once it fails or
+// stops. A new server opens it nowhere until then, and an address it can't read closes it
+// everywhere rather than leaving the last ones open (#27).
+func TestSetPageOpensPort80WhereThePageListens(t *testing.T) {
+	s := startAlone(t)
+	exported(t, s)
+	if got := *s.page.Load(); len(got) != 0 {
+		t.Fatalf("a new server opens the page at %v before Swift says it listens", got)
+	}
+	if err := setPage("172.20.10.1,2607:fb90:1:2::5"); err != nil {
+		t.Fatal(err)
+	}
+	want := []netip.AddrPort{netip.MustParseAddrPort("172.20.10.1:80"), netip.MustParseAddrPort("[2607:fb90:1:2::5]:80")}
+	if got := *s.page.Load(); !slices.Equal(got, want) {
+		t.Fatalf("the page is at %v, want %v", got, want)
+	}
+	if err := setPage(""); err != nil || len(*s.page.Load()) != 0 {
+		t.Fatalf("the page stopped and is still at %v: %v", *s.page.Load(), err)
+	}
+	setPage("172.20.10.1")
+	if err := setPage("172.20.10.1,nonsense"); err == nil || len(*s.page.Load()) != 0 {
+		t.Fatalf("an address it can't read left the page at %v: %v", *s.page.Load(), err)
+	}
+}
+
+func TestSetPageWithNoServerDoesNothing(t *testing.T) {
+	if err := setPage("172.20.10.1"); err != nil {
+		t.Fatalf("a new server starts with the page nowhere, so there's nothing to do: %v", err)
+	}
+	if err := setPage("nonsense"); err == nil {
+		t.Fatal("an address it can't read is an error even with no server")
 	}
 }
 

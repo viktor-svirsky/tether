@@ -9,15 +9,18 @@ import Network
 final class ConfigPageServer {
     /// The answer to a request, and who asked: the device's address on the hotspot.
     var respond: @MainActor (ConfigPage.Request, _ client: String) -> ConfigPage.Response = { _, _ in ConfigPage.notFound }
-    /// Called when `listening` changes.
+    /// Called when `readyHosts` changes.
     var onChange: @MainActor () -> Void = {}
     /// Called when a listener fails, after all of them have stopped.
     var onFailure: @MainActor (Error) -> Void = { _ in }
 
     /// Started, and not failed or stopped since. HotspotSession starts one that isn't again.
     var running: Bool { !listeners.isEmpty }
-    /// Taking connections.
-    private(set) var listening = false
+    /// Taking connections, on one address at least.
+    var listening: Bool { !readyHosts.isEmpty }
+    /// The addresses whose listener is taking connections, in the order they got ready. The WireGuard
+    /// server opens the page's port to the devices on these only (#27).
+    private(set) var readyHosts: [String] = []
     /// The port it listens on: the one asked for, or the one the system picked for port 0.
     private(set) var port: UInt16?
 
@@ -56,7 +59,7 @@ final class ConfigPageServer {
                 MainActor.assumeIsolated {
                     // A listener this one replaced reports its end too.
                     guard let self, let listener, self.listeners.contains(where: { $0 === listener }) else { return }
-                    self.changed(to: state, listener)
+                    self.changed(to: state, listener, host)
                 }
             }
             listener.newConnectionHandler = { [weak self] connection in
@@ -75,14 +78,14 @@ final class ConfigPageServer {
         listeners.forEach { $0.cancel() }
         listeners = []
         port = nil
-        setListening(false)
+        setReady([])
     }
 
-    private func changed(to state: NWListener.State, _ listener: NWListener) {
+    private func changed(to state: NWListener.State, _ listener: NWListener, _ host: String) {
         switch state {
         case .ready:
             port = listener.port?.rawValue
-            setListening(true)
+            if !readyHosts.contains(host) { setReady(readyHosts + [host]) }
         case let .failed(error), let .waiting(error):
             // Waiting is for an address that isn't there (yet), an IPv6 one still being checked
             // say. All stop, and the next watcher round starts them again. Serving on with the
@@ -94,9 +97,9 @@ final class ConfigPageServer {
         }
     }
 
-    private func setListening(_ value: Bool) {
-        guard value != listening else { return }
-        listening = value
+    private func setReady(_ hosts: [String]) {
+        guard hosts != readyHosts else { return }
+        readyHosts = hosts
         onChange()
     }
 

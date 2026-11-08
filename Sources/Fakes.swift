@@ -42,12 +42,16 @@ final class FakeServer: WireGuardServing {
     private(set) var lastSetup: WireGuardSetup?
     /// Where the last start or change sent lookups to Tether's own address.
     private(set) var lastDNS: DNSChoice.Upstream?
+    /// Where the config page is open to the devices, see `setPage`. A run starts with it nowhere, as
+    /// the real one does.
+    private(set) var page: [String] = []
 
     func start(hosts: [String], setup: WireGuardSetup, dns: DNSChoice.Upstream, port: UInt16) throws {
         stop()
         starts.append(hosts.joined(separator: ","))
         if let startError { throw startError }
         running = true
+        page = []
         do {
             try setPeers(setup, dns: dns)
         } catch {
@@ -58,6 +62,12 @@ final class FakeServer: WireGuardServing {
 
     func stop() {
         running = false
+        page = []
+    }
+
+    func setPage(_ hosts: [String]) {
+        guard running else { return }
+        page = hosts
     }
 
     func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream) throws {
@@ -93,23 +103,26 @@ final class FakePage: ConfigPageServing {
     var onChange: @MainActor () -> Void = {}
     var onFailure: @MainActor (Error) -> Void = { _ in }
     private(set) var running = false
-    private(set) var listening = false
+    private(set) var readyHosts: [String] = []
+    var listening: Bool { !readyHosts.isEmpty }
     /// "hosts:port" for each start, the hosts comma-separated.
     private(set) var starts: [String] = []
+    private var hosts: [String] = []
 
     func start(hosts: [String], port: UInt16) {
         stop()
         starts.append("\(hosts.joined(separator: ",")):\(port)")
+        self.hosts = hosts
         running = true
     }
 
     func stop() {
         running = false
-        setListening(false)
+        setReady([])
     }
 
-    /// The listener is ready for connections.
-    func becomeReady() { setListening(true) }
+    /// The listeners on `hosts` are ready for connections, by default all of the last start's.
+    func becomeReady(_ hosts: [String]? = nil) { setReady(hosts ?? self.hosts) }
 
     /// The listener failed after it started, the way the real one stops itself.
     func fail() {
@@ -122,9 +135,9 @@ final class FakePage: ConfigPageServing {
         respond(request, client)
     }
 
-    private func setListening(_ value: Bool) {
-        guard value != listening else { return }
-        listening = value
+    private func setReady(_ hosts: [String]) {
+        guard hosts != readyHosts else { return }
+        readyHosts = hosts
         onChange()
     }
 }

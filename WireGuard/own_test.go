@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -175,29 +174,32 @@ func TestUDPAndPingToTheIPhoneItselfGetNoReply(t *testing.T) {
 	}
 }
 
-// A device whose tunnel works opens the config page through it, at the address and port Tether
-// listens on. That one stays reachable: the page's port on another own address doesn't, nor
-// another port on the page's address.
+// A device whose tunnel works opens the config page through it, at the address and port Tether's
+// page listens on. That one stays reachable: the page's port on another own address doesn't, nor
+// another port on the page's address. Only while Swift says its page listens there: where it
+// failed, another app may hold the port (#27).
 func TestTheConfigPageStaysReachableThroughTheTunnel(t *testing.T) {
 	s, c := setup(t)
-	if want := []netip.AddrPort{netip.AddrPortFrom(loopback, pagePort)}; !slices.Equal(s.page, want) {
-		t.Fatalf("the page is at %v, want %v: port 80 where WireGuard listens", s.page, want)
-	}
 	page, other := tcpServer(t, 100), tcpServer(t, 100)
-	s.mu.Lock()
-	s.page = []netip.AddrPort{netip.MustParseAddrPort(page)}
-	s.mu.Unlock()
 	ownAre(s, remote+"/32", "198.51.100.8/32")
 	s.refreshLocal()
+	// The test dialer reaches loopback whatever the address, so each of these would connect if let out.
+	if _, err := fetch(t, c, page); err == nil {
+		t.Fatal("the page's address connected before Swift said its page listens there")
+	}
+	s.SetPage([]netip.AddrPort{netip.MustParseAddrPort(page)})
 	if n, err := fetch(t, c, page); err != nil || n != 100 {
 		t.Fatalf("the config page: %d bytes, %v", n, err)
 	}
-	// The test dialer reaches loopback whatever the address, so each of these would connect if let out.
 	_, port, _ := net.SplitHostPort(page)
 	for _, addr := range []string{other, net.JoinHostPort("198.51.100.8", port)} {
 		if _, err := fetch(t, c, addr); err == nil {
 			t.Errorf("%s isn't the page and connected", addr)
 		}
+	}
+	s.SetPage(nil)
+	if _, err := fetch(t, c, page); err == nil {
+		t.Fatal("the page's address still connected after its page stopped")
 	}
 }
 

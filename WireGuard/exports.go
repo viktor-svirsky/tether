@@ -97,6 +97,18 @@ func TetherWGConfigure(message *C.char) (result *C.char) {
 	return cerr(configure(C.GoString(message)))
 }
 
+// TetherWGSetPage opens the config page to the devices at hosts, comma-separated, "" for nowhere:
+// the addresses where its listener is ready now. Returns nil, or an error message.
+//
+//export TetherWGSetPage
+func TetherWGSetPage(hosts *C.char) (result *C.char) {
+	defer survive(&result)
+	if hosts == nil {
+		return C.CString("no page addresses")
+	}
+	return cerr(setPage(C.GoString(hosts)))
+}
+
 // TetherWGFreeMemory gives memory the GC has freed back to iOS. Swift calls it on a memory warning.
 //
 //export TetherWGFreeMemory
