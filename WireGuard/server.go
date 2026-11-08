@@ -156,6 +156,7 @@ type Stats struct {
 }
 
 type Server struct {
+	bind  *hostBind
 	dev   *device.Device
 	stack *stack.Stack
 	tun   *stackTun
@@ -187,7 +188,10 @@ type Server struct {
 	stop    chan struct{}
 	found   chan struct{} // asks the refresher to look at candidate
 	shake   chan struct{} // asks the refresher to read the handshakes now, see noticeHandshake
+	dead    chan struct{} // asks the refresher to listen again, see reopen
 	stopped sync.WaitGroup
+	// reopened is when the refresher last tried to listen again. Only the refresher reads it.
+	reopened time.Time
 	// closeOnce makes Close safe to call twice: close(stop) would panic.
 	closeOnce sync.Once
 	reading   sync.Mutex
@@ -309,6 +313,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 		stop:      make(chan struct{}),
 		found:     make(chan struct{}, 1),
 		shake:     make(chan struct{}, 1),
+		dead:      make(chan struct{}, 1),
 		listAddrs: listAddrs,
 	}
 	s.page.Store(&[]netip.AddrPort{})
@@ -354,7 +359,8 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	s.stack.SetTransportProtocolHandler(udp.ProtocolNumber, s.handleUDP)
 
 	logger := &device.Logger{Verbosef: s.notice, Errorf: s.noticeError}
-	s.dev = device.NewDevice(s.tun, &hostBind{hosts: hosts}, logger)
+	s.bind = &hostBind{hosts: hosts, died: s.socketDied}
+	s.dev = device.NewDevice(s.tun, s.bind, logger)
 	if err := s.dev.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\n", hex.EncodeToString(privateKey[:]), port)); err != nil {
 		s.dev.Close()
 		s.stack.Close()
@@ -682,6 +688,8 @@ func (s *Server) refresh() {
 			s.candidate = netip.Addr{}
 			s.mu.Unlock()
 			s.makeRouter(addr)
+		case <-s.dead:
+			s.reopen()
 		case <-s.stop:
 			return
 		}
