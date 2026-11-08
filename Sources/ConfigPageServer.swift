@@ -22,6 +22,10 @@ final class ConfigPageServer {
     private(set) var port: UInt16?
 
     private var listeners: [NWListener] = []
+    /// Stopped listeners whose socket isn't closed yet. It closes a moment after `cancel`, when the
+    /// listener reports `.cancelled`, and until then a listener on the same address and port fails
+    /// with "address in use" (#102). New listeners start once these are gone.
+    private var closing: [NWListener] = []
     private var open = 0
     /// A request that hasn't arrived whole by then gets no answer, so a stalled client can't hold a connection.
     private let timeout: TimeInterval
@@ -54,6 +58,7 @@ final class ConfigPageServer {
             }
             listener.stateUpdateHandler = { [weak self, weak listener] state in
                 MainActor.assumeIsolated {
+                    if case .cancelled = state, let listener { self?.closed(listener) }
                     // A listener this one replaced reports its end too.
                     guard let self, let listener, self.listeners.contains(where: { $0 === listener }) else { return }
                     self.changed(to: state, listener)
@@ -66,12 +71,23 @@ final class ConfigPageServer {
                 }
             }
             listeners.append(listener)
-            listener.start(queue: .main)
         }
+        startOnceClosed()
+    }
+
+    private func startOnceClosed() {
+        guard closing.isEmpty else { return }
+        listeners.filter { $0.queue == nil }.forEach { $0.start(queue: .main) }
+    }
+
+    private func closed(_ listener: NWListener) {
+        closing.removeAll { $0 === listener }
+        startOnceClosed()
     }
 
     /// Connections already open finish on their own, within `timeout`.
     func stop() {
+        closing += listeners.filter { $0.queue != nil } // one never started has no socket, and reports nothing
         listeners.forEach { $0.cancel() }
         listeners = []
         port = nil
