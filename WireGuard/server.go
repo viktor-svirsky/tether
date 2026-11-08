@@ -267,8 +267,14 @@ type arrival struct {
 }
 
 // Start listens for WireGuard on port at each of hosts, with the server's private key. An address
-// that can't be listened on fails it. Peers come from SetPeers.
+// that can't be listened on fails it, and so does a failed first read of the iPhone's own
+// addresses. Peers come from SetPeers.
 func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
+	return start(hosts, port, privateKey, net.InterfaceAddrs)
+}
+
+// start is Start with the iPhone's own addresses read by listAddrs. Tests give one that fails.
+func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() ([]net.Addr, error)) (*Server, error) {
 	// Go's default keepalive probes every idle connection every 15 s, which keeps the cellular
 	// radio awake. Probing is still needed: when the device closes first, forwardTCP half-closes
 	// and waits for the remote, so a remote that silently went away would hold it forever.
@@ -304,13 +310,17 @@ func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		stop:      make(chan struct{}),
 		found:     make(chan struct{}, 1),
 		shake:     make(chan struct{}, 1),
-		listAddrs: net.InterfaceAddrs,
+		listAddrs: listAddrs,
 	}
 	for _, h := range hosts {
 		s.page = append(s.page, netip.AddrPortFrom(h.Unmap(), pagePort))
 	}
 	s.local.Store(&map[netip.Addr]struct{}{})
-	s.refreshLocal() // before any device's packet can come in
+	// Before any device's packet can come in. Without it every own address is open, so a failed
+	// read fails the start and Swift tries again on its next round. Nothing is running yet.
+	if err := s.refreshLocal(); err != nil {
+		return nil, fmt.Errorf("can't read the iPhone's own addresses: %v", err)
+	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
 	s.dohClient, s.dohTimeout = newDoHClient(dialer.DialContext), dohTimeout
@@ -739,7 +749,9 @@ func forwardable(dst netip.Addr) bool {
 
 // leaves says whether a device's packet for dst may go out through the iPhone: forwardable, and
 // not to one of the iPhone's own addresses. Those reach whatever listens on the iPhone itself,
-// other apps' local servers included, and no device needs them (#27).
+// other apps' local servers included, and no device needs them (#27). A TCP connection opened to a
+// new own address before the next read, at most localEvery later, stays open after it, which is
+// accepted: a device would need the iPhone's new address within seconds.
 func (s *Server) leaves(dst netip.Addr) bool {
 	_, own := (*s.local.Load())[dst]
 	return forwardable(dst) && !own
@@ -748,8 +760,8 @@ func (s *Server) leaves(dst netip.Addr) bool {
 // refreshLocal reads the iPhone's own addresses: the hotspot's, cellular, Wi-Fi and a VPN's tunnel
 // address. Exact addresses only, never their networks: a cellular address in 100.64.0.0/10 shares
 // that range with the other nodes of a Tailscale network, which the devices still reach. On an
-// error the last ones are kept. A change goes into the log.
-func (s *Server) refreshLocal() {
+// error the last ones are kept, and it's returned. A change goes into the log.
+func (s *Server) refreshLocal() error {
 	s.listing.Lock()
 	defer s.listing.Unlock()
 	s.mu.Lock()
@@ -758,7 +770,7 @@ func (s *Server) refreshLocal() {
 	addrs, err := listAddrs()
 	if err != nil {
 		serverLog.add(time.Now(), "can't read the iPhone's own addresses: "+err.Error())
-		return
+		return err
 	}
 	own := map[netip.Addr]struct{}{}
 	for _, a := range addrs {
@@ -772,7 +784,7 @@ func (s *Server) refreshLocal() {
 		}
 	}
 	if maps.Equal(*s.local.Load(), own) {
-		return
+		return nil
 	}
 	s.local.Store(&own)
 	shown := "none"
@@ -784,6 +796,7 @@ func (s *Server) refreshLocal() {
 		shown = strings.Join(each, ", ")
 	}
 	serverLog.add(time.Now(), "the iPhone's own addresses, which devices can't reach: "+shown)
+	return nil
 }
 
 var tunnelNet = netip.MustParsePrefix("10.7.0.0/24")

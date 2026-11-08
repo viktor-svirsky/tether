@@ -94,6 +94,22 @@ func TestTheOwnAddressesFollowTheIPhone(t *testing.T) {
 	}
 }
 
+// Without a first read, every own address would be open to the devices, so it fails the start.
+// Swift shows why and tries again on its next round, the way it does for an address it can't
+// listen on.
+func TestAFailedFirstReadOfTheOwnAddressesStopsTheStart(t *testing.T) {
+	priv, _ := keyPair(t)
+	failing := func() ([]net.Addr, error) { return nil, errors.New("no addresses for you") }
+	s, err := start([]netip.Addr{loopback}, 0, priv, failing)
+	if err == nil {
+		s.Close()
+		t.Fatal("started without knowing the iPhone's own addresses")
+	}
+	if want := "can't read the iPhone's own addresses: no addresses for you"; err.Error() != want {
+		t.Fatalf("got %q, want %q", err, want)
+	}
+}
+
 // A connection to the iPhone itself is refused at once, without dialing, and counts nothing.
 func TestAConnectionToTheIPhoneItselfIsRefusedAtOnce(t *testing.T) {
 	s, c := setup(t)
