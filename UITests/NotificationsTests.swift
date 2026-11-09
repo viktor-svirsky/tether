@@ -106,6 +106,15 @@ final class NotificationsTests: TetherUITestCase {
     /// the notification center waited, the one Tether makes in the background too. Its notice posted
     /// only after the test had given up (#116).
     private func waitUntilNotificationsAreAllowed(_ springboard: XCUIApplication, timeout: TimeInterval = 180) {
+        // The question can come up at any moment after launch and cover the gear. A tap it blocks
+        // runs this first, so it's answered on the way to Settings too, not only in the loop below.
+        let monitor = addUIInterruptionMonitor(withDescription: "notification permission") { alert in
+            let allow = alert.buttons["Allow"]
+            guard allow.exists else { return false }
+            allow.tap()
+            return true
+        }
+        defer { removeUIInterruptionMonitor(monitor) }
         openSettings()
         // The first row, so the sheet has drawn its list before the button can count as gone.
         XCTAssertTrue(app.buttons["sharing.idleStop"].waitForExistence(timeout: 5))
