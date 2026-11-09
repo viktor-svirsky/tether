@@ -121,6 +121,33 @@ change config "Fixes #19: Show config status"
 g revert --no-edit HEAD > /dev/null
 says "- No change you'd see in the app." v1.3.0
 
+# Taken out before a release and put back after it: in the notes again, though the fix itself is
+# before the tag. The same for a batch merge taken out with -m 1.
+git tag v1.4.0
+g revert --no-edit HEAD > /dev/null
+says "- Show config status (#19)" v1.4.0
+issue 20 closed "Pick the DNS server per device" enhancement
+git checkout -q -b batch2
+change dns "$(printf 'Pick the DNS server per device\n\nFixes #20')"
+git checkout -q main
+change other "More on main"
+g merge -q --no-ff batch2 -m "Merge the DNS batch"
+g revert -m 1 --no-edit HEAD > /dev/null
+taken_out=$(git rev-parse HEAD)
+git tag v1.5.0
+g revert --no-edit HEAD > /dev/null
+says "- Pick the DNS server per device (#20)" v1.5.0
+# Put back before the release already: a second revert of the same removal brings nothing new.
+git tag v1.6.0
+change more "$(printf 'Put the DNS batch back on another branch\n\nThis reverts commit %s.' "$taken_out")"
+says "- No change you'd see in the app." v1.6.0
+
+# Only a line that starts with the keyword counts: prose that quotes one fixes nothing.
+git tag v1.7.0
+issue 21 closed "Something from long ago" bug
+commit "$(printf 'Explain the notes\n\nA revert subject like "Fixes #21: ..." brought #21 back.')" > /dev/null
+says "- No change you'd see in the app." v1.7.0
+
 # No answer about an issue fails the run, instead of notes that leave it out without a word.
 commit "$(printf 'Something\n\nFixes #99')" > /dev/null
 status=0
