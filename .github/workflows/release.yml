@@ -6,6 +6,9 @@
 # https://github.com/viktor-svirsky/tether/releases/latest/download/source.json once and get every
 # release after that. Runs on GitHub's macOS runner, like CI.
 #
+# A release branch releases by itself only when it got to the commit before main did (which-release.sh),
+# so a release branch cut from main, or fast-forwarded to a fix on main, releases nothing (#120). Take
+# main's fixes into a release branch with a merge commit, and push the release branch before main.
 # A release branch's version can go missing if main moves on before its CI run ends (CI cancels the
 # older run), or if the release branch moves after main reached it. Then run this by hand with minor.
 name: Release
@@ -51,6 +54,7 @@ jobs:
           RUN_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
           RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }} # which-release.sh reads the branches' push history
         run: |
           if [[ $GITHUB_EVENT_NAME == workflow_dispatch ]]; then
               echo "bump=$INPUT" >> "$GITHUB_OUTPUT"
@@ -70,7 +74,7 @@ jobs:
           fi
           branch=$(scripts/which-release.sh "$RUN_SHA")
           if [[ -z $branch ]]; then
-              echo "::notice::Nothing to release: main isn't at a release branch whose version is still to come."
+              echo "::notice::Nothing to release: main isn't at a release branch whose version is still to come, or main got there first (see the log)."
               exit 0
           fi
           echo "Main is at $branch."
@@ -89,6 +93,7 @@ jobs:
     permissions:
       actions: read # see whether CI passed on this commit
       contents: write # create the release and its tag
+      issues: read # the notes list the issues fixed
       id-token: write # sign the attestation
       attestations: write # store it
     steps:
@@ -124,6 +129,7 @@ jobs:
           python3 scripts/test_make_source.py
           scripts/test-next-version.sh
           scripts/test-which-release.sh
+          scripts/test-release-notes.sh
       - name: Build Tether.ipa
         run: scripts/build-ipa.sh "$VERSION" "$RUNNER_TEMP/out"
         env:
@@ -142,8 +148,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
           PREVIOUS: ${{ steps.version.outputs.previous }}
-        # The notes list the commits since the last release. Changes land on main without pull requests,
-        # so GitHub's generated notes would be empty.
+        # The notes list the issues fixed since the last release that people using the app can see
+        # (release-notes.sh), not every commit: test fixes, CI and work taken out again stay out (#110).
         run: |
           out=$RUNNER_TEMP/out
           {
@@ -151,7 +157,7 @@ jobs:
               echo
               echo "Using SideStore or AltStore? [Add the source in one tap](https://$GITHUB_REPOSITORY_OWNER.github.io/${GITHUB_REPOSITORY#*/}/add/) and get every update there."
               echo
-              git log --no-merges --format='- %s' "${PREVIOUS:+$PREVIOUS..}HEAD"
+              scripts/release-notes.sh "$PREVIOUS"
               echo
               echo "SHA-256 of Tether.ipa: \`$(shasum -a 256 "$out/Tether.ipa" | cut -d' ' -f1)\`"
               echo
