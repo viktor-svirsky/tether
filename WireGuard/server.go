@@ -618,6 +618,12 @@ func (s *Server) apply(want map[[32]byte]netip.Addr, router netip.Addr) error {
 	s.setPeersLocked(kept)
 	if router != wasRouter {
 		s.router, s.routed = netip.Addr{}, false
+		// A router made where there was none owns its clients' packets from now on, since
+		// wireguard-go lets them in before IpcSet returns, and a SYN refused meanwhile ends its
+		// client's connection with a reset (#117). No other device had the ranges to send from.
+		if _, ok := s.keys[router]; ok && !wasRouter.IsValid() {
+			s.router = router
+		}
 	}
 	var closing []io.Closer
 	for key, addr := range have {

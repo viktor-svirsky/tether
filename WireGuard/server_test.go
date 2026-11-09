@@ -1041,6 +1041,40 @@ func TestTheRouterStaysTheRouterWhenAnotherDeviceIsAdded(t *testing.T) {
 	}
 }
 
+// wireguard-go lets a new router's clients in as soon as IpcSet gives it the ranges, before IpcSet
+// returns. Their packets must be the router's by then, or a client's SYN that lands in between
+// gets a reset and its connection fails (#117). No device had the ranges before, so no other
+// device's packets can be among them.
+func TestANewRoutersClientsAreItsWhileItGetsTheRanges(t *testing.T) {
+	s, _ := setupRouter(t, netip.MustParseAddr("192.168.4.20"))
+	router, client := netip.MustParseAddr("10.7.0.2"), netip.MustParseAddr("192.168.4.20")
+	var mu sync.Mutex
+	var owners []netip.Addr
+	heard := func(line string) {
+		if strings.HasSuffix(line, "UAPI: Adding allowedip") {
+			mu.Lock()
+			owners = append(owners, s.owner(client))
+			mu.Unlock()
+		}
+	}
+	s.heard.Store(&heard)
+	s.makeRouter(router)
+	s.heard.Store(nil)
+	if s.routerOf() != router {
+		t.Fatalf("router %v, want %v", s.routerOf(), router)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(owners) == 0 {
+		t.Fatal("no allowed IPs added, so nothing was checked")
+	}
+	for i, o := range owners {
+		if o != router {
+			t.Fatalf("owner of a client's packet while the ranges went in: %v at line %d of %d, want %v", owners, i+1, len(owners), router)
+		}
+	}
+}
+
 func (s *Server) keyOf(addr netip.Addr) [32]byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
