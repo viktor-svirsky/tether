@@ -72,6 +72,17 @@ final class ConfigPageServerTests: XCTestCase {
 
     private func text(_ data: Data?) -> String { data.flatMap { String(data: $0, encoding: .utf8) } ?? "" }
 
+    /// Whether connections to `host` fail within 2 seconds. A stopped listener closes its socket
+    /// asynchronously (#102), so one tried at once can still be accepted and closed.
+    private func refusedSoon(port: UInt16, host: NWEndpoint.Host = "127.0.0.1") async throws -> Bool {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port, host: host) == nil { return true }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return false
+    }
+
     func testItAnswersOneRequestAndCloses() async throws {
         let port = try await listen()
         let page = text(await exchange(Data("GET / HTTP/1.1\r\nHost: x\r\n\r\n".utf8), port: port))
@@ -116,8 +127,8 @@ final class ConfigPageServerTests: XCTestCase {
         XCTAssertFalse(server.listening)
         XCTAssertEqual(server.readyHosts, [])
         XCTAssertNil(server.port)
-        let reply = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port)
-        XCTAssertNil(reply, "connection refused")
+        let refused = try await refusedSoon(port: port)
+        XCTAssertTrue(refused, "connection refused")
     }
 
     /// Connections past 8 are closed at once, and a connection that closes frees its place.
@@ -197,8 +208,8 @@ final class ConfigPageServerTests: XCTestCase {
         XCTAssertEqual(asked.map(\.1), ["127.0.0.1", "::1"])
         XCTAssertEqual(Set(server.readyHosts), ["127.0.0.1", "::1"])
         server.stop()
-        let after = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port, host: "::1")
-        XCTAssertNil(after, "both stopped")
+        let refused = try await refusedSoon(port: port, host: "::1")
+        XCTAssertTrue(refused, "both stopped")
     }
 
     /// An address that can't be listened on stops them all, so HotspotSession starts them again later,
