@@ -225,13 +225,13 @@ type Server struct {
 	conns     map[netip.Addr]int
 	// The caps, see the constants. Tests lower them.
 	maxCones, maxDials, maxConns, maxPings, maxLookups int
-	// DNS on 10.7.0.1, see dns.go. Tests swap dohClient, dohTimeout and plainTimeout.
-	upstream     atomic.Pointer[dnsUpstream]
-	dohClient    *http.Client
-	dohTimeout   time.Duration
-	plainTimeout time.Duration
-	dnsFailing   atomic.Bool        // see dnsResult
-	lookups      map[netip.Addr]int // each device's UDP lookups waiting, see maxLookups
+	// DNS on 10.7.0.1, see dns.go. Tests swap dohClient, lookupTimeout and plainTimeout.
+	upstream      atomic.Pointer[dnsUpstream]
+	dohClient     *http.Client
+	lookupTimeout time.Duration
+	plainTimeout  time.Duration
+	dnsFailing    atomic.Bool        // see dnsResult
+	lookups       map[netip.Addr]int // each device's UDP lookups waiting, see maxLookups
 	// looking counts the UDP lookups and DNS-over-TCP connections, for Close to wait for.
 	looking sync.WaitGroup
 	// closed is set by Close. From then on handleTCP, track and cone let nothing new in.
@@ -289,7 +289,7 @@ func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
-	s.dohClient, s.dohTimeout = newDoHClient(dialer.DialContext), dohTimeout
+	s.dohClient, s.lookupTimeout = newDoHClient(dialer.DialContext), lookupTimeout
 	s.plainTimeout = plainTimeout
 	s.stack = stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
@@ -1056,14 +1056,19 @@ func (s *Server) dialOut(dst netip.AddrPort, lookups bool) (net.Conn, error) {
 		}
 		return nil, net.ErrClosed
 	}
-	return s.dialTCP(s.ctx, dst)
+	return s.dialTCP(s.ctx, dst, func(bool) {})
 }
 
 // dialTCP dials dst from the iPhone, through the carrier's NAT64 when the iPhone has no IPv4 route.
-func (s *Server) dialTCP(ctx context.Context, dst netip.AddrPort) (net.Conn, error) {
+// nat64Wait is told when the NAT64 prefix may be looked up, and when that's over. The lookup runs on
+// s.ctx: cut short, it would leave the well-known prefix in place of the carrier's for a minute.
+func (s *Server) dialTCP(ctx context.Context, dst netip.AddrPort, nat64Wait func(bool)) (net.Conn, error) {
 	out, err := s.dial(ctx, "tcp", dst.String())
 	if noRoute(err) {
-		if via, ok := s.viaNAT64(ctx, dst); ok {
+		nat64Wait(true)
+		via, ok := s.viaNAT64(s.ctx, dst)
+		nat64Wait(false)
+		if ok {
 			out, err = s.dial(ctx, "tcp", via.String())
 		}
 	}

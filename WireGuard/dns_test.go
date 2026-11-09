@@ -221,6 +221,7 @@ type plainServer struct {
 	silent   atomic.Bool // takes the queries and never answers
 	truncate atomic.Bool // answers over UDP with TC set and no records, so the device asks over TCP
 	wrongID  atomic.Bool // answers over UDP with another ID
+	wrongQ   atomic.Bool // answers over UDP with the query's ID and another question
 	delay    atomic.Int64
 	tcp      net.Listener
 }
@@ -265,6 +266,9 @@ func newPlain(t *testing.T, records int) *plainServer {
 			}
 			if p.wrongID.Load() {
 				a[0]++
+			}
+			if p.wrongQ.Load() {
+				a = answerTo(t, lookupFor(t, binary.BigEndian.Uint16(buf), "other.example.", 0), p.records)
 			}
 			time.AfterFunc(time.Duration(p.delay.Load()), func() { udp.WriteTo(a, from) })
 		}
@@ -597,11 +601,156 @@ func TestABigAnswerFromAPlainServerIsCut(t *testing.T) {
 	}
 }
 
+// An answer with the query's ID and another question isn't taken either.
+func TestAnAnswerToAnotherQuestionIsIgnored(t *testing.T) {
+	s, c := setup(t)
+	s.plainTimeout = 300 * time.Millisecond
+	first, second := newPlain(t, 1), newPlain(t, 2)
+	first.wrongQ.Store(true)
+	viaPlain(s, first, second)
+	a, err := lookupUDP(c, lookupFor(t, 65, "example.com.", 0), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, a); h.ID != 65 || n != 2 {
+		t.Fatalf("%+v with %d records, want the second server's 2", h, n)
+	}
+}
+
+// One server alone has the whole lookupTimeout, not only plainTimeout: a cold cache can take
+// seconds, and the device's own resolver would have waited for it.
+func TestASlowOnlyServerStillAnswers(t *testing.T) {
+	s, c := setup(t)
+	s.plainTimeout, s.lookupTimeout = 200*time.Millisecond, 2*time.Second
+	p := newPlain(t, 1)
+	p.delay.Store(int64(600 * time.Millisecond))
+	viaPlain(s, p)
+	a, err := lookupUDP(c, lookupFor(t, 66, "example.com.", 0), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, a); h.ID != 66 || h.RCode != dnsmessage.RCodeSuccess || n != 1 {
+		t.Fatalf("%+v with %d records, want the server's 1", h, n)
+	}
+}
+
+// Looking up the carrier's NAT64 prefix isn't the server's time: a slow one doesn't send the
+// lookup to the backup (#123), over UDP or TCP.
+func TestASlowNAT64PrefixDoesntAskTheBackup(t *testing.T) {
+	s, c := setup(t)
+	withoutIPv4(s)
+	s.plainTimeout, s.lookupTimeout = 300*time.Millisecond, 600*time.Millisecond
+	s.nat64.lookup = func(ctx context.Context) (netip.Prefix, error) {
+		select {
+		case <-time.After(time.Second):
+			return carrierNAT64, nil
+		case <-ctx.Done():
+			return netip.Prefix{}, ctx.Err()
+		}
+	}
+	first, second := newPlain(t, 1), newPlain(t, 2)
+	viaPlain(s, first, second)
+	a, err := lookupUDP(c, lookupFor(t, 67, "example.com.", 0), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, a); h.ID != 67 || n != 1 {
+		t.Fatalf("over UDP: %+v with %d records, want the first server's 1", h, n)
+	}
+	s.nat64.mu.Lock()
+	s.nat64.expiry = time.Time{} // looked up again by the next lookup
+	s.nat64.mu.Unlock()
+	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 68, "example.com.", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, answers[0]); h.ID != 68 || n != 1 {
+		t.Fatalf("over TCP: %+v with %d records, want the first server's 1", h, n)
+	}
+	first.askedOver(t, "udp", "tcp")
+	time.Sleep(2 * s.plainTimeout)
+	second.noneAsked(t)
+}
+
+// A query whose questions can't be read gets FORMERR at once: no server is asked, and its place
+// under the cap is free again.
+func TestAQueryThatCantBeReadIsAFormatError(t *testing.T) {
+	s, c := setup(t)
+	s.maxLookups = 1
+	p := newPlain(t, 1)
+	p.silent.Store(true)
+	viaPlain(s, p)
+	bad := lookupFor(t, 0x7070, "example.com.", 0)[:dnsHeaderLen] // QDCOUNT 1 and no question
+	a, err := lookupUDP(c, bad, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parser dnsmessage.Parser
+	if h, err := parser.Start(a); err != nil || h.ID != 0x7070 || !h.Response || h.RCode != dnsmessage.RCodeFormatError {
+		t.Fatalf("got %+v %v, want FORMERR", h, err)
+	}
+	answers, err := lookupsTCP(c, 5*time.Second, bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, _ := parser.Start(answers[0]); h.RCode != dnsmessage.RCodeFormatError {
+		t.Fatalf("over TCP: %+v", h)
+	}
+	p.noneAsked(t)
+	// Freed right after the answer, long before the 5 s a lookup may wait.
+	deadline := time.Now().Add(time.Second)
+	for s.lookupsOf(deviceAddr) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d lookups still waiting", s.lookupsOf(deviceAddr))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Under 12 bytes isn't a DNS message: nothing to answer.
+	if _, err := lookupUDP(c, []byte{1, 2, 3}, 500*time.Millisecond); err == nil {
+		t.Fatal("an answer to 3 bytes")
+	}
+}
+
+// Queries written one after another on one connection are answered in order.
+func TestLookupsOneAfterAnotherOverTCPToAPlainServer(t *testing.T) {
+	s, c := setup(t)
+	p := newPlain(t, 1)
+	viaPlain(s, p)
+	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 71, "a.example.", 0), lookupFor(t, 72, "b.example.", 0), lookupFor(t, 73, "c.example.", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, a := range answers {
+		if h, n := read(t, a); h.ID != uint16(71+i) || n != 1 {
+			t.Fatalf("answer %d: %+v with %d records", i, h, n)
+		}
+	}
+	p.askedOver(t, "tcp", "tcp", "tcp")
+}
+
+// An empty frame on a TCP connection isn't a query: the connection closes and no server is asked.
+func TestAnEmptyTCPFrameClosesTheConnection(t *testing.T) {
+	s, c := setup(t)
+	p := newPlain(t, 1)
+	viaPlain(s, p)
+	conn, err := c.net.Dial("tcp", tetherDNS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	conn.Write([]byte{0, 0})
+	if n, err := conn.Read(make([]byte, 10)); err != io.EOF {
+		t.Fatalf("read %d bytes, %v, want the connection closed", n, err)
+	}
+	p.noneAsked(t)
+}
+
 // When no server answers, the device hears SERVFAIL for its query instead of waiting out its own
 // timeouts.
 func TestNoAnswerIsAServerFailure(t *testing.T) {
 	s, c := setup(t)
-	s.plainTimeout = 200 * time.Millisecond
+	s.plainTimeout, s.lookupTimeout = 200*time.Millisecond, 400*time.Millisecond
 	first, second := newPlain(t, 1), newPlain(t, 2)
 	first.silent.Store(true)
 	second.silent.Store(true)
@@ -851,7 +1000,7 @@ func TestASlowServerFreesTheLookup(t *testing.T) {
 	d := newDoH(t, 1)
 	d.holding(t)
 	viaDoH(s, d)
-	s.dohTimeout = 300 * time.Millisecond
+	s.lookupTimeout = 300 * time.Millisecond
 	// The timeout's log line says the lookup started and ran out, whether on the held answer or,
 	// on a busy runner, on the TLS handshake before it.
 	failed := make(chan string, 10)
