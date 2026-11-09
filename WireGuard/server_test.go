@@ -234,14 +234,19 @@ func fetchTimeout() time.Duration {
 }
 
 func fetch(t *testing.T, c *client, addr string) (int, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout())
+	return fetchBy(c, addr, time.Now().Add(fetchTimeout()))
+}
+
+// fetchBy is fetch giving up at deadline.
+func fetchBy(c *client, addr string, deadline time.Time) (int, error) {
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	conn, err := c.net.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return 0, err
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(fetchTimeout()))
+	conn.SetDeadline(deadline)
 	conn.Write([]byte("hello"))
 	b, err := io.ReadAll(conn)
 	return len(b), err

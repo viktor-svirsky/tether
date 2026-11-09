@@ -27,20 +27,35 @@ func closeUnder(t *testing.T, s *Server) {
 	sock.Close()
 }
 
-// fetchesAgain fails the test unless the device's traffic gets through again within within.
+// fetchesAgain fails the test unless the device's traffic gets through again within within. A
+// fetch that works only after that fails it too.
 func fetchesAgain(t *testing.T, c *client, addr string, within time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(within)
 	for {
-		n, err := fetch(t, c, addr)
-		if err == nil && n == 1000 {
-			return
-		}
+		n, err := fetchBy(c, addr, deadline)
 		if time.Now().After(deadline) {
 			t.Fatalf("no traffic %v after the socket closed: %d bytes, %v", within, n, err)
 		}
+		if err == nil && n == 1000 {
+			return
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// listenTries counts the server's tries to listen again, from wireguard-go's log.
+func listenTries(t *testing.T, s *Server) *atomic.Int32 {
+	t.Helper()
+	var tries atomic.Int32
+	heard := func(line string) {
+		if strings.Contains(line, "Updating listen port") {
+			tries.Add(1)
+		}
+	}
+	s.heard.Store(&heard)
+	t.Cleanup(func() { s.heard.Store(nil) })
+	return &tries
 }
 
 // During a phone call iOS suspends Tether and closes its sockets. At the call's end the server's
@@ -68,14 +83,7 @@ func TestTheServerKeepsTryingToReopenItsSocket(t *testing.T) {
 	if n, err := fetch(t, c, addr); err != nil || n != 1000 {
 		t.Fatalf("before: got %d bytes, %v", n, err)
 	}
-	var tries atomic.Int32
-	heard := func(line string) {
-		if strings.Contains(line, "Updating listen port") {
-			tries.Add(1)
-		}
-	}
-	s.heard.Store(&heard)
-	t.Cleanup(func() { s.heard.Store(nil) })
+	tries := listenTries(t, s)
 	s.bind.mu.Lock()
 	hosts := s.bind.hosts
 	// An address on no interface here, like a hotspot address that isn't back yet.
@@ -143,16 +151,51 @@ func TestASocketThatKeepsFailingIsReopenedOnceASecond(t *testing.T) {
 	}
 }
 
+// While a try can't work, every failed send says the socket is dead. Once the server listens
+// again, those notices, and the retries they asked for, don't close the new socket: each one would
+// cut the devices off for a moment.
+func TestNoticesFromBeforeTheServerListenedAgainDontReopenIt(t *testing.T) {
+	s, c := setup(t)
+	addr := tcpServer(t, 1000)
+	if n, err := fetch(t, c, addr); err != nil || n != 1000 {
+		t.Fatalf("before: got %d bytes, %v", n, err)
+	}
+	tries := listenTries(t, s)
+	s.bind.mu.Lock()
+	hosts := s.bind.hosts
+	s.bind.hosts = []netip.Addr{netip.MustParseAddr("192.0.2.1")}
+	s.bind.mu.Unlock()
+	closeUnder(t, s)
+	deadline := time.Now().Add(10 * time.Second)
+	for tries.Load() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("no try to listen again")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for range 20 { // sends failing during the second the server waits between tries
+		s.socketDied()
+		time.Sleep(20 * time.Millisecond)
+	}
+	s.bind.mu.Lock()
+	s.bind.hosts = hosts
+	s.bind.mu.Unlock()
+	fetchesAgain(t, c, addr, 5*time.Second)
+	s.socketDied() // one more, from a send that failed just before
+	n := tries.Load()
+	time.Sleep(2500 * time.Millisecond)
+	if got := tries.Load(); got != n {
+		t.Fatalf("listened again %d more times after it was listening", got-n)
+	}
+	if n, err := fetch(t, c, addr); err != nil || n != 1000 {
+		t.Fatalf("after: got %d bytes, %v", n, err)
+	}
+}
+
 // Close ends the tries: a server that can't listen again doesn't keep trying after it's stopped.
 func TestClosingTheServerEndsTheTriesToReopen(t *testing.T) {
 	s, _ := setup(t)
-	var tries atomic.Int32
-	heard := func(line string) {
-		if strings.Contains(line, "Updating listen port") {
-			tries.Add(1)
-		}
-	}
-	s.heard.Store(&heard)
+	tries := listenTries(t, s)
 	s.bind.mu.Lock()
 	s.bind.hosts = []netip.Addr{netip.MustParseAddr("192.0.2.1")}
 	s.bind.mu.Unlock()
