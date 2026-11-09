@@ -9,7 +9,10 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 git init -q -b main "$tmp/repo"
 cd "$tmp/repo"
-commit() { git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$1"; git rev-parse HEAD; }
+g() { git -c user.name=t -c user.email=t@t "$@"; }
+commit() { g commit -q --allow-empty -m "$1"; git rev-parse HEAD; }
+# change <file> <message>: a commit that changes <file>, since git revert needs a change to take out.
+change() { echo "$2" >> "$1"; g add "$1"; g commit -q -m "$2"; }
 
 # The stand-in gh: `gh api repos/<repo>/issues/<n>` prints $tmp/issues/<n>.json. Anything else fails.
 export GITHUB_REPOSITORY=someone/tether ISSUES=$tmp/issues
@@ -94,6 +97,29 @@ commit "$(printf 'Reapply "Show the data limit"\n\nThis reverts commit %s.' "$ou
 git -c user.name='dependabot[bot]' -c user.email=d@d commit -q --allow-empty \
     -m "$(printf 'Bump golang.org/x/net\n\nFixes #16 upstream')"
 says "- Show the data limit (#15)" v1.1.0
+
+# A batch merged with --no-ff and taken out with `git revert -m 1`: the merge and every commit it
+# brought in are out, including issues the merge commit itself fixes. Reverting that revert puts
+# them back.
+git tag v1.2.0
+issue 17 closed "Show the config status" enhancement
+issue 18 closed "Say when the status is stale" enhancement
+git checkout -q -b batch
+change status "$(printf 'Show the config status\n\nFixes #17')"
+git checkout -q main
+change other "Something on main meanwhile"
+g merge -q --no-ff batch -m "$(printf 'Merge the batch\n\nFixes #18')"
+g revert -m 1 --no-edit HEAD > /dev/null
+says "- No change you'd see in the app." v1.2.0
+g revert --no-edit HEAD > /dev/null
+says "$(printf '%s\n' '- Show the config status (#17)' '- Say when the status is stale (#18)')" v1.2.0
+
+# A revert's own subject quotes the commit it reverts, closing keyword and all: it fixes nothing.
+git tag v1.3.0
+issue 19 closed "Show config status" enhancement
+change config "Fixes #19: Show config status"
+g revert --no-edit HEAD > /dev/null
+says "- No change you'd see in the app." v1.3.0
 
 # No answer about an issue fails the run, instead of notes that leave it out without a word.
 commit "$(printf 'Something\n\nFixes #99')" > /dev/null
