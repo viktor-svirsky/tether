@@ -22,7 +22,7 @@ jobs:
     runs-on: macos-26
     permissions:
       contents: read
-    timeout-minutes: 20
+    timeout-minutes: 30 # the race run alone takes about 13 minutes since the DNS resolver (#121)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
