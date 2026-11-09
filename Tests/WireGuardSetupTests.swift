@@ -46,12 +46,12 @@ final class WireGuardSetupTests: XCTestCase {
         setup.prepareReady()
         let ready = try XCTUnwrap(setup.ready)
         XCTAssertEqual(WireGuardSetup.publicKey(of: ready.privateKey), ready.publicKey)
-        let config = setup.clientConfig(for: ready, dns: "1.1.1.1, 1.0.0.1")
+        let config = setup.clientConfig(for: ready)
         XCTAssertEqual(config, """
             [Interface]
             PrivateKey = \(ready.privateKey.base64EncodedString())
             Address = 10.7.0.2/32
-            DNS = 1.1.1.1, 1.0.0.1
+            DNS = 10.7.0.1
             MTU = 1420
 
             [Peer]
@@ -67,8 +67,8 @@ final class WireGuardSetupTests: XCTestCase {
         var setup = WireGuardSetup.new()
         setup.prepareReady()
         let ready = try XCTUnwrap(setup.ready)
-        XCTAssertTrue(setup.clientConfig(for: ready, host: "2607:fb91::1", dns: DNSChoice.defaultServers).contains("\nEndpoint = [2607:fb91::1]:51820\n"))
-        XCTAssertTrue(setup.clientConfig(for: ready, host: "172.20.10.1", dns: DNSChoice.defaultServers).contains("\nEndpoint = 172.20.10.1:51820\n"))
+        XCTAssertTrue(setup.clientConfig(for: ready, host: "2607:fb91::1").contains("\nEndpoint = [2607:fb91::1]:51820\n"))
+        XCTAssertTrue(setup.clientConfig(for: ready, host: "172.20.10.1").contains("\nEndpoint = 172.20.10.1:51820\n"))
     }
 
     func testAKeyThatIsNotAKeyHasNoPublicKey() {

@@ -17,7 +17,7 @@ final class NotificationsTests: TetherUITestCase {
         launch(.sharing)
         openSettings()
         for kind in ["connected", "disconnected", "sharingStopped", "idleStopped", "limit", "closed", "expiring"] {
-            // Seven switches run past the screen, under New devices.
+            // Seven switches run past the screen, under Devices.
             XCTAssertTrue(reveal(toggle(kind)).exists, kind)
             XCTAssertEqual(value(of: toggle(kind)), "1", kind)
         }
@@ -73,7 +73,7 @@ final class NotificationsTests: TetherUITestCase {
         launch(.sharing)
         openSettings()
         XCTAssertTrue(element("notices.allow").waitForExistence(timeout: 5))
-        reveal(element("notices.footer")) // below New devices
+        reveal(element("notices.footer")) // below Devices
         XCTAssertEqual(label(of: "notices.footer"), "Only while Tether is in the background. On screen, the screen shows it.")
         assertNowhere(element("notices.denied"))
     }

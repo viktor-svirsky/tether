@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 /// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle, the
-/// DNS server new devices get, a switch for each kind of notification, a button for the permission before Tether asked for it
+/// DNS server Tether asks for the devices, a switch for each kind of notification, a button for the permission before Tether asked for it
 /// itself, the way to Settings when iOS has Tether's notifications off, the log to share for a bug
 /// report, and what this build is.
 struct SettingsView: View {
@@ -115,7 +115,7 @@ struct SettingsView: View {
                     .onSubmit { model.dnsChanged() }
                     .accessibilityIdentifier("newDevices.other")
                 if DNSChoice.servers(typed: dnsOther) == nil {
-                    Text("One or two IPv4 addresses, like 9.9.9.10. Until then, new devices get 1.1.1.1.")
+                    Text("One or two IPv4 addresses, like 9.9.9.10. Until then, Tether asks 1.1.1.1.")
                         .font(.subheadline)
                         .accessibilityIdentifier("newDevices.otherProblem")
                 }
@@ -128,13 +128,13 @@ struct SettingsView: View {
                     .onSubmit { model.dnsChanged() }
                     .accessibilityIdentifier("newDevices.controlD")
                 if DNSChoice.controlD(typed: dnsControlD) == nil {
-                    Text("Your profile's resolver ID or DoH link, from Control D's dashboard. Until then, new devices get 1.1.1.1.")
+                    Text("Your profile's resolver ID or DoH link, from Control D's dashboard. Until then, Tether asks 1.1.1.1.")
                         .font(.subheadline)
                         .accessibilityIdentifier("newDevices.controlDProblem")
                 }
             }
         } header: {
-            Text("New devices")
+            Text("Devices")
         } footer: {
             Text(dns == .controlD && DNSChoice.controlD(typed: dnsControlD) != nil ? Self.controlDFooter : Self.footer)
                 // In the label colour: this footer's grey just misses the contrast audit.
@@ -148,8 +148,8 @@ struct SettingsView: View {
         .onDisappear { model.dnsChanged() }
     }
 
-    private static let footer = "Devices you add from now on use it. A device you already added keeps its DNS: change it in that device's WireGuard app, under DNS servers. It can see which sites your devices visit."
-    private static let controlDFooter = "Devices you add from now on ask Tether, and Tether asks your Control D profile over HTTPS. Pick the country sites see in Control D, under Redirect (a paid plan). A device you already added keeps its DNS: set it to 10.7.0.1 in that device's WireGuard app. Control D can see which sites your devices visit."
+    private static let footer = "Your devices ask Tether, and Tether asks this server, so a change reaches them at once. A device whose DNS in WireGuard isn't 10.7.0.1 keeps its own: set it to 10.7.0.1 there, or add the device again. The server can see which sites your devices visit."
+    private static let controlDFooter = "Your devices ask Tether, and Tether asks your Control D profile over HTTPS. Pick the country sites see in Control D, under Redirect (a paid plan). A device whose DNS in WireGuard isn't 10.7.0.1 keeps its own: set it to 10.7.0.1 there. Control D can see which sites your devices visit."
 
     @ViewBuilder private var notices: some View {
         if model.noticePermission == .notAsked {

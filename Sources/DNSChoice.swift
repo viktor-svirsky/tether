@@ -1,16 +1,16 @@
 import Foundation
 import Network
 
-/// The DNS server a new device's config names, picked in Settings > New devices (#79). A device
-/// already added keeps the one in its config: Tether can't change what a device imported. Each preset
-/// has a second server, so a device still looks names up when one doesn't answer. Foundation and
-/// Network only, so `swift test` covers it.
+/// Where Tether sends a device's lookups, picked in Settings > Devices (#79). Every config names
+/// Tether's own address, 10.7.0.1, as its DNS server, and Tether asks the server picked at that moment
+/// (WireGuard/dns.go), so a change reaches every device at once (#121). A device added before keeps the
+/// server its config names: Tether can't change what a device imported. Each preset has a second
+/// server, so a lookup the first drops is asked of the second. Foundation and Network only, so
+/// `swift test` covers it.
 ///
-/// Control D (#100) is the user's own profile, where they pick the country sites see. Its plain
-/// servers answer only addresses the user authorized, and the iPhone's carrier address changes and
-/// is shared, so the config names Tether's own address instead, and Tether asks the profile over
-/// HTTPS (WireGuard/dns.go). Once a device names Tether, the setting decides where its lookups go,
-/// so it follows a change of the setting at once.
+/// Control D (#100) is the user's own profile, where they pick the country sites see. Its plain servers
+/// answer only addresses the user authorized, and the iPhone's carrier address changes and is shared,
+/// so Tether asks the profile over HTTPS.
 enum DNSChoice: String, CaseIterable {
     case cloudflare
     case cloudflareMalware
@@ -25,9 +25,9 @@ enum DNSChoice: String, CaseIterable {
     static let otherKey = "newDevices.dnsOther"
     /// The Control D profile typed, see `controlD(typed:)`.
     static let controlDKey = "newDevices.dnsControlD"
-    /// Tether's own address in the tunnel, where it answers lookups: dnsAddr in WireGuard/dns.go.
+    /// Tether's own address in the tunnel, the DNS server every config names: dnsAddr in WireGuard/dns.go.
     static let tetherServer = "10.7.0.1"
-    /// The default's servers, for a config when nothing else is usable.
+    /// The default's servers, for when nothing else is usable.
     static let defaultServers = "1.1.1.1, 1.0.0.1"
     /// Where lookups to Tether's own address go when nothing else is given.
     static let defaultUpstream = Upstream.servers(defaultServers.components(separatedBy: ", "))
@@ -44,8 +44,8 @@ enum DNSChoice: String, CaseIterable {
         }
     }
 
-    /// The config's DNS line for a preset. Other's comes from what was typed, see `servers(typed:)`, and
-    /// Control D's is Tether's own address, see `setting(in:)`.
+    /// A preset's servers. Other's come from what was typed, see `servers(typed:)`, and Control D asks
+    /// over HTTPS, see `upstream(in:)`.
     var servers: String? {
         switch self {
         case .cloudflare: Self.defaultServers
@@ -60,47 +60,40 @@ enum DNSChoice: String, CaseIterable {
         defaults.string(forKey: key).flatMap(DNSChoice.init(rawValue:)) ?? .default
     }
 
-    /// What a new config names and where Tether sends lookups to its own address.
-    struct Setting: Equatable {
-        /// The config's DNS line.
-        let line: String
-        let upstream: Upstream
-
-        static let `default` = Setting(line: defaultServers, upstream: defaultUpstream)
-    }
-
-    /// Where lookups to Tether's own address go: the profile's DoH URL, or the servers on the line, so
-    /// a device set up with Control D keeps resolving once another choice is picked.
+    /// Where Tether sends lookups to its own address: the profile's DoH URL, or servers.
     enum Upstream: Equatable {
         case doh(URL)
         case servers([String])
     }
 
-    /// The setting for the next device and the server: Control D's profile when one was typed,
-    /// otherwise the servers of `servers(in:)`.
-    static func setting(in defaults: UserDefaults) -> Setting {
-        if saved(in: defaults) == .controlD, let profile = controlD(typed: defaults.string(forKey: controlDKey) ?? "") {
-            return Setting(line: tetherServer, upstream: .doh(profile))
-        }
-        let line = servers(in: defaults)
-        return Setting(line: line, upstream: .servers(line.components(separatedBy: ", ")))
-    }
-
-    /// The DNS line for the next device: the saved choice, or Cloudflare's while Other or Control D has
-    /// nothing usable typed, so a config never goes out without a DNS server.
-    private static func servers(in defaults: UserDefaults) -> String {
+    /// Where lookups go now: Control D's profile when one was typed, otherwise the servers of the saved
+    /// choice, or Cloudflare's while Other or Control D has nothing usable typed, so lookups never go
+    /// nowhere.
+    static func upstream(in defaults: UserDefaults) -> Upstream {
         let choice = saved(in: defaults)
+        if choice == .controlD, let profile = controlD(typed: defaults.string(forKey: controlDKey) ?? "") {
+            return .doh(profile)
+        }
         let typed = choice == .other ? servers(typed: defaults.string(forKey: otherKey) ?? "") : choice.servers
-        return typed ?? defaultServers
+        return .servers((typed ?? defaultServers).components(separatedBy: ", "))
     }
 
-    /// One or two IPv4 addresses, apart by a comma or a space, as a DNS line. Nil for anything else.
-    /// IPv6 can't work: a device's tunnel address is IPv4 only, and so is the UDP the server forwards.
-    /// And WireGuard reads a word on the DNS line as a search domain, leaving no DNS server at all.
+    /// One or two IPv4 addresses, apart by a comma or a space, as "a, b". Nil for anything else. IPv6
+    /// can't work: the UDP the server forwards to them is IPv4 only. An address the server never
+    /// forwards to is refused too (forwardable in WireGuard/server.go), or the server wouldn't start.
     static func servers(typed: String) -> String? {
         let parts = typed.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
-        guard (1...2).contains(parts.count), parts.allSatisfy(isIPv4) else { return nil }
+        guard (1...2).contains(parts.count), parts.allSatisfy({ isIPv4($0) && isForwardable($0) }) else { return nil }
         return parts.joined(separator: ", ")
+    }
+
+    /// Not the iPhone itself (127/8, 0.0.0.0), the tunnel (10.7.0.0/24), link-local (169.254/16),
+    /// multicast (224/4) or broadcast.
+    private static func isForwardable(_ text: String) -> Bool {
+        guard let bytes = IPv4Address(text)?.rawValue, bytes.count == 4 else { return false }
+        let b = [UInt8](bytes)
+        return b[0] != 127 && b != [0, 0, 0, 0] && !(b[0] == 10 && b[1] == 7 && b[2] == 0)
+            && !(b[0] == 169 && b[1] == 254) && b[0] < 224
     }
 
     /// The profile's DoH URL from the link in Control D's dashboard, `https://dns.controld.com/<id>`,

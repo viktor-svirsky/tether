@@ -27,9 +27,10 @@ final class DNSChoiceTests: XCTestCase {
                        ["1.1.1.1, 1.0.0.1", "1.1.1.2, 1.0.0.2", "9.9.9.9, 149.112.112.112", "94.140.14.14, 94.140.15.15", nil, nil])
     }
 
-    /// One or two IPv4 addresses. IPv6 can't work: a device's tunnel address is IPv4 only, and so is
-    /// what the server forwards. A word would be read by WireGuard as a search domain, leaving the
-    /// device without a DNS server, so anything else is refused.
+    /// One or two IPv4 addresses Tether can send lookups to. IPv6 can't work: what the server forwards
+    /// is IPv4 only. An address the server never forwards to (the iPhone itself, the tunnel, link-local,
+    /// multicast, broadcast) is refused too: the server wouldn't start with it, and every device would
+    /// lose its connection, not only its lookups (#121).
     func testAnAddressTypedUnderOther() {
         let cases: [(typed: String, servers: String?, line: UInt)] = [
             ("192.168.1.1", "192.168.1.1", #line),
@@ -44,6 +45,15 @@ final class DNSChoiceTests: XCTestCase {
             ("8.8.8.256", nil, #line),
             ("8.8.8.8, nonsense", nil, #line),
             ("1.1.1.1, 1.0.0.1, 8.8.8.8", nil, #line), // two at most
+            ("127.0.0.1", nil, #line),
+            ("0.0.0.0", nil, #line),
+            ("10.7.0.1", nil, #line), // Tether itself, asking itself
+            ("10.7.0.200", nil, #line),
+            ("169.254.1.1", nil, #line),
+            ("224.0.0.251", nil, #line),
+            ("255.255.255.255", nil, #line),
+            ("8.8.8.8, 127.0.0.1", nil, #line),
+            ("10.7.1.1", "10.7.1.1", #line), // outside the tunnel's 10.7.0.0/24
         ]
         for c in cases {
             XCTAssertEqual(DNSChoice.servers(typed: c.typed), c.servers, "'\(c.typed)'", line: c.line)
@@ -52,23 +62,23 @@ final class DNSChoiceTests: XCTestCase {
 
     func testTheSavedSettingAndItsServers() {
         XCTAssertEqual(DNSChoice.saved(in: defaults), .cloudflare, "nothing saved")
-        XCTAssertEqual(DNSChoice.setting(in: defaults).line, "1.1.1.1, 1.0.0.1")
+        XCTAssertEqual(DNSChoice.upstream(in: defaults), .servers(["1.1.1.1", "1.0.0.1"]))
         defaults.set(DNSChoice.adGuard.rawValue, forKey: DNSChoice.key)
-        XCTAssertEqual(DNSChoice.setting(in: defaults).line, "94.140.14.14, 94.140.15.15")
+        XCTAssertEqual(DNSChoice.upstream(in: defaults), .servers(["94.140.14.14", "94.140.15.15"]))
         defaults.set("from a newer version", forKey: DNSChoice.key)
         XCTAssertEqual(DNSChoice.saved(in: defaults), .cloudflare, "an unknown choice")
     }
 
-    /// Other with nothing usable typed gives new devices Cloudflare, never a broken DNS line.
+    /// Other with nothing usable typed sends lookups to Cloudflare, never nowhere.
     func testOtherWithNoUsableAddressGivesCloudflare() {
         defaults.set(DNSChoice.other.rawValue, forKey: DNSChoice.key)
-        XCTAssertEqual(DNSChoice.setting(in: defaults).line, "1.1.1.1, 1.0.0.1", "nothing typed")
+        XCTAssertEqual(DNSChoice.upstream(in: defaults), .servers(["1.1.1.1", "1.0.0.1"]), "nothing typed")
         defaults.set("dns.google", forKey: DNSChoice.otherKey)
-        XCTAssertEqual(DNSChoice.setting(in: defaults).line, "1.1.1.1, 1.0.0.1", "not an address")
+        XCTAssertEqual(DNSChoice.upstream(in: defaults), .servers(["1.1.1.1", "1.0.0.1"]), "not an address")
         defaults.set("9.9.9.10", forKey: DNSChoice.otherKey)
-        XCTAssertEqual(DNSChoice.setting(in: defaults).line, "9.9.9.10")
+        XCTAssertEqual(DNSChoice.upstream(in: defaults), .servers(["9.9.9.10"]))
         defaults.set(DNSChoice.quad9.rawValue, forKey: DNSChoice.key)
-        XCTAssertEqual(DNSChoice.setting(in: defaults).line, "9.9.9.9, 149.112.112.112", "Other's address is kept but not used")
+        XCTAssertEqual(DNSChoice.upstream(in: defaults), .servers(["9.9.9.9", "149.112.112.112"]), "Other's address is kept but not used")
     }
 
     /// Control D (#100) takes the DoH link from its dashboard, with a device name after it or not,
@@ -97,20 +107,17 @@ final class DNSChoiceTests: XCTestCase {
         }
     }
 
-    /// What a new config names and where Tether sends lookups to 10.7.0.1. Control D's line is
-    /// Tether's own address, and every other choice keeps its servers on the line, as before #100.
-    func testTheSettingForEachChoice() {
-        XCTAssertEqual(DNSChoice.setting(in: defaults), .init(line: "1.1.1.1, 1.0.0.1", upstream: .servers(["1.1.1.1", "1.0.0.1"])),
-                       "nothing saved")
+    /// Where Tether sends lookups to 10.7.0.1, the one DNS server every config names (#121): Control D's
+    /// profile over HTTPS, or the servers of the choice.
+    func testWhereLookupsGoForEachChoice() {
+        XCTAssertEqual(DNSChoice.upstream(in: defaults), .servers(["1.1.1.1", "1.0.0.1"]), "nothing saved")
         defaults.set(DNSChoice.controlD.rawValue, forKey: DNSChoice.key)
-        XCTAssertEqual(DNSChoice.setting(in: defaults), .init(line: "1.1.1.1, 1.0.0.1", upstream: .servers(["1.1.1.1", "1.0.0.1"])),
-                       "Control D with nothing typed gives Cloudflare, never a broken DNS line")
+        XCTAssertEqual(DNSChoice.upstream(in: defaults), .servers(["1.1.1.1", "1.0.0.1"]),
+                       "Control D with nothing typed sends lookups to Cloudflare, never nowhere")
         defaults.set("abcd1234", forKey: DNSChoice.controlDKey)
-        XCTAssertEqual(DNSChoice.setting(in: defaults),
-                       .init(line: "10.7.0.1", upstream: .doh(URL(string: "https://dns.controld.com/abcd1234")!)))
+        XCTAssertEqual(DNSChoice.upstream(in: defaults), .doh(URL(string: "https://dns.controld.com/abcd1234")!))
         defaults.set(DNSChoice.other.rawValue, forKey: DNSChoice.key)
         defaults.set("9.9.9.10", forKey: DNSChoice.otherKey)
-        XCTAssertEqual(DNSChoice.setting(in: defaults), .init(line: "9.9.9.10", upstream: .servers(["9.9.9.10"])),
-                       "Control D's profile is kept but not used")
+        XCTAssertEqual(DNSChoice.upstream(in: defaults), .servers(["9.9.9.10"]), "Control D's profile is kept but not used")
     }
 }

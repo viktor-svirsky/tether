@@ -217,13 +217,14 @@ struct WireGuardSetup: Codable, Equatable {
 
     /// What the next device imports, as a QR code or a .conf file. Only the ready device has one,
     /// since only its private key is kept. All traffic goes into the tunnel, IPv6 too, so nothing
-    /// slips past Tether onto the hotspot directly. `dns` is the DNS line, see `DNSChoice`.
-    func clientConfig(for ready: Ready, host: String = Hotspot.host, dns: String) -> String {
+    /// slips past Tether onto the hotspot directly. Lookups go to Tether, which asks the server picked
+    /// in Settings, see `DNSChoice`.
+    func clientConfig(for ready: Ready, host: String = Hotspot.host) -> String {
         """
         [Interface]
         PrivateKey = \(ready.privateKey.base64EncodedString())
         Address = \(ready.address)/32
-        DNS = \(dns)
+        DNS = \(DNSChoice.tetherServer)
         MTU = \(Self.mtu)
 
         [Peer]
