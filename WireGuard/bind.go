@@ -20,6 +20,8 @@ type hostBind struct {
 	v4, v6 *net.UDPConn
 	// died is told when a socket the bind still holds fails underneath it, see failed.
 	died func()
+	// broken says one did, and Open hasn't opened new ones since.
+	broken bool
 	// port is where it last listened, so the server can listen there again: the devices' configs
 	// point at it.
 	port uint16
@@ -66,6 +68,7 @@ func (b *hostBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 		fns = append(fns, b.receiveOn(c))
 	}
 	b.port = port
+	b.broken = false
 	return fns, port, nil
 }
 
@@ -136,6 +139,9 @@ func (b *hostBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 func (b *hostBind) failed(c *net.UDPConn) {
 	b.mu.Lock()
 	held := c == b.v4 || c == b.v6
+	if held {
+		b.broken = true
+	}
 	died := b.died
 	b.mu.Unlock()
 	if held && died != nil {

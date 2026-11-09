@@ -183,8 +183,9 @@ type Server struct {
 	shake   chan struct{} // asks the refresher to read the handshakes now, see noticeHandshake
 	dead    chan struct{} // asks the refresher to listen again, see reopen
 	stopped sync.WaitGroup
-	// reopened is when the refresher last tried to listen again. Only the refresher reads it.
-	reopened time.Time
+	// reopened is when the refresher last tried to listen again, and retryAt when it tries next,
+	// see retryIn. Only the refresher reads them.
+	reopened, retryAt time.Time
 	// closeOnce makes Close safe to call twice: close(stop) would panic.
 	closeOnce sync.Once
 	reading   sync.Mutex

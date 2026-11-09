@@ -21,20 +21,33 @@ func (s *Server) socketDied() {
 // address not back yet say, is tried again. There's at most one try a second, so a socket that
 // keeps failing can't spin, and the refresher reads the handshakes between them.
 func (s *Server) reopen() {
+	s.bind.mu.Lock()
+	broken, port := s.bind.broken, s.bind.port
+	s.bind.mu.Unlock()
+	if !broken {
+		return // listening again already: a notice, or a retry, from before it did
+	}
 	if wait := time.Until(s.reopened.Add(time.Second)); wait > 0 {
-		time.AfterFunc(wait, s.socketDied)
+		s.retryIn(wait)
 		return
 	}
 	s.reopened = time.Now()
-	s.bind.mu.Lock()
-	port := s.bind.port
-	s.bind.mu.Unlock()
 	// A listen_port line closes the sockets and opens them again on that port. BindUpdate alone
 	// would lose the port after a try that fails.
 	if err := s.dev.IpcSet(fmt.Sprintf("listen_port=%d\n", port)); err != nil {
 		s.keep("error: ", "can't listen again on port %d: %v", []any{port, err})
-		time.AfterFunc(time.Second, s.socketDied) // after Close nobody reads it, so the tries end
+		s.retryIn(time.Second)
 		return
 	}
 	s.keep("", "listening again on port %d after its socket was closed", []any{port})
+}
+
+// retryIn has reopen run again after d, unless a retry is coming already: every failed send
+// asks, and one retry is enough. After Close nobody reads the notice, so the tries end.
+func (s *Server) retryIn(d time.Duration) {
+	if time.Now().Before(s.retryAt) {
+		return
+	}
+	s.retryAt = time.Now().Add(d)
+	time.AfterFunc(d, s.socketDied)
 }
