@@ -203,7 +203,7 @@ final class Model: ObservableObject {
                        hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,
                        carrierIPv6Only: Interfaces.carrierIPv6Only,
                        idleStopAfter: { IdleStop.After.saved(in: settings) },
-                       dns: { DNSChoice.setting(in: settings) }, usageDefaults: settings,
+                       dns: { DNSChoice.upstream(in: settings) }, usageDefaults: settings,
                        log: Self.append)
     }
 
@@ -360,7 +360,7 @@ final class Model: ObservableObject {
     /// See `HotspotSession.setLimit`.
     func setLimit(_ id: WireGuardSetup.Peer.ID, _ limit: UInt64?) { session.setLimit(id, limit) }
 
-    /// Settings > New devices changed, see `HotspotSession.dnsChanged`.
+    /// Settings > Devices changed, see `HotspotSession.dnsChanged`.
     func dnsChanged() { session.dnsChanged() }
 
     /// See `HotspotSession.overLimit`.

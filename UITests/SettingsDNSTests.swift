@@ -1,9 +1,9 @@
 import XCTest
 
-/// Settings > New devices: the DNS server the next device's config names (#79). What each choice puts
-/// on the config's DNS line is covered by the unit tests (DNSChoiceTests, HotspotSessionTests).
+/// Settings > Devices: where Tether sends the devices' lookups (#79, #121). Where each choice sends
+/// lookups, and the config's DNS line, are covered by the unit tests (DNSChoiceTests, HotspotSessionTests).
 final class SettingsDNSTests: TetherUITestCase {
-    static let footer = "Devices you add from now on use it. A device you already added keeps its DNS: change it in that device's WireGuard app, under DNS servers. It can see which sites your devices visit."
+    static let footer = "Your devices ask Tether, and Tether asks this server, so a change reaches them at once. A device whose DNS in WireGuard isn't 10.7.0.1 keeps its own: set it to 10.7.0.1 there, or add the device again. The server can see which sites your devices visit."
 
     func testDNSIsAMenuKeptAfterClosing() throws {
         launch(.sharing)
@@ -13,7 +13,7 @@ final class SettingsDNSTests: TetherUITestCase {
         let first = "Cloudflare (1.1.1.1, no filtering)"
         XCTAssertTrue(menu.label.contains(first) || value(of: menu) == first, "Cloudflare at first: \(menu.label)")
         XCTAssertEqual(label(of: "newDevices.footer"), Self.footer)
-        XCTAssertTrue(sectionHeader("New devices").exists)
+        XCTAssertTrue(sectionHeader("Devices").exists)
         try audit(only: "newDevices.")
         menu.tap()
         for choice in [first, "Cloudflare (1.1.1.2, blocks malware)", "Quad9 (9.9.9.9, blocks malware)",
@@ -34,7 +34,7 @@ final class SettingsDNSTests: TetherUITestCase {
         XCTAssertTrue(again.label.contains(adGuard) || value(of: again) == adGuard, "kept after closing: \(again.label)")
     }
 
-    /// Other asks for an address, and says what new devices get until it's a usable one.
+    /// Other asks for an address, and says what Tether asks until it's a usable one.
     func testOtherTakesOneOrTwoIPv4Addresses() throws {
         launch(.sharing)
         openSettings()
@@ -42,7 +42,7 @@ final class SettingsDNSTests: TetherUITestCase {
         XCTAssertTrue(app.buttons["Other server"].waitForExistence(timeout: 3))
         app.buttons["Other server"].tap()
         let field = reveal(element("newDevices.other"))
-        let problem = "One or two IPv4 addresses, like 9.9.9.10. Until then, new devices get 1.1.1.1."
+        let problem = "One or two IPv4 addresses, like 9.9.9.10. Until then, Tether asks 1.1.1.1."
         XCTAssertEqual(label(of: "newDevices.otherProblem"), problem, "nothing typed yet")
         field.tap()
         // Only digits and punctuation: the field's keyboard has no letters. A name is DNSChoiceTests' case.
@@ -53,7 +53,7 @@ final class SettingsDNSTests: TetherUITestCase {
         try audit(only: "newDevices.")
     }
 
-    /// Control D asks for the profile (#100), says what new devices get until it holds one, and its
+    /// Control D asks for the profile (#100), says what Tether asks until it holds one, and its
     /// footer then says where lookups go and how a device added before follows.
     func testControlDTakesAProfile() throws {
         launch(.sharing)
@@ -64,7 +64,7 @@ final class SettingsDNSTests: TetherUITestCase {
         app.buttons[controlD].tap()
         let field = reveal(element("newDevices.controlD"))
         XCTAssertEqual(label(of: "newDevices.controlDProblem"),
-                       "Your profile's resolver ID or DoH link, from Control D's dashboard. Until then, new devices get 1.1.1.1.")
+                       "Your profile's resolver ID or DoH link, from Control D's dashboard. Until then, Tether asks 1.1.1.1.")
         XCTAssertEqual(label(of: "newDevices.footer"), Self.footer, "nothing typed, so nothing changes yet")
         field.tap()
         field.typeText("https://dns.controld.com/abcd1234")
@@ -73,5 +73,5 @@ final class SettingsDNSTests: TetherUITestCase {
         try audit(only: "newDevices.")
     }
 
-    static let controlDFooter = "Devices you add from now on ask Tether, and Tether asks your Control D profile over HTTPS. Pick the country sites see in Control D, under Redirect (a paid plan). A device you already added keeps its DNS: set it to 10.7.0.1 in that device's WireGuard app. Control D can see which sites your devices visit."
+    static let controlDFooter = "Your devices ask Tether, and Tether asks your Control D profile over HTTPS. Pick the country sites see in Control D, under Redirect (a paid plan). A device whose DNS in WireGuard isn't 10.7.0.1 keeps its own: set it to 10.7.0.1 there. Control D can see which sites your devices visit."
 }
