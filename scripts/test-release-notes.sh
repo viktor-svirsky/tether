@@ -75,78 +75,34 @@ issue 7 closed "Say how to cover a TV through a laptop" documentation
 commit "$(printf 'Wait for the log line\n\nFixes #2\nFixes #3\nFixes #4\nFixes #7')" > /dev/null
 says "- No change you'd see in the app." v1.1.0
 
-# Left out: work taken out again. An issue still open, or reopened, wasn't fixed. A reverted commit
-# doesn't count, even when nobody reopened its issue.
+# Left out: work taken out again. Taking it out reopens its issue, and an open issue wasn't fixed.
 issue 11 open "Take the router role from a paused router" bug wireguard
-issue 12 closed "Say when this device's config no longer works" enhancement
 commit "$(printf 'Take the router role from a paused router\n\nFixes #11')" > /dev/null
-reverted=$(commit "$(printf 'Say when the config no longer works\n\nFixes #12')")
-commit "$(printf 'Revert "Say when the config no longer works"\n\nThis reverts commit %s.' "$reverted")" > /dev/null
 # Left out: a pull request, and an issue closed as not planned.
 jq -n '{number: 13, state: "closed", title: "A pull request", labels: [], pull_request: {url: "x"}}' > "$ISSUES/13.json"
 jq -n '{number: 14, state: "closed", state_reason: "not_planned", title: "Not planned", labels: []}' > "$ISSUES/14.json"
 commit "$(printf 'Two more\n\nFixes #13\nFixes #14')" > /dev/null
-says "- No change you'd see in the app." v1.1.0
-
-# A fix taken out and put back again counts.
-issue 15 closed "Show the data limit" enhancement
-back=$(commit "$(printf 'Show the data limit\n\nFixes #15')")
-out=$(commit "$(printf 'Revert "Show the data limit"\n\nThis reverts commit %s.' "$back")")
-commit "$(printf 'Reapply "Show the data limit"\n\nThis reverts commit %s.' "$out")" > /dev/null
 # Dependabot quotes upstream notes, whose numbers aren't this repo's: #16 doesn't exist here.
 git -c user.name='dependabot[bot]' -c user.email=d@d commit -q --allow-empty \
     -m "$(printf 'Bump golang.org/x/net\n\nFixes #16 upstream')"
-says "- Show the data limit (#15)" v1.1.0
-
-# A batch merged with --no-ff and taken out with `git revert -m 1`: the merge and every commit it
-# brought in are out, including issues the merge commit itself fixes. Reverting that revert puts
-# them back.
+says "- No change you'd see in the app." v1.1.0
 git tag v1.2.0
-issue 17 closed "Show the config status" enhancement
-issue 18 closed "Say when the status is stale" enhancement
-git checkout -q -b batch
-change status "$(printf 'Show the config status\n\nFixes #17')"
-git checkout -q main
-change other "Something on main meanwhile"
-g merge -q --no-ff batch -m "$(printf 'Merge the batch\n\nFixes #18')"
-g revert -m 1 --no-edit HEAD > /dev/null
-says "- No change you'd see in the app." v1.2.0
-g revert --no-edit HEAD > /dev/null
-says "$(printf '%s\n' '- Show the config status (#17)' '- Say when the status is stale (#18)')" v1.2.0
 
-# A revert's own subject quotes the commit it reverts, closing keyword and all: it fixes nothing.
-git tag v1.3.0
+# A revert fixes nothing, though its subject quotes the reverted one's "Fixes #N".
 issue 19 closed "Show config status" enhancement
 change config "Fixes #19: Show config status"
+git tag v1.3.0
 g revert --no-edit HEAD > /dev/null
 says "- No change you'd see in the app." v1.3.0
-
-# Taken out before a release and put back after it: in the notes again, though the fix itself is
-# before the tag. The same for a batch merge taken out with -m 1.
-git tag v1.4.0
-g revert --no-edit HEAD > /dev/null
-says "- Show config status (#19)" v1.4.0
-issue 20 closed "Pick the DNS server per device" enhancement
-git checkout -q -b batch2
-change dns "$(printf 'Pick the DNS server per device\n\nFixes #20')"
-git checkout -q main
-change other "More on main"
-g merge -q --no-ff batch2 -m "Merge the DNS batch"
-g revert -m 1 --no-edit HEAD > /dev/null
-taken_out=$(git rev-parse HEAD)
-git tag v1.5.0
-g revert --no-edit HEAD > /dev/null
-says "- Pick the DNS server per device (#20)" v1.5.0
-# Put back before the release already: a second revert of the same removal brings nothing new.
-git tag v1.6.0
-change more "$(printf 'Put the DNS batch back on another branch\n\nThis reverts commit %s.' "$taken_out")"
-says "- No change you'd see in the app." v1.6.0
+# Put back later, the change counts again only with its own Fixes line.
+change config "$(printf 'Show config status again\n\nFixes #19')"
+says "- Show config status (#19)" v1.3.0
 
 # Only a line that starts with the keyword counts: prose that quotes one fixes nothing.
-git tag v1.7.0
+git tag v1.4.0
 issue 21 closed "Something from long ago" bug
 commit "$(printf 'Explain the notes\n\nA revert subject like "Fixes #21: ..." brought #21 back.')" > /dev/null
-says "- No change you'd see in the app." v1.7.0
+says "- No change you'd see in the app." v1.4.0
 
 # No answer about an issue fails the run, instead of notes that leave it out without a word.
 commit "$(printf 'Something\n\nFixes #99')" > /dev/null
