@@ -11,24 +11,32 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
 )
 
-// DNS on 10.7.0.1 (#100). A device whose config names 10.7.0.1 as its DNS server asks Tether, and
-// Tether asks the upstream Swift set in the device list:
+// DNS on 10.7.0.1 (#100, #121). Every device's config names 10.7.0.1 as its DNS server, and Tether
+// answers there as a forwarding resolver. Each lookup, over UDP or TCP, is asked of the upstream Swift
+// set at that moment, so a change of the setting reaches a device's next lookup, on a TCP connection
+// already open too. The upstream is:
 //
 //   - A DoH server (RFC 8484), like a Control D profile's https://dns.controld.com/<id>. Tether
-//     asks over HTTPS and builds the reply itself. The server knows the profile by the URL, so
-//     the iPhone's carrier address, shared and changing, doesn't matter, as it does for Control
-//     D's plain resolvers, which answer only addresses the user authorized.
-//   - One or two plain servers. Then 10.7.0.1 is only another name for one of them: a lookup goes
-//     through the device's cone like any UDP, or its connection like any TCP, and the replies
-//     come back from 10.7.0.1. That's what a device set up with Control D gets once the user
-//     picks another server, so it keeps resolving.
+//     asks over HTTPS. The server knows the profile by the URL, so the iPhone's carrier address,
+//     shared and changing, doesn't matter, as it does for Control D's plain resolvers, which answer
+//     only addresses the user authorized.
+//   - One or two plain servers, asked from the iPhone the way a device's own UDP and TCP leave it,
+//     through the carrier's NAT64 when the iPhone has no IPv4 route (see nat64.go). The first is
+//     asked first, and the second only when the first stays silent for plainTimeout, so a second
+//     server is a backup and sees nothing while the first answers (#123). A lookup over TCP is
+//     asked over TCP, so an answer a server cut for UDP reaches the device whole.
 //
-// With no upstream, 10.7.0.1 stays inside like every tunnel address.
+// Any answer ends a lookup, an error like REFUSED too: the server answered, and the next one isn't
+// asked. When the upstream doesn't answer, the device gets SERVFAIL, so it doesn't wait out its own
+// timeouts. With no upstream, 10.7.0.1 stays inside like every tunnel address.
 
 var dnsAddr = netip.MustParseAddrPort("10.7.0.1:53")
 
@@ -36,58 +44,73 @@ const (
 	// dohTimeout is how long a lookup waits for the DoH server, a second try included. A
 	// device's resolver asks again after about a second, and gives up after a few.
 	dohTimeout = 5 * time.Second
-	// maxLookups caps a device's DoH lookups waiting for an answer. A page load asks for dozens
-	// of names at once, and a resolver asks again when an answer is slow, so a slow server
-	// doubles them. Each is a goroutine and a request, a few KB.
+	// plainTimeout is how long a plain server has to answer before the next one is asked too. A
+	// resolver answers from its cache in milliseconds, and most names it must look up in well under
+	// a second, so one silent for 2 s is most likely down. Two servers take 4 s at most before the
+	// device gets SERVFAIL, inside dohTimeout and the 5 s glibc's resolver waits for each try. The
+	// first server's late answer is still taken while the second is asked.
+	plainTimeout = 2 * time.Second
+	// maxLookups caps a device's UDP lookups waiting for an answer. A page load asks for dozens of
+	// names at once, and a resolver asks again when an answer is slow, so a slow server doubles
+	// them. Each is a few goroutines and a request, or a socket a server and a buffer of up to
+	// udpMax, a few KB.
 	maxLookups = 128
 	// dnsMessageMax is the biggest DNS message: TCP's length prefix is 2 bytes.
 	dnsMessageMax = 0xffff
 	// dnsHeaderLen is a DNS message's fixed header. Anything shorter isn't a lookup.
 	dnsHeaderLen = 12
+	// udpMax is the biggest UDP answer a device gets, whatever size its query offers. Bigger ones
+	// are cut, and the device asks over TCP. Resolvers offer 1232 or 4096, and a lookup holds a
+	// buffer of this size while it waits.
+	udpMax = 4096
 )
 
 // dnsUpstream is where lookups to 10.7.0.1 go: doh when it's set, otherwise udp.
 type dnsUpstream struct {
 	doh string
-	udp []netip.AddrPort // one or two, port 53
+	udp []netip.AddrPort // one or two, port 53, the first one first
 }
+
+// set says whether lookups go anywhere. Without an upstream, 10.7.0.1 stays inside.
+func (u *dnsUpstream) set() bool { return u != nil && (u.doh != "" || len(u.udp) > 0) }
 
 // SetDNS sets where lookups to 10.7.0.1 go from now on. Nil keeps them inside.
 func (s *Server) SetDNS(u *dnsUpstream) { s.upstream.Store(u) }
 
-// dnsRoute says where a lookup to 10.7.0.1 goes: to a plain server, or to the DoH URL. Both empty
-// with no upstream.
-func (s *Server) dnsRoute() (plain netip.AddrPort, doh string) {
+// resolve answers one query a device sent to 10.7.0.1, over UDP or TCP, from the upstream set now:
+// the upstream's answer, or SERVFAIL when it gave none. Nil when there's nothing to answer: no
+// upstream, a message that isn't a query, or a closing server.
+func (s *Server) resolve(query []byte, overTCP bool) []byte {
+	if len(query) < dnsHeaderLen || query[2]&0x80 != 0 { // QR: an answer, not a query
+		return nil
+	}
 	u := s.upstream.Load()
+	if !u.set() {
+		return nil
+	}
+	var answer []byte
+	var err error
+	if u.doh != "" {
+		answer, err = s.doh(u.doh, query)
+		s.dnsResult("DNS over HTTPS", err)
+	} else {
+		answer, err = s.askPlain(u.udp, query, overTCP)
+		s.dnsResult("DNS", err)
+	}
 	switch {
-	case u == nil || u.doh == "" && len(u.udp) == 0:
-		return netip.AddrPort{}, ""
-	case u.doh != "":
-		return netip.AddrPort{}, u.doh
+	case err == nil:
+		return answer
+	case s.ctx.Err() != nil:
+		return nil
 	default:
-		// Taking turns, so a lookup the first server dropped is asked again of the second.
-		return u.udp[int(s.dnsTurn.Add(1))%len(u.udp)], ""
+		return servfail(query)
 	}
 }
 
-// fromPlainDNS says whether src is one of the plain servers 10.7.0.1 stands in for.
-func (s *Server) fromPlainDNS(src netip.AddrPort) bool {
-	u := s.upstream.Load()
-	if u == nil {
-		return false
-	}
-	for _, a := range u.udp {
-		if a == src {
-			return true
-		}
-	}
-	return false
-}
-
-// askDoH answers a device's UDP lookup from the DoH server, on a goroutine of its own, so
-// handleUDP never waits. A paused or removed device, one at maxLookups and a closing server get
-// nothing, and the device's resolver asks again.
-func (s *Server) askDoH(device netip.AddrPort, doh string, query []byte) {
+// lookup answers a device's UDP lookup to 10.7.0.1, on a goroutine of its own, so handleUDP never
+// waits. A paused or removed device, one at maxLookups and a closing server get nothing, and the
+// device's resolver asks again.
+func (s *Server) lookup(device netip.AddrPort, query []byte) {
 	if len(query) < dnsHeaderLen {
 		return
 	}
@@ -110,9 +133,8 @@ func (s *Server) askDoH(device netip.AddrPort, doh string, query []byte) {
 			s.mu.Unlock()
 		}()
 		s.count(counts, true, len(query))
-		answer, err := s.doh(doh, query)
-		s.dohResult(err)
-		if err != nil {
+		answer := s.resolve(query, false)
+		if answer == nil {
 			return
 		}
 		answer = fitUDP(query, answer)
@@ -134,19 +156,204 @@ func (s *Server) askDoH(device netip.AddrPort, doh string, query []byte) {
 	}()
 }
 
-// dohResult logs the first failure of a run of them, and the first answer after it. A slow or
+// dnsResult logs the first failure of a run of them, and the first answer after it. A slow or
 // wrong server fails every lookup of a page load, and a device may send anything to 10.7.0.1, so a
-// line each would fill the log. Lookups ended by Close aren't failures.
-func (s *Server) dohResult(err error) {
+// line each would fill the log. Lookups ended by Close aren't failures. via says which kind of
+// upstream it was.
+func (s *Server) dnsResult(via string, err error) {
 	switch {
 	case err == nil:
-		if s.dohFailing.Swap(false) {
-			s.notice("DNS over HTTPS answers again")
+		if s.dnsFailing.Swap(false) {
+			s.notice("%s answers again", via)
 		}
 	case s.ctx.Err() != nil:
-	case !s.dohFailing.Swap(true):
-		s.notice("DNS over HTTPS: %v", err)
+	case !s.dnsFailing.Swap(true):
+		s.notice("%s: %v", via, err)
 	}
+}
+
+// askPlain asks the plain servers, the first one first. The next one is asked only once those before
+// it failed or stayed silent for plainTimeout, and a late answer from one asked before still counts.
+// The first answer with the query's ID is the answer, whatever its RCODE: the server answered.
+func (s *Server) askPlain(servers []netip.AddrPort, query []byte, overTCP bool) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(s.ctx, time.Duration(len(servers))*s.plainTimeout)
+	var wg sync.WaitGroup
+	defer wg.Wait() // runs after cancel, which ends every ask at once
+	defer cancel()
+	ask := s.askUDP
+	if overTCP {
+		ask = s.askTCP
+	}
+	type result struct {
+		answer []byte
+		err    error
+	}
+	results := make(chan result, len(servers))
+	asked, failed := 0, 0
+	askNext := func() {
+		server := servers[asked]
+		asked++
+		wg.Go(func() {
+			answer, err := ask(ctx, server, query)
+			results <- result{answer, err}
+		})
+	}
+	askNext()
+	next := time.NewTimer(s.plainTimeout)
+	defer next.Stop()
+	for {
+		select {
+		case r := <-results:
+			if r.err == nil {
+				return r.answer, nil
+			}
+			if failed++; failed < asked {
+				continue // one asked before may still answer
+			}
+			if asked == len(servers) {
+				return nil, noAnswer(servers)
+			}
+		case <-next.C:
+			if asked == len(servers) {
+				continue // the last one has until ctx ends
+			}
+		case <-ctx.Done():
+			return nil, noAnswer(servers)
+		}
+		askNext()
+		next.Reset(s.plainTimeout)
+	}
+}
+
+func noAnswer(servers []netip.AddrPort) error {
+	var names []string
+	for _, a := range servers {
+		names = append(names, a.Addr().String())
+	}
+	return fmt.Errorf("no answer from %s", strings.Join(names, " or "))
+}
+
+// askUDP sends the query to server from a socket of its own, a new port each time, the way a cone
+// sends a device's packets: through the carrier's NAT64 when the iPhone has no IPv4 route. It returns
+// the first answer from server to the query, and waits until ctx ends for one. An answer bigger
+// than the device takes comes back too, and fitUDP cuts it.
+func (s *Server) askUDP(ctx context.Context, server netip.AddrPort, query []byte) ([]byte, error) {
+	// IPv4 only, as a cone's socket, see cone.conn.
+	conn, err := net.ListenUDP("udp4", nil)
+	if err != nil {
+		return nil, err
+	}
+	err = s.sendTo(conn, query, s.toNet(server))
+	if noRoute(err) {
+		if via, ok := s.viaNAT64(ctx, server); ok {
+			conn.Close()
+			// Both IPv4 and IPv6, as a cone's NAT64 socket, see openNAT64.
+			if conn, err = net.ListenUDP("udp", nil); err != nil {
+				return nil, err
+			}
+			err = s.sendTo(conn, query, s.toNet(via))
+		}
+	}
+	defer conn.Close()
+	if err != nil {
+		return nil, err
+	}
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	// One byte more than the device takes: an answer cut there is too big, and fitUDP needs only
+	// its header and questions, at the front, to cut it for the device.
+	buf := make([]byte, udpSize(query)+1)
+	for {
+		n, from, err := conn.ReadFromUDPAddrPort(buf)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, err
+		}
+		src := s.fromNAT64(s.fromNet(netip.AddrPortFrom(from.Addr().Unmap(), from.Port())))
+		if src == server && answers(query, buf[:n]) {
+			return bytes.Clone(buf[:n]), nil
+		}
+	}
+}
+
+// askTCP asks server over a TCP connection of its own, dialed the way a device's connections are.
+func (s *Server) askTCP(ctx context.Context, server netip.AddrPort, query []byte) ([]byte, error) {
+	conn, err := s.dialTCP(ctx, server)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	// One write, so the length and the query leave in one segment.
+	if _, err := conn.Write(append(binary.BigEndian.AppendUint16(nil, uint16(len(query))), query...)); err != nil {
+		return nil, err
+	}
+	var size [2]byte
+	if _, err := io.ReadFull(conn, size[:]); err != nil {
+		return nil, err
+	}
+	answer := make([]byte, binary.BigEndian.Uint16(size[:]))
+	if _, err := io.ReadFull(conn, answer); err != nil {
+		return nil, err
+	}
+	if !answers(query, answer) {
+		return nil, errors.New("an answer to another query")
+	}
+	return answer, nil
+}
+
+// answers says whether m is an answer to query: QR set, the query's ID and its questions (RFC 5452
+// 9.1), so a stray or forged packet to the port isn't taken.
+func answers(query, m []byte) bool {
+	if len(m) < dnsHeaderLen || m[2]&0x80 == 0 || m[0] != query[0] || m[1] != query[1] {
+		return false
+	}
+	asked, err := questionsOf(query)
+	if err != nil {
+		return false
+	}
+	got, err := questionsOf(m)
+	return err == nil && slices.Equal(got, asked)
+}
+
+func questionsOf(m []byte) ([]dnsmessage.Question, error) {
+	var p dnsmessage.Parser
+	if _, err := p.Start(m); err != nil {
+		return nil, err
+	}
+	return p.AllQuestions()
+}
+
+// servfail is SERVFAIL for the query (RFC 1035 4.1.1): its ID, opcode and questions, QR set and RCODE
+// 2, so the device's resolver stops waiting. Nil for a message that isn't a query.
+func servfail(query []byte) []byte {
+	var p dnsmessage.Parser
+	h, err := p.Start(query)
+	if err != nil || h.Response {
+		return nil
+	}
+	questions, err := p.AllQuestions()
+	if err != nil {
+		return nil
+	}
+	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{
+		ID: h.ID, Response: true, OpCode: h.OpCode, RecursionDesired: h.RecursionDesired,
+		RecursionAvailable: true, RCode: dnsmessage.RCodeServerFailure,
+	})
+	b.StartQuestions()
+	for _, q := range questions {
+		if b.Question(q) != nil {
+			return nil
+		}
+	}
+	m, err := b.Finish()
+	if err != nil {
+		return nil
+	}
+	return m
 }
 
 // doh asks the DoH server and returns its answer with the query's ID. A request that fails before
@@ -238,8 +445,8 @@ func fitUDP(query, answer []byte) []byte {
 	return cut
 }
 
-// udpSize is how big a UDP answer the query's sender takes: its EDNS0 size, and 512 bytes without
-// one or below it.
+// udpSize is how big a UDP answer the query's sender takes: its EDNS0 size, 512 bytes without one or
+// below it, and udpMax at most.
 func udpSize(query []byte) int {
 	var p dnsmessage.Parser
 	if _, err := p.Start(query); err != nil {
@@ -254,7 +461,7 @@ func udpSize(query []byte) int {
 			return 512
 		}
 		if h.Type == dnsmessage.TypeOPT {
-			return max(512, int(h.Class)) // an OPT record's class is the size
+			return min(max(512, int(h.Class)), udpMax) // an OPT record's class is the size
 		}
 		if p.SkipAdditional() != nil {
 			return 512
@@ -262,11 +469,11 @@ func udpSize(query []byte) int {
 	}
 }
 
-// dohConn is DNS over TCP to 10.7.0.1 with a DoH upstream: forwardTCP copies the device's side to it
-// as it would to a connection it dialed, so the caps, the counting and the closing work the same.
-// serveDoH reads the queries written to it and writes the answers to be read from it, each after
-// its length in 2 bytes (RFC 7766). Nil when the server is closing.
-func (s *Server) dohConn(doh string) net.Conn {
+// lookupConn is DNS over TCP to 10.7.0.1: forwardTCP copies the device's side to it as it would to
+// a connection it dialed, so the caps, the counting and the closing work the same. serveTCP reads
+// the queries written to it and writes the answers to be read from it, each after its length in 2
+// bytes (RFC 7766). Nil when the server is closing.
+func (s *Server) lookupConn() net.Conn {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -278,29 +485,29 @@ func (s *Server) dohConn(doh string) net.Conn {
 	answersIn, answersOut := io.Pipe()
 	go func() {
 		defer s.looking.Done()
-		s.serveDoH(doh, queriesIn, answersOut)
+		s.serveTCP(queriesIn, answersOut)
 		queriesIn.Close()  // a write still waiting fails
 		answersOut.Close() // the device's side gets a FIN
 	}()
 	return &dnsConn{answers: answersIn, queries: queriesOut}
 }
 
-// serveDoH answers the queries one at a time, in order, until the device closes its side, a query
-// can't be read, or the DoH server fails, which closes the connection so the device asks again.
-// RFC 7766 would have them answered at once, but a device asks over TCP only after a cut UDP answer.
-func (s *Server) serveDoH(doh string, queries io.Reader, answers io.Writer) {
+// serveTCP answers the queries one at a time, in order, each from the upstream set when it's read,
+// until the device closes its side, a query can't be read, or there's nothing to answer, see
+// resolve. RFC 7766 would have them answered at once, but a device asks over TCP only after a cut
+// UDP answer.
+func (s *Server) serveTCP(queries io.Reader, answers io.Writer) {
 	for {
 		var size [2]byte
 		if _, err := io.ReadFull(queries, size[:]); err != nil {
 			return
 		}
 		query := make([]byte, binary.BigEndian.Uint16(size[:]))
-		if _, err := io.ReadFull(queries, query); err != nil || len(query) < dnsHeaderLen {
+		if _, err := io.ReadFull(queries, query); err != nil {
 			return
 		}
-		answer, err := s.doh(doh, query)
-		s.dohResult(err)
-		if err != nil {
+		answer := s.resolve(query, true)
+		if answer == nil {
 			return
 		}
 		if _, err := answers.Write(binary.BigEndian.AppendUint16(nil, uint16(len(answer)))); err != nil {
@@ -312,7 +519,7 @@ func (s *Server) serveDoH(doh string, queries io.Reader, answers io.Writer) {
 	}
 }
 
-// dnsConn is the connection forwardTCP holds for dohConn. CloseWrite passes the device's FIN on.
+// dnsConn is the connection forwardTCP holds for lookupConn. CloseWrite passes the device's FIN on.
 type dnsConn struct {
 	answers *io.PipeReader
 	queries *io.PipeWriter

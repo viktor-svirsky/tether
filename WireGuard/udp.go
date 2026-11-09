@@ -47,10 +47,7 @@ type cone struct {
 	last atomic.Int64
 	// dnsOnly holds while every packet has gone to port 53. Such a cone idles out after dnsIdle.
 	dnsOnly atomic.Bool
-	// viaTether is set once the device sent a lookup to 10.7.0.1 that went to a plain server, see
-	// dns.go. From then on that server's replies come back from 10.7.0.1.
-	viaTether atomic.Bool
-	once      sync.Once
+	once    sync.Once
 	// lock is the server's s.mu. Close takes it, and so does handing a reply to the device, so
 	// once Close returns no reply of this cone's can reach a device that gets its address later.
 	lock *sync.Mutex
@@ -103,13 +100,9 @@ func (s *Server) handleUDP(id stack.TransportEndpointID, pkt *stack.PacketBuffer
 	if !device.Addr().Is4() {
 		return true // handled: dropped
 	}
-	viaTether := dst == dnsAddr
-	if viaTether {
-		var doh string
-		if dst, doh = s.dnsRoute(); doh != "" {
-			s.askDoH(device, doh, pkt.Data().AsRange().ToSlice())
-			return true
-		}
+	if dst == dnsAddr && s.upstream.Load().set() {
+		s.lookup(device, pkt.Data().AsRange().ToSlice()) // Tether answers it, see dns.go
+		return true
 	}
 	if !forwardable(dst.Addr()) {
 		return true
@@ -117,9 +110,6 @@ func (s *Server) handleUDP(id stack.TransportEndpointID, pkt *stack.PacketBuffer
 	c := s.cone(device)
 	if c == nil {
 		return true
-	}
-	if viaTether {
-		c.viaTether.Store(true)
 	}
 	c.sentTo(dst)
 	payload := pkt.Data().AsRange().ToSlice()
@@ -274,9 +264,6 @@ func (s *Server) reply(c *cone, conn *net.UDPConn, buf []byte) error {
 	src := s.fromNAT64(s.fromNet(netip.AddrPortFrom(from.Addr().Unmap(), from.Port())))
 	if !src.Addr().Is4() {
 		return nil
-	}
-	if c.viaTether.Load() && s.fromPlainDNS(src) {
-		src = dnsAddr // the device asked 10.7.0.1, and drops a reply from anyone else
 	}
 	s.count(c.traffic, false, n)
 	packets := replyPackets(src, c.device, buf[:n], s.nextID())
