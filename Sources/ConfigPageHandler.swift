@@ -15,6 +15,11 @@ struct ConfigPageHandler {
         let host: String?
         /// The ready device's config pointing at `host`.
         let config: String?
+        /// Each address's config that knocked but no longer works, read for this request.
+        let stale: [StaleConfig]
+        /// Where Tether listens. A request from there came through a tunnel that works, or from the
+        /// iPhone itself, so a stale config isn't its.
+        let hosts: [String]
         let now: Date
     }
 
@@ -34,22 +39,27 @@ struct ConfigPageHandler {
     func answer(_ request: ConfigPage.Request, from client: String, _ inputs: Inputs) -> Decision {
         let state: ConfigPage.State = !inputs.letIn ? .openAddDevice : !inputs.onScreen ? .openTether
             : inputs.ready == nil ? .noConfig : .ready
+        let address = PeerStats.address(client)
+        // Its own knock first (#63): other devices may knock too, and old keys may be anyone's.
+        let knocks = address.map(inputs.hosts.contains) == true ? [] : inputs.stale.filter { $0.shown(at: inputs.now) }
+        let stale: ConfigPage.Stale? = knocks.contains { $0.kind == .device && address != nil && PeerStats.address($0.from) == address } ? .thisDevice
+            : knocks.contains { $0.kind == .server } ? .oldKeys : nil
         let repeated = lastDownload.flatMap {
             $0.client == client && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil
         }
         switch request {
         case .page:
-            return .answer(ConfigPage.page(state))
+            return .answer(ConfigPage.page(state, stale: stale))
         case .pageHead:
-            return .answer(ConfigPage.page(state).forHead)
+            return .answer(ConfigPage.page(state, stale: stale).forHead)
         case .configHead:
             if let repeated { return .answer(repeated.forHead) }
-            guard state == .ready, let config = inputs.config else { return .answer(ConfigPage.page(state, status: .notFound).forHead) }
+            guard state == .ready, let config = inputs.config else { return .answer(ConfigPage.page(state, stale: stale, status: .notFound).forHead) }
             return .answer(ConfigPage.config(config, fileName: WireGuardSetup.fileName(for: "")).forHead)
         case .config:
             if let repeated { return .answer(repeated) }
             guard state == .ready, let ready = inputs.ready, let host = inputs.host, let config = inputs.config else {
-                return .answer(ConfigPage.page(state, status: .notFound))
+                return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
             }
             return .download(ready, host: host, config: config)
         case .notFound: return .answer(ConfigPage.notFound)

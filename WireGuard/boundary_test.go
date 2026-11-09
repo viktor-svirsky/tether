@@ -145,6 +145,8 @@ func TestStatsWithNoServerAreNone(t *testing.T) {
 func TestStatsMatchTheFixtureSwiftReads(t *testing.T) {
 	s, a, _ := setupTwo(t)
 	fetchAndShake(t, s, a, tcpServer(t, 1000))
+	// A stale config too, so the keys of one in the recent list show.
+	knockTwice(s, "172.20.10.9:51820", s.now())
 	exported(t, s)
 	js, ok := statsJSON()
 	if !ok {

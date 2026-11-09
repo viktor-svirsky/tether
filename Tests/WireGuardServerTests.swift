@@ -192,7 +192,9 @@ final class WireGuardServerTests: XCTestCase {
                                                           lastHandshake: Date(timeIntervalSince1970: 1_793_718_000),
                                                           endpoint: "172.20.10.3:51820"))
         XCTAssertEqual(stats.peers["10.7.0.3"], PeerStats(), "never connected: no handshake, no endpoint")
-        XCTAssertEqual(stats.stale, StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030)))
+        XCTAssertEqual(stats.stale, StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030), from: "172.20.10.9:51820"))
+        XCTAssertEqual(stats.recentStale, [StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_010), from: "172.20.10.4:51820"),
+                                           StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030), from: "172.20.10.9:51820")])
     }
 
     /// A device's screen shows where it connects from without the port (#73), and the session goes
@@ -226,7 +228,11 @@ final class WireGuardServerTests: XCTestCase {
             try WireGuardServer.Stats.read(Data(#"{"v":1,"up":0,"down":0,"peers":[],\#(json)}"#.utf8)).stale
         }
         XCTAssertNil(try stale(#""stale":{"kind":"","at":0}"#))
+        XCTAssertEqual(try stale(#""stale":{"kind":"server","at":7,"from":""}"#), StaleConfig(kind: .server, at: Date(timeIntervalSince1970: 7)),
+                       "a config for other server keys says nowhere")
         XCTAssertEqual(try stale(#""stale":{"kind":"server","at":7}"#), StaleConfig(kind: .server, at: Date(timeIntervalSince1970: 7)))
+        XCTAssertEqual(try stale(#""stale":{"kind":"device","at":7,"from":"[2001:db8::5]:51820"}"#),
+                       StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 7), from: "[2001:db8::5]:51820"))
         XCTAssertNil(try stale(#""stale":{"kind":"router","at":7}"#), "a kind this app doesn't know says nothing")
     }
 
@@ -243,8 +249,10 @@ final class WireGuardServerTests: XCTestCase {
             stale = server.snapshot().stale
         }
         XCTAssertEqual(stale?.kind, .server)
+        XCTAssertEqual(server.snapshot().recentStale.map(\.kind), [.server], "the config page reads the recent ones (#63)")
         server.stop()
         XCTAssertNil(server.snapshot().stale, "a stopped server knows of no knock")
+        XCTAssertEqual(server.snapshot().recentStale, [])
     }
 
     /// Junk handshakes, as a config made for other server keys sends: a handshake initiation is type 1
@@ -329,6 +337,7 @@ final class WireGuardServerTests: XCTestCase {
         let json = #"{"v":1,"up":1,"down":2,"peers":[{"address":"10.7.0.2","connected":true,"up":1,"down":2,"handshake":5,"endpoint":"","paused":true}],"new":0}"#
         XCTAssertEqual(try WireGuardServer.Stats.read(Data(json.utf8)).connected, ["10.7.0.2"])
         XCTAssertNil(try WireGuardServer.Stats.read(Data(json.utf8)).stale, "no stale key, no stale config")
+        XCTAssertEqual(try WireGuardServer.Stats.read(Data(json.utf8)).recentStale, [], "no recent key, none")
     }
 
     func testTheDeviceListIsTheMessageGoReads() throws {

@@ -67,6 +67,9 @@ struct StaleConfig: Equatable {
     let kind: Kind
     /// Its last handshake the server dropped.
     let at: Date
+    /// Where that came from, "ip:port", so the config page can tell that device (#63). Nil for
+    /// other server keys: wireguard-go doesn't say.
+    var from: String?
 
     /// How long it shows after its last handshake. A device that still tries sends one every 5 s.
     static let shownFor: TimeInterval = 60
@@ -74,12 +77,14 @@ struct StaleConfig: Equatable {
     func shown(at now: Date) -> Bool { now.timeIntervalSince(at) < Self.shownFor }
 }
 
-/// What the server reports at one moment: its totals, each device by tunnel address, and the last
-/// config that knocked but no longer works.
+/// What the server reports at one moment: its totals, each device by tunnel address, the last
+/// config that knocked but no longer works, and each address's from the last minute.
 struct ServerSnapshot: Equatable {
     var totals = TrafficTotals()
     var peers: [String: PeerStats] = [:]
     var stale: StaleConfig?
+    /// For the config page to tell each device its own (#63): two removed devices may keep trying.
+    var recentStale: [StaleConfig] = []
 
     var connected: Set<String> { Set(peers.filter(\.value.connected).keys) }
 }

@@ -43,13 +43,19 @@ type statsMessage struct {
 	Peers []peerStats `json:"peers"`
 	// Stale is the last config that knocked but no longer works, see stale.go.
 	Stale staleStats `json:"stale"`
+	// Recent is each address's stale config from the last minute, oldest first, so the config page
+	// can tell each device its own (#63).
+	Recent []staleStats `json:"recent"`
 }
 
 // staleStats is a config that no longer works. Kind is staleDevice or staleServer, and "" with At 0
-// for none yet. At is when it last knocked, Unix seconds.
+// for none yet. At is when it last knocked, Unix seconds. From is where that knock came from,
+// ip:port, for the config page to tell that device (#63), and "" for staleServer: wireguard-go
+// doesn't say where a bad mac1 came from.
 type staleStats struct {
 	Kind string `json:"kind"`
 	At   int64  `json:"at"`
+	From string `json:"from"`
 }
 
 type peerStats struct {
@@ -184,7 +190,11 @@ func (s *Server) statsMessage() statsMessage {
 		p.Endpoint = s.endpoints[addr]
 		m.Peers = append(m.Peers, p)
 	}
-	m.Stale = s.knocks.stale
+	m.Stale = s.namedLocked(s.knocks.latest)
+	m.Recent = s.knocks.recentAt(s.now())
+	for i, st := range m.Recent {
+		m.Recent[i] = s.namedLocked(st)
+	}
 	return m
 }
 

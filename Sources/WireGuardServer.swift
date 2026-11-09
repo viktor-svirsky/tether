@@ -88,10 +88,12 @@ final class WireGuardServer {
     }
 
     /// Counters that only grow, across restarts, the totals and each device's. Which devices are
-    /// connected, and the last config that knocked but no longer works, only while running.
+    /// connected, the last config that knocked but no longer works, and each address's from the last
+    /// minute for the config page (#63), only while running.
     func snapshot() -> ServerSnapshot {
         let run = running ? currentRun() : ServerSnapshot()
-        return ServerSnapshot(totals: carried.apply(to: run.totals), peers: carriedDevices.apply(to: run.peers), stale: run.stale)
+        return ServerSnapshot(totals: carried.apply(to: run.totals), peers: carriedDevices.apply(to: run.peers), stale: run.stale,
+                              recentStale: run.recentStale)
     }
 
     /// This run's stats. Stats it can't read leave the last counters it read, so a stop still carries
@@ -152,6 +154,7 @@ final class WireGuardServer {
             let down: UInt64
             let peers: [Peer]
             let stale: Stale?
+            let recent: [Stale]?
 
             struct Peer: Decodable {
                 let address: String
@@ -165,6 +168,7 @@ final class WireGuardServer {
             struct Stale: Decodable {
                 let kind: String // "" for none yet
                 let at: Int64 // Unix seconds
+                let from: String? // "" for nowhere
             }
         }
 
@@ -189,10 +193,13 @@ final class WireGuardServer {
                                              endpoint: p.endpoint.isEmpty ? nil : p.endpoint)
             }
             // A kind this app doesn't know says nothing, like one that isn't there.
-            let stale = m.stale.flatMap { s in
-                StaleConfig.Kind(rawValue: s.kind).map { StaleConfig(kind: $0, at: Date(timeIntervalSince1970: TimeInterval(s.at))) }
+            func stale(_ s: Message.Stale) -> StaleConfig? {
+                StaleConfig.Kind(rawValue: s.kind).map {
+                    StaleConfig(kind: $0, at: Date(timeIntervalSince1970: TimeInterval(s.at)), from: s.from.flatMap { $0.isEmpty ? nil : $0 })
+                }
             }
-            return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, stale: stale)
+            return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, stale: m.stale.flatMap(stale),
+                                  recentStale: (m.recent ?? []).compactMap(stale))
         }
     }
 }
@@ -242,6 +249,7 @@ private extension ServerSnapshot {
         var s = self
         for address in s.peers.keys { s.peers[address]?.connected = false }
         s.stale = nil
+        s.recentStale = []
         return s
     }
 }
