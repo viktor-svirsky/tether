@@ -30,25 +30,29 @@ import (
 //     only addresses the user authorized.
 //   - One or two plain servers, asked from the iPhone the way a device's own UDP and TCP leave it,
 //     through the carrier's NAT64 when the iPhone has no IPv4 route (see nat64.go). The first is
-//     asked first, and the second only when the first stays silent for plainTimeout, so a second
-//     server is a backup and sees nothing while the first answers (#123). A lookup over TCP is
-//     asked over TCP, so an answer a server cut for UDP reaches the device whole.
+//     asked first, and the second only when the first stays silent for plainTimeout or refuses a
+//     TCP connection, so a second server is a backup and sees nothing while the first answers
+//     (#123). Over UDP a server that's down is only silent: nothing tells an unconnected socket.
+//     A lookup over TCP is asked over TCP, so an answer a server cut for UDP reaches the device
+//     whole.
 //
 // Any answer ends a lookup, an error like REFUSED too: the server answered, and the next one isn't
-// asked. When the upstream doesn't answer, the device gets SERVFAIL, so it doesn't wait out its own
+// asked. When the upstream doesn't answer, the device gets SERVFAIL, and a query no server could
+// read gets FORMERR without asking one, so it doesn't wait out its own
 // timeouts. With no upstream, 10.7.0.1 stays inside like every tunnel address.
 
 var dnsAddr = netip.MustParseAddrPort("10.7.0.1:53")
 
 const (
-	// dohTimeout is how long a lookup waits for the DoH server, a second try included. A
-	// device's resolver asks again after about a second, and gives up after a few.
-	dohTimeout = 5 * time.Second
+	// lookupTimeout is how long a lookup waits for its upstream before the device gets SERVFAIL:
+	// a DoH server's second try included, or a plain server's backup. A device's resolver asks
+	// again after about a second, and glibc's waits 5 s for each try. A cold cache can take
+	// seconds, so one plain server alone has all of it too.
+	lookupTimeout = 5 * time.Second
 	// plainTimeout is how long a plain server has to answer before the next one is asked too. A
 	// resolver answers from its cache in milliseconds, and most names it must look up in well under
-	// a second, so one silent for 2 s is most likely down. Two servers take 4 s at most before the
-	// device gets SERVFAIL, inside dohTimeout and the 5 s glibc's resolver waits for each try. The
-	// first server's late answer is still taken while the second is asked.
+	// a second, so one silent for 2 s is most likely down. The first server's late answer is still
+	// taken while the second is asked.
 	plainTimeout = 2 * time.Second
 	// maxLookups caps a device's UDP lookups waiting for an answer. A page load asks for dozens of
 	// names at once, and a resolver asks again when an answer is slow, so a slow server doubles
@@ -78,8 +82,9 @@ func (u *dnsUpstream) set() bool { return u != nil && (u.doh != "" || len(u.udp)
 func (s *Server) SetDNS(u *dnsUpstream) { s.upstream.Store(u) }
 
 // resolve answers one query a device sent to 10.7.0.1, over UDP or TCP, from the upstream set now:
-// the upstream's answer, or SERVFAIL when it gave none. Nil when there's nothing to answer: no
-// upstream, a message that isn't a query, or a closing server.
+// the upstream's answer, SERVFAIL when it gave none, or FORMERR at once for questions that can't be
+// read. Nil when there's nothing to answer: no upstream, a message that isn't a query, or a closing
+// server.
 func (s *Server) resolve(query []byte, overTCP bool) []byte {
 	if len(query) < dnsHeaderLen || query[2]&0x80 != 0 { // QR: an answer, not a query
 		return nil
@@ -87,6 +92,9 @@ func (s *Server) resolve(query []byte, overTCP bool) []byte {
 	u := s.upstream.Load()
 	if !u.set() {
 		return nil
+	}
+	if _, err := questionsOf(query); err != nil {
+		return formerr(query) // no server could answer it either
 	}
 	var answer []byte
 	var err error
@@ -173,10 +181,16 @@ func (s *Server) dnsResult(via string, err error) {
 }
 
 // askPlain asks the plain servers, the first one first. The next one is asked only once those before
-// it failed or stayed silent for plainTimeout, and a late answer from one asked before still counts.
-// The first answer with the query's ID is the answer, whatever its RCODE: the server answered.
+// it failed (a refused TCP connection, or a send that can't leave) or stayed silent for plainTimeout,
+// and a late answer from one asked before still counts. The lookup gets lookupTimeout, or
+// plainTimeout for each server when that's longer. The first answer to the query is the answer,
+// whatever its RCODE: the server answered.
+//
+// Neither clock runs while an ask looks up the carrier's NAT64 prefix (see nat64.go), which takes
+// up to 2 s once in a while on an IPv6-only carrier: the query hasn't left yet, and the backup would
+// get it.
 func (s *Server) askPlain(servers []netip.AddrPort, query []byte, overTCP bool) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(s.ctx, time.Duration(len(servers))*s.plainTimeout)
+	ctx, cancel := context.WithCancel(s.ctx)
 	var wg sync.WaitGroup
 	defer wg.Wait() // runs after cancel, which ends every ask at once
 	defer cancel()
@@ -188,16 +202,24 @@ func (s *Server) askPlain(servers []netip.AddrPort, query []byte, overTCP bool) 
 		answer []byte
 		err    error
 	}
+	type held struct {
+		server int
+		held   bool
+	}
 	results := make(chan result, len(servers))
+	holds := make(chan held, 2*len(servers))
 	asked, failed := 0, 0
 	askNext := func() {
-		server := servers[asked]
+		i := asked
 		asked++
 		wg.Go(func() {
-			answer, err := ask(ctx, server, query)
+			answer, err := ask(ctx, servers[i], query, func(h bool) { holds <- held{i, h} })
 			results <- result{answer, err}
 		})
 	}
+	budget := max(s.lookupTimeout, time.Duration(len(servers))*s.plainTimeout)
+	deadline := time.NewTimer(budget)
+	defer deadline.Stop()
 	askNext()
 	next := time.NewTimer(s.plainTimeout)
 	defer next.Stop()
@@ -213,10 +235,28 @@ func (s *Server) askPlain(servers []netip.AddrPort, query []byte, overTCP bool) 
 			if asked == len(servers) {
 				return nil, noAnswer(servers)
 			}
+		case h := <-holds:
+			// The clocks start again from the top once the query has left. A lookup of the prefix
+			// is rare, so a few seconds more for that lookup are fine.
+			if h.held {
+				deadline.Stop()
+			} else {
+				deadline.Reset(budget)
+			}
+			if h.server == asked-1 {
+				if h.held {
+					next.Stop()
+				} else {
+					next.Reset(s.plainTimeout)
+				}
+			}
+			continue
 		case <-next.C:
 			if asked == len(servers) {
-				continue // the last one has until ctx ends
+				continue // the last one has until the deadline
 			}
+		case <-deadline.C:
+			return nil, noAnswer(servers)
 		case <-ctx.Done():
 			return nil, noAnswer(servers)
 		}
@@ -236,8 +276,9 @@ func noAnswer(servers []netip.AddrPort) error {
 // askUDP sends the query to server from a socket of its own, a new port each time, the way a cone
 // sends a device's packets: through the carrier's NAT64 when the iPhone has no IPv4 route. It returns
 // the first answer from server to the query, and waits until ctx ends for one. An answer bigger
-// than the device takes comes back too, and fitUDP cuts it.
-func (s *Server) askUDP(ctx context.Context, server netip.AddrPort, query []byte) ([]byte, error) {
+// than the device takes comes back too, and fitUDP cuts it. nat64Wait is told when the carrier's
+// NAT64 prefix may be looked up, and when that's over, see askPlain.
+func (s *Server) askUDP(ctx context.Context, server netip.AddrPort, query []byte, nat64Wait func(bool)) ([]byte, error) {
 	// IPv4 only, as a cone's socket, see cone.conn.
 	conn, err := net.ListenUDP("udp4", nil)
 	if err != nil {
@@ -245,7 +286,12 @@ func (s *Server) askUDP(ctx context.Context, server netip.AddrPort, query []byte
 	}
 	err = s.sendTo(conn, query, s.toNet(server))
 	if noRoute(err) {
-		if via, ok := s.viaNAT64(ctx, server); ok {
+		nat64Wait(true)
+		// On s.ctx, as dialTCP's: a lookup of the prefix cut short would leave the well-known
+		// prefix in its place for a minute, for every device.
+		via, ok := s.viaNAT64(s.ctx, server)
+		nat64Wait(false)
+		if ok {
 			conn.Close()
 			// Both IPv4 and IPv6, as a cone's NAT64 socket, see openNAT64.
 			if conn, err = net.ListenUDP("udp", nil); err != nil {
@@ -279,8 +325,8 @@ func (s *Server) askUDP(ctx context.Context, server netip.AddrPort, query []byte
 }
 
 // askTCP asks server over a TCP connection of its own, dialed the way a device's connections are.
-func (s *Server) askTCP(ctx context.Context, server netip.AddrPort, query []byte) ([]byte, error) {
-	conn, err := s.dialTCP(ctx, server)
+func (s *Server) askTCP(ctx context.Context, server netip.AddrPort, query []byte, nat64Wait func(bool)) ([]byte, error) {
+	conn, err := s.dialTCP(ctx, server, nat64Wait)
 	if err != nil {
 		return nil, err
 	}
@@ -327,6 +373,25 @@ func questionsOf(m []byte) ([]dnsmessage.Question, error) {
 	return p.AllQuestions()
 }
 
+// formerr is FORMERR for a query whose questions can't be read (RFC 1035 4.1.1): its ID and opcode,
+// QR set and RCODE 1, and no questions. Nil for less than a header.
+func formerr(query []byte) []byte {
+	var p dnsmessage.Parser
+	h, err := p.Start(query)
+	if err != nil {
+		return nil
+	}
+	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{
+		ID: h.ID, Response: true, OpCode: h.OpCode, RecursionDesired: h.RecursionDesired,
+		RecursionAvailable: true, RCode: dnsmessage.RCodeFormatError,
+	})
+	m, err := b.Finish()
+	if err != nil {
+		return nil
+	}
+	return m
+}
+
 // servfail is SERVFAIL for the query (RFC 1035 4.1.1): its ID, opcode and questions, QR set and RCODE
 // 2, so the device's resolver stops waiting. Nil for a message that isn't a query.
 func servfail(query []byte) []byte {
@@ -361,7 +426,7 @@ func servfail(query []byte) []byte {
 // word when the iPhone moves between Wi-Fi and cellular, and only the first request on it finds
 // out. An error never carries the URL, since its path is the user's profile.
 func (s *Server) doh(doh string, query []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(s.ctx, s.dohTimeout)
+	ctx, cancel := context.WithTimeout(s.ctx, s.lookupTimeout)
 	defer cancel()
 	q := bytes.Clone(query)
 	q[0], q[1] = 0, 0 // RFC 8484 4.1: ID 0, so a cache on the way answers anyone who asks the same
@@ -549,7 +614,7 @@ func newDoHClient(dial func(ctx context.Context, network, address string) (net.C
 	return &http.Client{Transport: &http.Transport{
 		DialContext:         dial,
 		ForceAttemptHTTP2:   true, // a custom dial turns HTTP/2 off otherwise
-		TLSHandshakeTimeout: dohTimeout,
+		TLSHandshakeTimeout: lookupTimeout,
 		IdleConnTimeout:     time.Minute,
 		MaxIdleConnsPerHost: 2,
 	}}
