@@ -210,6 +210,8 @@ struct DemoState {
         server.connected = connected
         // What the iPad used this month, for its screen. The Windows PC used nothing.
         if connected.contains("10.7.0.2") { server.peerTraffic = ["10.7.0.2": TrafficTotals(bytesUp: 120_000_000, bytesDown: 3_000_000_000)] }
+        // Where the iPad's handshake comes from, an address on the hotspot, for its screen (#73).
+        if connected.contains("10.7.0.2") { server.endpoints = ["10.7.0.2": "172.20.10.2:52345"] }
         // The Windows PC last connected two hours ago, so its screen says when.
         server.handshakes = ["10.7.0.3": clock.now.addingTimeInterval(-2 * 3600)]
         if connected.contains("10.7.0.2") { server.handshakes["10.7.0.2"] = clock.now.addingTimeInterval(-30) }

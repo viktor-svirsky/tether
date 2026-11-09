@@ -95,7 +95,9 @@ final class NotificationsTests: TetherUITestCase {
         if allow.waitForExistence(timeout: 5) { allow.tap() }
         XCUIDevice.shared.press(.home)
         let banner = springboard.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "iPad connected")).firstMatch
-        XCTAssertTrue(banner.waitForExistence(timeout: 10), "no notification. Notifications for Tether may be off in the simulator's Settings")
+        // Usually a few seconds. Under the full suite, iOS can take 9 s to move Tether to the background,
+        // then up to 10 s more in the notification's own steps (its Intelligence step times out at 10 s).
+        XCTAssertTrue(banner.waitForExistence(timeout: 60), "no notification. Notifications for Tether may be off in the simulator's Settings")
     }
 
     // MARK: accessibility

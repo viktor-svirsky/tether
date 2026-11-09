@@ -39,10 +39,10 @@ struct ConfigPageHandler {
     func answer(_ request: ConfigPage.Request, from client: String, _ inputs: Inputs) -> Decision {
         let state: ConfigPage.State = !inputs.letIn ? .openAddDevice : !inputs.onScreen ? .openTether
             : inputs.ready == nil ? .noConfig : .ready
-        let address = Hotspot.address(of: client)
+        let address = PeerStats.address(client)
         // Its own knock first (#63): other devices may knock too, and old keys may be anyone's.
-        let knocks = inputs.hosts.contains(address) ? [] : inputs.stale.filter { $0.shown(at: inputs.now) }
-        let stale: ConfigPage.Stale? = knocks.contains { $0.kind == .device && $0.from.map(Hotspot.address(of:)) == address } ? .thisDevice
+        let knocks = address.map(inputs.hosts.contains) == true ? [] : inputs.stale.filter { $0.shown(at: inputs.now) }
+        let stale: ConfigPage.Stale? = knocks.contains { $0.kind == .device && address != nil && PeerStats.address($0.from) == address } ? .thisDevice
             : knocks.contains { $0.kind == .server } ? .oldKeys : nil
         let repeated = lastDownload.flatMap {
             $0.client == client && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil

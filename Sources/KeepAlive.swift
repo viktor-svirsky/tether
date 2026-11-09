@@ -3,15 +3,14 @@ import UIKit
 
 /// Plays a looping silent sound so iOS keeps the app (and its listener) running in the background.
 /// It mixes with other audio, so music keeps playing. A phone call, Siri or an alarm interrupts it,
-/// and iOS does not resume it, so it restarts itself when the interruption ends. When the media
-/// services die it asks iOS for background time, and sets itself up again from scratch until
-/// the sound plays.
+/// and iOS does not resume it. When the interruption ends, or the media services die, it asks iOS
+/// for background time and keeps starting the sound in it until it plays.
 /// Fine for a personally installed app. App Store review would reject it.
 /// `KeepAlivePolicy` says when it plays.
 final class KeepAlive {
     private var player: AVAudioPlayer?
     private var observers: [NSObjectProtocol] = []
-    /// The background time that keeps Tether running while the media services are gone.
+    /// The background time that keeps Tether running until the sound plays again.
     private var holdingOn: UIBackgroundTaskIdentifier = .invalid
     /// The last reason the sound didn't start, so a failure that repeats every watcher round is logged once.
     private var lastFailure: String?
@@ -53,8 +52,7 @@ final class KeepAlive {
                 center.addObserver(
                     forName: AVAudioSession.interruptionNotification, object: session, queue: .main
                 ) { [weak self] note in
-                    let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
-                    if raw == AVAudioSession.InterruptionType.ended.rawValue { self?.restart(after: .interruptionEnded) }
+                    self?.interrupted(note.userInfo ?? [:])
                 },
                 // Apple doesn't say which object posts these, so they listen to any. The observers
                 // themselves live through a reset.
@@ -81,10 +79,23 @@ final class KeepAlive {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
+    private func interrupted(_ info: [AnyHashable: Any]) {
+        guard let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt else { return }
+        switch AVAudioSession.InterruptionType(rawValue: raw) {
+        case .began:
+            let reason = (info[AVAudioSessionInterruptionReasonKey] as? UInt).map(String.init) ?? "none"
+            log("a call, Siri or an alarm interrupted the keep-alive sound (reason \(reason))")
+        case .ended:
+            let options = AVAudioSession.InterruptionOptions(rawValue: info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
+            log("interruption over (shouldResume: \(options.contains(.shouldResume)))")
+            restart(after: .interruptionEnded)
+        default: break
+        }
+    }
+
     private func restart(after event: KeepAlivePolicy.AudioEvent) {
         switch KeepAlivePolicy.restart(after: event, started: playing) {
-        case .resume: start()
-        case .holdOn: holdOn()
+        case .holdOn: holdOn(after: event)
         case .rebuild:
             player = nil
             start()
@@ -94,36 +105,48 @@ final class KeepAlive {
         }
     }
 
-    private func holdOn() {
+    private func holdOn(after event: KeepAlivePolicy.AudioEvent) {
+        let lost = event == .mediaServicesLost
+        // After a media services loss the player is dead. mediaServicesWereReset only comes once the
+        // app uses audio again, so waiting for it waits for nothing: start a new player until one
+        // plays. Drop it even when a hold after a call is already running, or that hold would take the
+        // dead player for a playing one. After a call the player is fine and plays again once the
+        // session is back.
+        if lost { player = nil }
         guard holdingOn == .invalid else { return }
-        holdingOn = UIApplication.shared.beginBackgroundTask(withName: "Media services reset") { [weak self] in
-            self?.log("media services still gone when the background time ran out")
-            // The dead player isn't nil and may still say it plays, which would stop the next
-            // watcher round from starting a new one.
-            self?.player = nil
+        holdingOn = UIApplication.shared.beginBackgroundTask(withName: lost ? "Media services reset" : "Interruption over") { [weak self] in
+            if lost {
+                self?.log("media services still gone when the background time ran out")
+                // The dead player isn't nil and may still say it plays, which would stop the next
+                // watcher round from starting a new one.
+                self?.player = nil
+            } else {
+                self?.log("sound still silent when the background time ran out, waiting to be opened")
+            }
             self?.stopHoldingOn()
         }
-        if holdingOn == .invalid {
-            log("media services lost, and iOS gave no background time to wait for them")
-        } else {
-            log("media services lost, holding on until the sound plays again")
-        }
-        // The player is dead. mediaServicesWereReset only comes once the app uses audio again, so
-        // waiting for it waits for nothing: start a new player until one plays.
-        player = nil
-        if holdingOn == .invalid { start() } else { startAgainWhileHoldingOn() }
+        // After an interruption the line before says it is over.
+        let cause = lost ? "media services lost, " : ""
+        log(holdingOn == .invalid
+            ? "\(cause)iOS gave no background time to wait for the sound"
+            : "\(cause)holding on until the sound plays")
+        if holdingOn == .invalid { start() } else { startAgainWhileHoldingOn(holdingOn, after: event, tries: 1) }
     }
 
-    /// Tries once a second until the sound plays, or the background time runs out.
-    private func startAgainWhileHoldingOn() {
-        guard holdingOn != .invalid else { return }
+    /// Tries once a second until the sound plays, or the background time `task` runs out. A try left
+    /// over from an earlier hold stops, so two never run at once.
+    private func startAgainWhileHoldingOn(_ task: UIBackgroundTaskIdentifier, after event: KeepAlivePolicy.AudioEvent, tries: Int) {
+        guard holdingOn == task else { return }
         start()
         if sounding {
-            log("keep-alive sound back after the media services were lost")
+            let cause = event == .mediaServicesLost ? "the media services were lost" : "the interruption"
+            log("keep-alive sound back after \(cause), \(tries) \(tries == 1 ? "try" : "tries")")
             stopHoldingOn()
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.startAgainWhileHoldingOn() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.startAgainWhileHoldingOn(task, after: event, tries: tries + 1)
+        }
     }
 
     private func stopHoldingOn() {

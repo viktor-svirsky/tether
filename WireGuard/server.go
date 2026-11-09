@@ -13,11 +13,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -94,6 +96,11 @@ const (
 	// WireGuard makes a new one every 2 minutes while packets flow, and the client config's
 	// PersistentKeepalive keeps them flowing on an idle tunnel.
 	onlineWithin = 3 * time.Minute
+	// localEvery is how often the iPhone's own addresses are read again, see refreshLocal. So a VPN
+	// that comes up, or a new cellular address, is out of the devices' reach within it.
+	localEvery = 5 * time.Second
+	// pagePort is the config page's, ConfigPage.port in Swift. It listens where WireGuard does.
+	pagePort = 80
 )
 
 func init() {
@@ -149,6 +156,7 @@ type Stats struct {
 }
 
 type Server struct {
+	bind  *hostBind
 	dev   *device.Device
 	stack *stack.Stack
 	tun   *stackTun
@@ -180,7 +188,11 @@ type Server struct {
 	stop    chan struct{}
 	found   chan struct{} // asks the refresher to look at candidate
 	shake   chan struct{} // asks the refresher to read the handshakes now, see noticeHandshake
+	dead    chan struct{} // asks the refresher to listen again, see reopen
 	stopped sync.WaitGroup
+	// reopened is when the refresher last tried to listen again, and retryAt when it tries next,
+	// see retryIn. Only the refresher reads them.
+	reopened, retryAt time.Time
 	// closeOnce makes Close safe to call twice: close(stop) would panic.
 	closeOnce sync.Once
 	reading   sync.Mutex
@@ -234,6 +246,16 @@ type Server struct {
 	lookups    map[netip.Addr]int // each device's DoH lookups waiting, see maxLookups
 	// looking counts the DoH lookups and DNS-over-TCP connections, for Close to wait for.
 	looking sync.WaitGroup
+	// local is the iPhone's own addresses, which no device reaches, see refreshLocal. The packet
+	// path reads it without a lock. listAddrs lists them, and tests swap it. listing keeps two reads
+	// from storing out of order.
+	local     atomic.Pointer[map[netip.Addr]struct{}]
+	listAddrs func() ([]net.Addr, error)
+	listing   sync.Mutex
+	// page is where Tether's config page listens, see SetPage. A device whose tunnel works opens it
+	// through the tunnel, so it's the one own address that stays reachable, over TCP only. The
+	// packet path reads it without a lock.
+	page atomic.Pointer[[]netip.AddrPort]
 	// closed is set by Close. From then on handleTCP, track and cone let nothing new in.
 	closed bool
 	// forwarding counts the forwardTCP goroutines handleTCP let in, for Close to wait for.
@@ -249,8 +271,14 @@ type arrival struct {
 }
 
 // Start listens for WireGuard on port at each of hosts, with the server's private key. An address
-// that can't be listened on fails it. Peers come from SetPeers.
+// that can't be listened on fails it, and so does a failed first read of the iPhone's own
+// addresses. Peers come from SetPeers.
 func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
+	return start(hosts, port, privateKey, net.InterfaceAddrs)
+}
+
+// start is Start with the iPhone's own addresses read by listAddrs. Tests give one that fails.
+func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() ([]net.Addr, error)) (*Server, error) {
 	// Go's default keepalive probes every idle connection every 15 s, which keeps the cellular
 	// radio awake. Probing is still needed: when the device closes first, forwardTCP half-closes
 	// and waits for the remote, so a remote that silently went away would hold it forever.
@@ -283,9 +311,18 @@ func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 			_, err := c.WriteToUDPAddrPort(payload, to)
 			return err
 		},
-		stop:  make(chan struct{}),
-		found: make(chan struct{}, 1),
-		shake: make(chan struct{}, 1),
+		stop:      make(chan struct{}),
+		found:     make(chan struct{}, 1),
+		shake:     make(chan struct{}, 1),
+		dead:      make(chan struct{}, 1),
+		listAddrs: listAddrs,
+	}
+	s.page.Store(&[]netip.AddrPort{})
+	s.local.Store(&map[netip.Addr]struct{}{})
+	// Before any device's packet can come in. Without it every own address is open, so a failed
+	// read fails the start and Swift tries again on its next round. Nothing is running yet.
+	if err := s.refreshLocal(); err != nil {
+		return nil, fmt.Errorf("can't read the iPhone's own addresses: %v", err)
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
@@ -323,7 +360,8 @@ func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 	s.stack.SetTransportProtocolHandler(udp.ProtocolNumber, s.handleUDP)
 
 	logger := &device.Logger{Verbosef: s.notice, Errorf: s.noticeError}
-	s.dev = device.NewDevice(s.tun, &hostBind{hosts: hosts}, logger)
+	s.bind = &hostBind{hosts: hosts, died: s.socketDied}
+	s.dev = device.NewDevice(s.tun, s.bind, logger)
 	if err := s.dev.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\n", hex.EncodeToString(privateKey[:]), port)); err != nil {
 		s.dev.Close()
 		s.stack.Close()
@@ -337,7 +375,7 @@ func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
 		return nil, err
 	}
 	s.stopped.Add(1)
-	go s.refreshHandshakes()
+	go s.refresh()
 	return s, nil
 }
 
@@ -629,13 +667,20 @@ func (s *Server) Stats() Stats {
 	return st
 }
 
-func (s *Server) refreshHandshakes() {
+// refresh reads the handshakes and the iPhone's own addresses again on their tickers, and makes a
+// newly found router, until Close.
+func (s *Server) refresh() {
 	defer s.stopped.Done()
 	t := time.NewTicker(handshakeEvery)
 	defer t.Stop()
+	local := time.NewTicker(localEvery)
+	defer local.Stop()
+	s.readHandshakes()
 	for {
-		s.readHandshakes()
 		select {
+		case <-local.C:
+			s.refreshLocal()
+			continue // not a reason to read the handshakes
 		case <-t.C:
 		case <-s.shake:
 		case <-s.found:
@@ -644,9 +689,12 @@ func (s *Server) refreshHandshakes() {
 			s.candidate = netip.Addr{}
 			s.mu.Unlock()
 			s.makeRouter(addr)
+		case <-s.dead:
+			s.reopen()
 		case <-s.stop:
 			return
 		}
+		s.readHandshakes()
 	}
 }
 
@@ -695,13 +743,75 @@ func (s *Server) readHandshakes() {
 	s.endpoints = where
 }
 
-// forwardable says whether a device may reach dst through the iPhone. The iPhone's own loopback,
-// the tunnel's addresses, multicast and broadcast stay inside: an mDNS query from the iPad would
-// otherwise become a flow spraying multicast from the iPhone.
+// forwardable says whether a device may reach dst through the iPhone, by the address alone. The
+// iPhone's own loopback, the tunnel's addresses, multicast and broadcast stay inside: an mDNS query
+// from the iPad would otherwise become a flow spraying multicast from the iPhone. The iPhone's other
+// own addresses change, so the server checks them too, see leaves.
 func forwardable(dst netip.Addr) bool {
 	return dst.IsValid() && !dst.IsLoopback() && !dst.IsMulticast() && !dst.IsUnspecified() &&
 		!dst.IsLinkLocalUnicast() && dst != netip.AddrFrom4([4]byte{255, 255, 255, 255}) &&
 		!tunnelNet.Contains(dst)
+}
+
+// leaves says whether a device's packet for dst may go out through the iPhone: forwardable, and
+// not to one of the iPhone's own addresses. Those reach whatever listens on the iPhone itself,
+// other apps' local servers included, and no device needs them (#27). A TCP connection opened to a
+// new own address before the next read, at most localEvery later, stays open after it, which is
+// accepted: a device would need the iPhone's new address within seconds.
+func (s *Server) leaves(dst netip.Addr) bool {
+	_, own := (*s.local.Load())[dst]
+	return forwardable(dst) && !own
+}
+
+// SetPage opens exactly these own addresses to the devices, over TCP: where Tether's config page
+// listens now. Swift says so as each of its listeners gets ready, and gives none once the page fails
+// or stops. Opening them from WireGuard's addresses alone would let the devices reach another app
+// that holds the page's port where Tether's page failed (#27). A new server opens none.
+func (s *Server) SetPage(page []netip.AddrPort) {
+	page = slices.Clone(page)
+	s.page.Store(&page)
+}
+
+// refreshLocal reads the iPhone's own addresses: the hotspot's, cellular, Wi-Fi and a VPN's tunnel
+// address. Exact addresses only, never their networks: a cellular address in 100.64.0.0/10 shares
+// that range with the other nodes of a Tailscale network, which the devices still reach. On an
+// error the last ones are kept, and it's returned. A change goes into the log.
+func (s *Server) refreshLocal() error {
+	s.listing.Lock()
+	defer s.listing.Unlock()
+	s.mu.Lock()
+	listAddrs := s.listAddrs
+	s.mu.Unlock()
+	addrs, err := listAddrs()
+	if err != nil {
+		serverLog.add(time.Now(), "can't read the iPhone's own addresses: "+err.Error())
+		return err
+	}
+	own := map[netip.Addr]struct{}{}
+	for _, a := range addrs {
+		n, ok := a.(*net.IPNet) // all InterfaceAddrs gives
+		if !ok {
+			continue
+		}
+		// Loopback and link-local stay inside anyway, see forwardable.
+		if addr, ok := netip.AddrFromSlice(n.IP); ok && forwardable(addr.Unmap()) {
+			own[addr.Unmap()] = struct{}{}
+		}
+	}
+	if maps.Equal(*s.local.Load(), own) {
+		return nil
+	}
+	s.local.Store(&own)
+	shown := "none"
+	if len(own) > 0 {
+		var each []string
+		for _, a := range slices.SortedFunc(maps.Keys(own), netip.Addr.Compare) {
+			each = append(each, a.String())
+		}
+		shown = strings.Join(each, ", ")
+	}
+	serverLog.add(time.Now(), "the iPhone's own addresses, which devices can't reach: "+shown)
+	return nil
 }
 
 var tunnelNet = netip.MustParsePrefix("10.7.0.0/24")
@@ -923,10 +1033,16 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	src := addrPort(id.RemoteAddress, 0).Addr()
 	dst := addrPort(id.LocalAddress, id.LocalPort)
 	var doh string
+	var allowed bool
 	if dst == dnsAddr {
+		// Where lookups go is Tether's choice, not the device's, so it may be one of the iPhone's
+		// own addresses. A device asking that address itself is refused.
 		dst, doh = s.dnsRoute()
+		allowed = forwardable(dst.Addr())
+	} else {
+		allowed = s.leaves(dst.Addr()) || slices.Contains(*s.page.Load(), dst)
 	}
-	if a.refuse || doh == "" && !forwardable(dst.Addr()) {
+	if a.refuse || doh == "" && !allowed {
 		refuse()
 		return
 	}

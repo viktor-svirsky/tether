@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"syscall"
 
 	"golang.zx2c4.com/wireguard/conn"
 )
@@ -17,6 +18,13 @@ type hostBind struct {
 	hosts  []netip.Addr
 	mu     sync.Mutex
 	v4, v6 *net.UDPConn
+	// died is told when a socket the bind still holds fails underneath it, see failed.
+	died func()
+	// broken says one did, and Open hasn't opened new ones since.
+	broken bool
+	// port is where it last listened, so the server can listen there again: the devices' configs
+	// point at it.
+	port uint16
 }
 
 type endpoint struct{ netip.AddrPort }
@@ -57,15 +65,19 @@ func (b *hostBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 		} else {
 			b.v6 = c
 		}
-		fns = append(fns, receiveOn(c))
+		fns = append(fns, b.receiveOn(c))
 	}
+	b.port = port
+	b.broken = false
 	return fns, port, nil
 }
 
-func receiveOn(c *net.UDPConn) conn.ReceiveFunc {
+func (b *hostBind) receiveOn(c *net.UDPConn) conn.ReceiveFunc {
 	return func(packets [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
 		n, from, err := c.ReadFromUDPAddrPort(packets[0])
 		if err != nil {
+			// wireguard-go stops reading this socket after most errors, and never reads it again.
+			b.failed(c)
 			return 0, err
 		}
 		sizes[0] = n
@@ -80,11 +92,15 @@ func (b *hostBind) Close() error {
 	return b.closeAll()
 }
 
+// closeAll closes the sockets. One closed already isn't an error: closing it again changes nothing,
+// and wireguard-go doesn't listen again after a Close that failed, see failed.
 func (b *hostBind) closeAll() error {
 	var err error
 	for _, c := range []*net.UDPConn{b.v4, b.v6} {
 		if c != nil {
-			err = errors.Join(err, c.Close())
+			if e := c.Close(); !errors.Is(e, net.ErrClosed) {
+				err = errors.Join(err, e)
+			}
 		}
 	}
 	b.v4, b.v6 = nil, nil
@@ -107,10 +123,36 @@ func (b *hostBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 	}
 	for _, buf := range bufs {
 		if _, err := c.WriteToUDPAddrPort(buf, e.AddrPort); err != nil {
+			if deadSocket(err) {
+				b.failed(c)
+			}
 			return err
 		}
 	}
 	return nil
+}
+
+// failed tells the server that c failed underneath the bind. iOS closes a suspended app's sockets:
+// during a phone call Tether is suspended, and at the call's end its reads fail with "socket is not
+// connected" and its sends with "broken pipe" (#106). Nothing reads the socket again, so devices get
+// no reply until the server listens again. A socket Close closed isn't held any more, and says nothing.
+func (b *hostBind) failed(c *net.UDPConn) {
+	b.mu.Lock()
+	held := c == b.v4 || c == b.v6
+	if held {
+		b.broken = true
+	}
+	died := b.died
+	b.mu.Unlock()
+	if held && died != nil {
+		died()
+	}
+}
+
+// deadSocket says a send failed because the socket is gone, not because of where it went: a device
+// that left the hotspot, or a full buffer, is no reason to listen again.
+func deadSocket(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ENOTCONN) || errors.Is(err, net.ErrClosed)
 }
 
 func (b *hostBind) ParseEndpoint(s string) (conn.Endpoint, error) {

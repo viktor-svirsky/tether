@@ -354,6 +354,9 @@ final class Model: ObservableObject {
         return Format.lastConnected(session.lastConnected(of: id), now: now, calendar: .current)
     }
 
+    /// See `HotspotSession.connectsFrom(of:)`.
+    func connectsFrom(of id: WireGuardSetup.Peer.ID) -> String? { session.connectsFrom(of: id) }
+
     /// See `HotspotSession.setLimit`.
     func setLimit(_ id: WireGuardSetup.Peer.ID, _ limit: UInt64?) { session.setLimit(id, limit) }
 

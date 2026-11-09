@@ -30,6 +30,7 @@ final class ConfigPageServerTests: XCTestCase {
             }
         }
         let ready = expectation(description: "listening")
+        ready.assertForOverFulfill = false // once for each address that gets ready
         server.onChange = { [unowned self] in if server.listening { ready.fulfill() } }
         server.start(hosts: hosts, port: port)
         XCTAssertTrue(server.running, "running from the start, before it's ready")
@@ -113,6 +114,7 @@ final class ConfigPageServerTests: XCTestCase {
         server.stop()
         XCTAssertFalse(server.running)
         XCTAssertFalse(server.listening)
+        XCTAssertEqual(server.readyHosts, [])
         XCTAssertNil(server.port)
         let reply = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port)
         XCTAssertNil(reply, "connection refused")
@@ -136,8 +138,9 @@ final class ConfigPageServerTests: XCTestCase {
         XCTAssertTrue(later.hasPrefix("HTTP/1.1 200 OK"), later)
     }
 
-    /// The hotspot off and on again: the same address and port, with the last answers' connections
-    /// still closing (TIME_WAIT, since the server closes first).
+    /// The hotspot off and on again: the same address and port in the same turn, as a hotspot address
+    /// change does (#102). The old listener's socket isn't closed yet, and the last answers'
+    /// connections are still closing (TIME_WAIT, since the server closes first).
     func testItStartsAgainOnTheSamePortRightAfterServing() async throws {
         let port = try await listen()
         _ = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port)
@@ -149,6 +152,21 @@ final class ConfigPageServerTests: XCTestCase {
         await fulfillment(of: [ready], timeout: 5)
         let reply = text(await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port))
         XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200 OK"), reply)
+    }
+
+    /// A start waits until the listeners it replaces say they closed. One that failed must say so
+    /// too, or the page never starts again.
+    func testItStartsAgainAfterAFailure() async throws {
+        server = ConfigPageServer()
+        let failed = expectation(description: "failed")
+        server.onFailure = { _ in failed.fulfill() }
+        server.start(hosts: ["192.0.2.1"], port: 0) // an address this Mac doesn't have
+        await fulfillment(of: [failed], timeout: 5)
+        let ready = expectation(description: "listening")
+        server.onChange = { [unowned self] in if server.listening { ready.fulfill() } }
+        server.onFailure = { XCTFail("\($0)") }
+        server.start(hosts: ["127.0.0.1"], port: 0)
+        await fulfillment(of: [ready], timeout: 5)
     }
 
     /// Another listener already has the port: this one fails, says so, and HotspotSession starts it again later.
@@ -164,6 +182,7 @@ final class ConfigPageServerTests: XCTestCase {
         await fulfillment(of: [failed], timeout: 5)
         XCTAssertFalse(second.running)
         XCTAssertFalse(second.listening)
+        XCTAssertEqual(second.readyHosts, [], "WireGuard mustn't open the port to the devices: it's another listener's (#27)")
         second.stop()
     }
 
@@ -176,6 +195,7 @@ final class ConfigPageServerTests: XCTestCase {
             XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200 OK"), "\(host): \(reply)")
         }
         XCTAssertEqual(asked.map(\.1), ["127.0.0.1", "::1"])
+        XCTAssertEqual(Set(server.readyHosts), ["127.0.0.1", "::1"])
         server.stop()
         let after = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port, host: "::1")
         XCTAssertNil(after, "both stopped")
@@ -200,6 +220,7 @@ final class ConfigPageServerTests: XCTestCase {
         await fulfillment(of: [failed], timeout: 5)
         XCTAssertFalse(server.running)
         XCTAssertFalse(server.listening)
+        XCTAssertEqual(server.readyHosts, [], "the IPv4 one may have been ready before")
         let reply = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port)
         XCTAssertNil(reply, "the IPv4 one stopped too")
     }

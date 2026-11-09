@@ -10,6 +10,9 @@ protocol WireGuardServing: AnyObject {
     func start(hosts: [String], setup: WireGuardSetup, dns: DNSChoice.Upstream, port: UInt16) throws
     func stop()
     func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream) throws
+    /// Opens the config page to the devices on exactly `hosts`, see `ConfigPageServing.readyHosts`.
+    /// A start opens it nowhere.
+    func setPage(_ hosts: [String])
     /// The counters, the totals and each device's, only grow, across restarts. Which devices are
     /// connected, only while running.
     func snapshot() -> ServerSnapshot
@@ -22,12 +25,15 @@ extension WireGuardServer: WireGuardServing {}
 @MainActor
 protocol ConfigPageServing: AnyObject {
     var respond: @MainActor (ConfigPage.Request, _ client: String) -> ConfigPage.Response { get set }
+    /// Called when `readyHosts` changes.
     var onChange: @MainActor () -> Void { get set }
     var onFailure: @MainActor (Error) -> Void { get set }
     /// Started, and not failed or stopped since.
     var running: Bool { get }
     /// Taking connections.
     var listening: Bool { get }
+    /// The addresses whose listener is taking connections.
+    var readyHosts: [String] { get }
     func start(hosts: [String], port: UInt16)
     func stop()
 }
@@ -529,7 +535,7 @@ final class HotspotSession {
     /// request ("ip") came from: 172.20.10.1 from IPv4 while Tether listens there, else
     /// `deviceHost`. A device whose last handshake isn't known goes by `deviceHost` too.
     private func host(reachedFrom client: String?) -> String? {
-        if let client, IPv4Address(Hotspot.address(of: client)) != nil, boundHosts.contains(Hotspot.host) { return Hotspot.host }
+        if let ip = PeerStats.address(client), IPv4Address(ip) != nil, boundHosts.contains(Hotspot.host) { return Hotspot.host }
         return deviceHost
     }
 
@@ -553,9 +559,12 @@ final class HotspotSession {
         host.map { devices.setup.clientConfig(for: ready, host: $0, dns: dns().line) }
     }
 
-    /// A page that listens again logs its next failure.
+    /// A page that listens again logs its next failure. The devices reach the page's port only where
+    /// Tether's page listens: where it failed, another app may have the port (#27). Each WireGuard
+    /// start is followed by a page start, which says again once it listens.
     private func pageChanged() {
         if page.listening { pageHandler.listening() }
+        server.setPage(page.readyHosts)
     }
 
     private func pageFailed(_ error: Error) {
@@ -728,6 +737,13 @@ final class HotspotSession {
     /// The device's last handshake, kept through restarts and relaunches (#73). Nil for never, and for
     /// a device that hasn't connected since the version that started keeping it.
     func lastConnected(of id: WireGuardSetup.Peer.ID) -> Date? { monthlyUsage.lastConnected(id) }
+
+    /// Where a connected device's last handshake came from, the address alone, for its screen (#73).
+    /// Nil while it isn't connected, a paused one included, and while the server doesn't say.
+    func connectsFrom(of id: WireGuardSetup.Peer.ID) -> String? {
+        guard let peer = devices.setup.peers.first(where: { $0.id == id }), wireGuardConnected.contains(peer.address) else { return nil }
+        return PeerStats.address(wireGuardPeerStats[peer.address]?.endpoint)
+    }
 
     /// Adds what each device's counters grew by to this month, and saves at most once a minute. A
     /// crash loses up to that minute, never counts anything twice.

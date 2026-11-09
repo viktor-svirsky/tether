@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 /// The WireGuard server's byte counters. They only grow, so a reader can take the difference of two.
 struct TrafficTotals: Equatable, Codable {
@@ -37,8 +38,26 @@ struct PeerStats: Equatable {
     /// A recent handshake: set up and working, also before it sent anything.
     var connected = false
     var lastHandshake: Date?
-    /// Where it last connected from, "ip:port". For the log, not the screen.
+    /// Where it last connected from, "ip:port", or "[ip]:port" for IPv6. Its screen shows the
+    /// address alone while it's connected (#73).
     var endpoint: String?
+
+    /// The address alone, from an endpoint or a config page client's "ip", which has no port:
+    /// "172.20.10.2" or "2600:380:abcd::1". Without an IPv6 zone, which names an interface of this
+    /// iPhone, not the device. Nil for anything that isn't an IP address.
+    static func address(_ endpoint: String?) -> String? {
+        guard var host = endpoint?[...] else { return nil }
+        if host.first == "[" {
+            guard let close = host.firstIndex(of: "]") else { return nil }
+            let port = host[host.index(after: close)...]
+            guard port.isEmpty || port.first == ":" else { return nil }
+            host = host[host.index(after: host.startIndex)..<close]
+        } else if host.filter({ $0 == ":" }).count == 1 {
+            host = host.prefix { $0 != ":" } // IPv4 with its port. More colons are IPv6 without one.
+        }
+        let ip = String(host.prefix { $0 != "%" })
+        return IPv4Address(ip) != nil || IPv6Address(ip) != nil ? ip : nil
+    }
 }
 
 /// A device knocking with a config that no longer works, see stale.go: a device key the server

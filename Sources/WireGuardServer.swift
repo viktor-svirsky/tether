@@ -73,6 +73,15 @@ final class WireGuardServer {
         if let message = take(error) { throw Failure(message: message) }
     }
 
+    /// Opens the config page to the devices on exactly `hosts`, where its listener is ready now (#27).
+    /// Stopped, there's nothing to tell: a start opens it nowhere. Go refuses only an address that
+    /// isn't one, which is logged, and then opens it nowhere.
+    func setPage(_ hosts: [String]) {
+        guard running else { return }
+        let error = hosts.joined(separator: ",").withCString { TetherWGSetPage(UnsafeMutablePointer(mutating: $0)) }
+        if let message = take(error) { log("WireGuard: the config page can't be opened to the devices: \(message)") }
+    }
+
     /// Gives memory Go's GC has freed back to iOS, on a memory warning.
     func freeMemory() {
         if running { TetherWGFreeMemory() }

@@ -10,16 +10,6 @@ enum Hotspot {
     static func withPort(_ host: String, _ port: UInt16) -> String {
         host.contains(":") ? "[\(host)]:\(port)" : "\(host):\(port)"
     }
-
-    /// The address alone, from a page request's client ("ip") or a handshake's endpoint ("ip:port",
-    /// "[ip]:port"), so the two compare.
-    static func address(of client: String) -> String {
-        if client.hasPrefix("["), let end = client.firstIndex(of: "]") {
-            return String(client[client.index(after: client.startIndex)..<end])
-        }
-        let parts = client.split(separator: ":", omittingEmptySubsequences: false)
-        return parts.count <= 2 ? String(parts[0]) : client
-    }
 }
 
 /// The WireGuard way in: each device gets its own key and an address inside the tunnel, and
