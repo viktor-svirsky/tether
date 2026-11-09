@@ -20,7 +20,9 @@ range=${previous:+$previous..}HEAD
 
 keyword='(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+'
 numbers=
-for sha in $(git rev-list "$range"); do
+# On its own line, so a range git can't read stops the run: a failure inside the for list wouldn't.
+shas=$(git rev-list "$range")
+for sha in $shas; do
     [[ $(git log -1 --format=%an "$sha") != 'dependabot[bot]' ]] || continue
     body=$(git log -1 --format=%B "$sha")
     [[ $body != *"This reverts commit "* ]] || continue

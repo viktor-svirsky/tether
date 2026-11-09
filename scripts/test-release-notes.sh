@@ -109,4 +109,8 @@ commit "$(printf 'Something\n\nFixes #99')" > /dev/null
 status=0
 "$script" v1.1.0 > /dev/null 2>&1 || status=$?
 [[ $status != 0 ]] || fail "with issue 99 missing: want a failure"
+# A previous release git can't find fails the run, instead of notes that say nothing changed.
+status=0
+"$script" v0.0.99 > /dev/null 2>&1 || status=$?
+[[ $status != 0 ]] || fail "with tag v0.0.99 missing: want a failure"
 echo "release-notes.sh: all passed"
