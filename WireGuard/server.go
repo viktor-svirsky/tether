@@ -162,7 +162,7 @@ type Server struct {
 	tun   *stackTun
 	// dial makes the iPhone-side TCP connection. toNet and fromNet translate UDP addresses on
 	// the way out and back. Tests swap all three to reach listeners on loopback, and sendTo, which
-	// sends a cone's packet, to fail as an iPhone without IPv4 does.
+	// sends a cone's packet or a lookup to a plain server, to fail as an iPhone without IPv4 does.
 	dial    func(ctx context.Context, network, address string) (net.Conn, error)
 	toNet   func(netip.AddrPort) netip.AddrPort
 	fromNet func(netip.AddrPort) netip.AddrPort
@@ -237,14 +237,14 @@ type Server struct {
 	conns     map[netip.Addr]int
 	// The caps, see the constants. Tests lower them.
 	maxCones, maxDials, maxConns, maxPings, maxLookups int
-	// DNS on 10.7.0.1, see dns.go. Tests swap dohClient and dohTimeout.
-	upstream   atomic.Pointer[dnsUpstream]
-	dnsTurn    atomic.Uint32
-	dohClient  *http.Client
-	dohTimeout time.Duration
-	dohFailing atomic.Bool        // see dohResult
-	lookups    map[netip.Addr]int // each device's DoH lookups waiting, see maxLookups
-	// looking counts the DoH lookups and DNS-over-TCP connections, for Close to wait for.
+	// DNS on 10.7.0.1, see dns.go. Tests swap dohClient, dohTimeout and plainTimeout.
+	upstream     atomic.Pointer[dnsUpstream]
+	dohClient    *http.Client
+	dohTimeout   time.Duration
+	plainTimeout time.Duration
+	dnsFailing   atomic.Bool        // see dnsResult
+	lookups      map[netip.Addr]int // each device's UDP lookups waiting, see maxLookups
+	// looking counts the UDP lookups and DNS-over-TCP connections, for Close to wait for.
 	looking sync.WaitGroup
 	// local is the iPhone's own addresses, which no device reaches, see refreshLocal. The packet
 	// path reads it without a lock. listAddrs lists them, and tests swap it. listing keeps two reads
@@ -327,6 +327,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
 	s.dohClient, s.dohTimeout = newDoHClient(dialer.DialContext), dohTimeout
+	s.plainTimeout = plainTimeout
 	s.stack = stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol},
@@ -1032,21 +1033,13 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	}
 	src := addrPort(id.RemoteAddress, 0).Addr()
 	dst := addrPort(id.LocalAddress, id.LocalPort)
-	var doh string
-	var allowed bool
-	if dst == dnsAddr {
-		// Where lookups go is Tether's choice, not the device's, so it may be one of the iPhone's
-		// own addresses. A device asking that address itself is refused.
-		dst, doh = s.dnsRoute()
-		allowed = forwardable(dst.Addr())
-	} else {
-		allowed = s.leaves(dst.Addr()) || slices.Contains(*s.page.Load(), dst)
-	}
-	if a.refuse || doh == "" && !allowed {
+	lookups := dst == dnsAddr && s.upstream.Load().set() // Tether answers them, see dns.go
+	allowed := lookups || s.leaves(dst.Addr()) || slices.Contains(*s.page.Load(), dst)
+	if a.refuse || !allowed {
 		refuse()
 		return
 	}
-	out, err := s.dialOut(dst, doh)
+	out, err := s.dialOut(dst, lookups)
 	if err != nil {
 		refuse()
 		return
@@ -1165,19 +1158,24 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	closeBoth()
 }
 
-// dialOut makes the iPhone's side of a device's connection: a TCP connection to dst, through the
-// carrier's NAT64 when the iPhone has no IPv4 route, or DNS over TCP answered from the DoH server.
-func (s *Server) dialOut(dst netip.AddrPort, doh string) (net.Conn, error) {
-	if doh != "" {
-		if c := s.dohConn(doh); c != nil {
+// dialOut makes the iPhone's side of a device's connection: a TCP connection to dst, or, for
+// lookups to 10.7.0.1, DNS over TCP that Tether answers.
+func (s *Server) dialOut(dst netip.AddrPort, lookups bool) (net.Conn, error) {
+	if lookups {
+		if c := s.lookupConn(); c != nil {
 			return c, nil
 		}
 		return nil, net.ErrClosed
 	}
-	out, err := s.dial(s.ctx, "tcp", dst.String())
+	return s.dialTCP(s.ctx, dst)
+}
+
+// dialTCP dials dst from the iPhone, through the carrier's NAT64 when the iPhone has no IPv4 route.
+func (s *Server) dialTCP(ctx context.Context, dst netip.AddrPort) (net.Conn, error) {
+	out, err := s.dial(ctx, "tcp", dst.String())
 	if noRoute(err) {
-		if via, ok := s.viaNAT64(s.ctx, dst); ok {
-			out, err = s.dial(s.ctx, "tcp", via.String())
+		if via, ok := s.viaNAT64(ctx, dst); ok {
+			out, err = s.dial(ctx, "tcp", via.String())
 		}
 	}
 	return out, err

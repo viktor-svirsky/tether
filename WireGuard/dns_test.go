@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,8 +20,8 @@ import (
 	"golang.org/x/net/dns/dnsmessage"
 )
 
-// DNS on 10.7.0.1 (#100): a device whose config names 10.7.0.1 asks Tether, and Tether asks a
-// DoH server, or the plain server it stands in for.
+// DNS on 10.7.0.1 (#100, #121): a device whose config names 10.7.0.1 asks Tether, and Tether asks a
+// DoH server or plain servers and answers the device itself.
 
 const tetherDNS = "10.7.0.1:53"
 
@@ -211,6 +212,160 @@ func noneAsked(t *testing.T, d *dohServer) {
 	}
 }
 
+// plainServer is a plain DNS server on loopback, over UDP and TCP on one port, which the server
+// reaches at remote (see viaLoopback). It answers each lookup with records A records.
+type plainServer struct {
+	addr     netip.AddrPort // remote and the port: where Tether is told to ask
+	asked    chan string    // "udp" or "tcp" for each query, as it arrived
+	records  int
+	silent   atomic.Bool // takes the queries and never answers
+	truncate atomic.Bool // answers over UDP with TC set and no records, so the device asks over TCP
+	wrongID  atomic.Bool // answers over UDP with another ID
+	delay    atomic.Int64
+	tcp      net.Listener
+}
+
+func newPlain(t *testing.T, records int) *plainServer {
+	p := &plainServer{asked: make(chan string, 100), records: records}
+	var udp net.PacketConn
+	var tcp net.Listener
+	// The same port for both. Something else can hold it for TCP, so a few ports are tried.
+	for range 20 {
+		u, err := net.ListenPacket("udp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if l, err := net.Listen("tcp4", u.LocalAddr().String()); err == nil {
+			udp, tcp = u, l
+			break
+		}
+		u.Close()
+	}
+	if udp == nil {
+		t.Fatal("no port free for both UDP and TCP")
+	}
+	p.tcp = tcp
+	t.Cleanup(func() { udp.Close(); tcp.Close() })
+	p.addr = netip.MustParseAddrPort(viaRemote(udp.LocalAddr().String()))
+	go func() {
+		buf := make([]byte, 65535)
+		for {
+			n, from, err := udp.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			p.note("udp")
+			if p.silent.Load() {
+				continue
+			}
+			a := answerTo(t, buf[:n], p.records)
+			if p.truncate.Load() {
+				a = answerTo(t, buf[:n], 0)
+				a[2] |= 0x02 // TC
+			}
+			if p.wrongID.Load() {
+				a[0]++
+			}
+			time.AfterFunc(time.Duration(p.delay.Load()), func() { udp.WriteTo(a, from) })
+		}
+	}()
+	go func() {
+		for {
+			conn, err := tcp.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				for {
+					var size [2]byte
+					if _, err := io.ReadFull(conn, size[:]); err != nil {
+						return
+					}
+					q := make([]byte, binary.BigEndian.Uint16(size[:]))
+					if _, err := io.ReadFull(conn, q); err != nil {
+						return
+					}
+					p.note("tcp")
+					if p.silent.Load() {
+						continue
+					}
+					a := answerTo(t, q, p.records)
+					conn.Write(append(binary.BigEndian.AppendUint16(nil, uint16(len(a))), a...))
+				}
+			}()
+		}
+	}()
+	return p
+}
+
+func (p *plainServer) note(proto string) {
+	select {
+	case p.asked <- proto:
+	default:
+	}
+}
+
+// waitAsked is how the next query reached p: "udp" or "tcp". It fails the test after a while.
+func (p *plainServer) waitAsked(t *testing.T) string {
+	t.Helper()
+	select {
+	case proto := <-p.asked:
+		return proto
+	case <-time.After(30 * time.Second):
+		t.Fatalf("%v was never asked", p.addr)
+		return ""
+	}
+}
+
+// askedOver checks the next queries reached p over these, in order.
+func (p *plainServer) askedOver(t *testing.T, protos ...string) {
+	t.Helper()
+	for _, want := range protos {
+		if got := p.waitAsked(t); got != want {
+			t.Fatalf("%v was asked over %s, want %s", p.addr, got, want)
+		}
+	}
+}
+
+func (p *plainServer) noneAsked(t *testing.T) {
+	t.Helper()
+	select {
+	case proto := <-p.asked:
+		t.Fatalf("%v was asked over %s", p.addr, proto)
+	default:
+	}
+}
+
+// viaPlain points s's lookups at the plain servers, the first one first.
+func viaPlain(s *Server, servers ...*plainServer) {
+	var u dnsUpstream
+	for _, p := range servers {
+		u.udp = append(u.udp, p.addr)
+	}
+	s.SetDNS(&u)
+}
+
+// serverFailure checks a is SERVFAIL for q: q's ID and question, QR set and RCODE 2.
+func serverFailure(t *testing.T, q, a []byte) {
+	t.Helper()
+	var p dnsmessage.Parser
+	h, err := p.Start(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.ID != binary.BigEndian.Uint16(q) || !h.Response || h.RCode != dnsmessage.RCodeServerFailure {
+		t.Fatalf("got %+v, want SERVFAIL for ID %x", h, q[:2])
+	}
+	got, err := p.AllQuestions()
+	var pq dnsmessage.Parser
+	pq.Start(q)
+	want, _ := pq.AllQuestions()
+	if err != nil || len(want) == 0 || !slices.Equal(got, want) {
+		t.Fatalf("questions %v %v, want %v", got, err, want)
+	}
+}
+
 func TestALookupGoesOverDoH(t *testing.T) {
 	s, c := setup(t)
 	d := newDoH(t, 1)
@@ -286,18 +441,24 @@ func TestABigAnswerIsCutForUDP(t *testing.T) {
 	}
 }
 
+// A paused device gets nothing, not even SERVFAIL, and no server is asked for it.
 func TestAPausedDeviceGetsNoAnswer(t *testing.T) {
 	s, c := setup(t)
 	d := newDoH(t, 1)
+	p := newPlain(t, 1)
 	viaDoH(s, d)
 	pause(t, s, true)
-	if _, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), time.Second); err == nil {
-		t.Fatal("a paused device got an answer over UDP")
-	}
-	if _, err := lookupsTCP(c, time.Second, lookupFor(t, 2, "example.com.", 0)); err == nil {
-		t.Fatal("a paused device got an answer over TCP")
+	for _, upstream := range []*dnsUpstream{{doh: d.URL + "/abc123"}, {udp: []netip.AddrPort{p.addr}}} {
+		s.SetDNS(upstream)
+		if _, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), time.Second); err == nil {
+			t.Fatalf("a paused device got an answer over UDP from %+v", upstream)
+		}
+		if _, err := lookupsTCP(c, time.Second, lookupFor(t, 2, "example.com.", 0)); err == nil {
+			t.Fatalf("a paused device got an answer over TCP from %+v", upstream)
+		}
 	}
 	noneAsked(t, d)
+	p.noneAsked(t)
 }
 
 // Before Swift says where lookups go, 10.7.0.1 stays inside like every tunnel address.
@@ -311,52 +472,264 @@ func TestWithoutAnUpstreamTheAddressStaysInside(t *testing.T) {
 	}
 }
 
-// With a plain server, 10.7.0.1 is another name for it: the lookup goes out to the server, and the
-// reply comes back from 10.7.0.1, or the device's resolver, which sent to 10.7.0.1, throws it away.
-func TestTheAddressStandsInForAPlainServer(t *testing.T) {
+// Tether asks the first server, and the second only when the first doesn't answer. With Other set to
+// a Pi-hole and a public server, the public one must not get half the lookups (#123).
+func TestTheSecondServerIsABackup(t *testing.T) {
 	s, c := setup(t)
-	echo := netip.MustParseAddrPort(udpEcho(t))
-	s.SetDNS(&dnsUpstream{udp: []netip.AddrPort{echo}})
-	q := lookupFor(t, 3, "example.com.", 0)
-	a, err := lookupUDP(c, q, 5*time.Second)
-	if err != nil || !bytes.Equal(a, q) {
-		t.Fatalf("got %x %v, want the echo of %x", a, err, q)
+	first, second := newPlain(t, 1), newPlain(t, 2)
+	viaPlain(s, first, second)
+	for i := range 3 {
+		id := uint16(10 + i)
+		a, err := lookupUDP(c, lookupFor(t, id, "example.com.", 0), 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h, n := read(t, a); h.ID != id || !h.Response || n != 1 {
+			t.Fatalf("lookup %d: %+v with %d records, want the first server's 1", i, h, n)
+		}
 	}
-	// The same port asking the server by its own address gets its replies from that address.
-	conn, err := c.net.Dial("udp", echo.String())
+	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 13, "example.com.", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, answers[0]); h.ID != 13 || n != 1 {
+		t.Fatalf("over TCP: %+v with %d records", h, n)
+	}
+	first.askedOver(t, "udp", "udp", "udp", "tcp")
+	second.noneAsked(t)
+}
+
+// A first server that doesn't answer leaves the lookup to the second after plainTimeout, over UDP
+// and TCP. An answer from the second at all says it came inside the budget: after it, the device
+// gets SERVFAIL.
+func TestASilentFirstServerLeavesItToTheSecond(t *testing.T) {
+	s, c := setup(t)
+	s.plainTimeout = 500 * time.Millisecond
+	first, second := newPlain(t, 1), newPlain(t, 2)
+	first.silent.Store(true)
+	viaPlain(s, first, second)
+	start := time.Now()
+	a, err := lookupUDP(c, lookupFor(t, 21, "example.com.", 0), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took < s.plainTimeout {
+		t.Fatalf("answered after %v: the second server was asked before the first's %v ran out", took, s.plainTimeout)
+	}
+	if h, n := read(t, a); h.ID != 21 || n != 2 {
+		t.Fatalf("%+v with %d records, want the second server's 2", h, n)
+	}
+	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 22, "example.com.", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, answers[0]); h.ID != 22 || n != 2 {
+		t.Fatalf("over TCP: %+v with %d records, want the second server's 2", h, n)
+	}
+	first.askedOver(t, "udp", "tcp")
+	second.askedOver(t, "udp", "tcp")
+}
+
+// An answer the first server gives after the second was asked is still taken.
+func TestALateAnswerFromTheFirstServerCounts(t *testing.T) {
+	s, c := setup(t)
+	s.plainTimeout = 500 * time.Millisecond
+	first, second := newPlain(t, 1), newPlain(t, 2)
+	first.delay.Store(int64(750 * time.Millisecond))
+	second.silent.Store(true)
+	viaPlain(s, first, second)
+	a, err := lookupUDP(c, lookupFor(t, 61, "example.com.", 0), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, a); h.ID != 61 || n != 1 {
+		t.Fatalf("%+v with %d records, want the first server's 1", h, n)
+	}
+	first.askedOver(t, "udp")
+	second.askedOver(t, "udp")
+}
+
+// An answer with another ID isn't taken: the server counts as silent, and the second is asked.
+func TestAnAnswerWithAnotherIDIsIgnored(t *testing.T) {
+	s, c := setup(t)
+	s.plainTimeout = 300 * time.Millisecond
+	first, second := newPlain(t, 1), newPlain(t, 2)
+	first.wrongID.Store(true)
+	viaPlain(s, first, second)
+	a, err := lookupUDP(c, lookupFor(t, 62, "example.com.", 0), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, a); h.ID != 62 || n != 2 {
+		t.Fatalf("%+v with %d records, want the second server's 2", h, n)
+	}
+}
+
+// A first server that refuses the connection is a failure at once: the second is asked without
+// waiting plainTimeout.
+func TestARefusedFirstServerAsksTheSecondAtOnce(t *testing.T) {
+	s, c := setup(t)
+	s.plainTimeout = 10 * time.Second
+	first, second := newPlain(t, 1), newPlain(t, 2)
+	first.tcp.Close()
+	viaPlain(s, first, second)
+	// lookupsTCP gives up long before plainTimeout.
+	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 63, "example.com.", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, answers[0]); h.ID != 63 || n != 2 {
+		t.Fatalf("%+v with %d records, want the second server's 2", h, n)
+	}
+	second.askedOver(t, "tcp")
+}
+
+// A plain server's answer bigger than the device takes over UDP is cut for it, TC set.
+func TestABigAnswerFromAPlainServerIsCut(t *testing.T) {
+	s, c := setup(t)
+	viaPlain(s, newPlain(t, 50)) // about 800 bytes
+	a, err := lookupUDP(c, lookupFor(t, 64, "big.example.", 0), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, a); h.ID != 64 || !h.Truncated || n != 0 || len(a) > 512 {
+		t.Fatalf("%+v with %d records, %d bytes", h, n, len(a))
+	}
+}
+
+// When no server answers, the device hears SERVFAIL for its query instead of waiting out its own
+// timeouts.
+func TestNoAnswerIsAServerFailure(t *testing.T) {
+	s, c := setup(t)
+	s.plainTimeout = 200 * time.Millisecond
+	first, second := newPlain(t, 1), newPlain(t, 2)
+	first.silent.Store(true)
+	second.silent.Store(true)
+	viaPlain(s, first, second)
+	q := lookupFor(t, 0x4242, "example.com.", 0)
+	a, err := lookupUDP(c, q, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverFailure(t, q, a)
+	answers, err := lookupsTCP(c, 5*time.Second, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverFailure(t, q, answers[0])
+	first.askedOver(t, "udp", "tcp")
+	second.askedOver(t, "udp", "tcp")
+}
+
+// A DoH server that can't be reached gives SERVFAIL too, once its second try failed.
+func TestAnUnreachableDoHServerIsAServerFailure(t *testing.T) {
+	s, c := setup(t)
+	d := newDoH(t, 1)
+	viaDoH(s, d)
+	d.Close()
+	q := lookupFor(t, 0x5151, "example.com.", 0)
+	a, err := lookupUDP(c, q, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverFailure(t, q, a)
+	answers, err := lookupsTCP(c, 10*time.Second, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverFailure(t, q, answers[0])
+}
+
+// Each lookup on a TCP connection goes where lookups go at that moment, not where they went when
+// the connection opened.
+func TestEachLookupOverTCPTakesTheCurrentSetting(t *testing.T) {
+	s, c := setup(t)
+	one, two := newPlain(t, 1), newPlain(t, 2)
+	d := newDoH(t, 3)
+	s.dohClient = d.Client()
+	viaPlain(s, one)
+	conn, err := c.net.Dial("tcp", tetherDNS)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
-	conn.Write(q)
-	buf := make([]byte, 512)
-	if n, err := conn.Read(buf); err != nil || !bytes.Equal(buf[:n], q) {
-		t.Fatalf("asking the server directly: %x %v", buf[:n], err)
+	conn.SetDeadline(time.Now().Add(30 * time.Second))
+	for i, set := range []func(){
+		func() {},
+		func() { viaPlain(s, two) },
+		func() { s.SetDNS(&dnsUpstream{doh: d.URL + "/abc123"}) },
+	} {
+		set()
+		id := uint16(30 + i)
+		q := lookupFor(t, id, "example.com.", 0)
+		if _, err := conn.Write(append(binary.BigEndian.AppendUint16(nil, uint16(len(q))), q...)); err != nil {
+			t.Fatal(err)
+		}
+		var size [2]byte
+		if _, err := io.ReadFull(conn, size[:]); err != nil {
+			t.Fatalf("lookup %d: %v", i, err)
+		}
+		a := make([]byte, binary.BigEndian.Uint16(size[:]))
+		if _, err := io.ReadFull(conn, a); err != nil {
+			t.Fatalf("lookup %d: %v", i, err)
+		}
+		if h, n := read(t, a); h.ID != id || n != i+1 {
+			t.Fatalf("lookup %d: %+v with %d records, want %d", i, h, n, i+1)
+		}
 	}
+	one.askedOver(t, "tcp")
+	two.askedOver(t, "tcp")
+	waitAsked(t, d)
 }
 
-func TestTheAddressStandsInForAPlainServerOverTCP(t *testing.T) {
+// A plain server's answer cut for UDP reaches the device as it is, TC set, so the device asks again
+// over TCP, and Tether asks the server over TCP.
+func TestACutAnswerFromAPlainServerSendsTheDeviceToTCP(t *testing.T) {
 	s, c := setup(t)
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	p := newPlain(t, 50)
+	p.truncate.Store(true)
+	viaPlain(s, p)
+	a, err := lookupUDP(c, lookupFor(t, 41, "big.example.", 0), 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { l.Close() })
-	go func() {
-		for {
-			conn, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go func() { defer conn.Close(); io.Copy(conn, conn) }()
-		}
-	}()
-	s.SetDNS(&dnsUpstream{udp: []netip.AddrPort{netip.MustParseAddrPort(viaRemote(l.Addr().String()))}})
-	q := lookupFor(t, 4, "example.com.", 0)
-	answers, err := lookupsTCP(c, 5*time.Second, q)
-	if err != nil || !bytes.Equal(answers[0], q) {
-		t.Fatalf("got %x %v, want the echo of %x", answers, err, q)
+	if h, n := read(t, a); h.ID != 41 || !h.Truncated || n != 0 {
+		t.Fatalf("over UDP: %+v with %d records", h, n)
+	}
+	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 42, "big.example.", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, answers[0]); h.ID != 42 || h.Truncated || n != 50 {
+		t.Fatalf("over TCP: %+v with %d records", h, n)
+	}
+	p.askedOver(t, "udp", "tcp")
+}
+
+// On an iPhone without an IPv4 route, Tether reaches a plain server through the carrier's NAT64,
+// the way a device's own traffic does, over UDP and TCP.
+func TestAPlainServerIsReachedThroughTheCarriersNAT64(t *testing.T) {
+	s, c := setup(t)
+	dialed := withoutIPv4(s)
+	p := newPlain(t, 1)
+	viaPlain(s, p)
+	a, err := lookupUDP(c, lookupFor(t, 51, "example.com.", 0), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, a); h.ID != 51 || n != 1 {
+		t.Fatalf("over UDP: %+v with %d records", h, n)
+	}
+	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 52, "example.com.", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, answers[0]); h.ID != 52 || n != 1 {
+		t.Fatalf("over TCP: %+v with %d records", h, n)
+	}
+	p.askedOver(t, "udp", "tcp")
+	if d := dialed(); len(d) != 2 || netip.MustParseAddrPort(d[1]).Addr() != remoteVia {
+		t.Fatalf("dialed %v, want the server and then its NAT64 address", d)
 	}
 }
 
@@ -410,9 +783,13 @@ func TestAnErrorFromTheServerIsNotAskedAgain(t *testing.T) {
 			return ""
 		}
 	}
-	if _, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), time.Second); err == nil {
-		t.Fatal("an answer from a server that refused")
+	// The device hears SERVFAIL at once.
+	q := lookupFor(t, 1, "example.com.", 0)
+	a, err := lookupUDP(c, q, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
 	}
+	serverFailure(t, q, a)
 	// Once, and without the URL: its path is the user's Control D profile.
 	if line := next(); line != "DNS over HTTPS: the server answered 400 Bad Request" {
 		t.Fatalf("logged %q", line)
@@ -530,38 +907,61 @@ func TestLookupsStopAtTheCap(t *testing.T) {
 }
 
 func TestCloseDuringALookupReturns(t *testing.T) {
-	s, c := setup(t)
-	d := newDoH(t, 1)
-	d.holding(t)
-	viaDoH(s, d)
-	conn, err := c.net.Dial("udp", tetherDNS)
-	if err != nil {
-		t.Fatal(err)
+	for _, plain := range []bool{false, true} {
+		t.Run(map[bool]string{false: "DoH", true: "plain"}[plain], func(t *testing.T) {
+			s, c := setup(t)
+			var asked func()
+			if plain {
+				p := newPlain(t, 1)
+				p.silent.Store(true)
+				s.plainTimeout = time.Minute
+				viaPlain(s, p)
+				asked = func() { p.waitAsked(t); p.waitAsked(t) }
+			} else {
+				d := newDoH(t, 1)
+				d.holding(t)
+				viaDoH(s, d)
+				asked = func() { waitAsked(t, d); waitAsked(t, d) }
+			}
+			conn, err := c.net.Dial("udp", tetherDNS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			conn.Write(lookupFor(t, 1, "example.com.", 0))
+			tcp, err := c.net.DialContext(context.Background(), "tcp", tetherDNS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tcp.Close()
+			q := lookupFor(t, 2, "example.com.", 0)
+			tcp.Write(append(binary.BigEndian.AppendUint16(nil, uint16(len(q))), q...))
+			asked()
+			done := make(chan struct{})
+			go func() { s.Close(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Close waited for the upstream")
+			}
+		})
 	}
-	defer conn.Close()
-	conn.Write(lookupFor(t, 1, "example.com.", 0))
-	tcp, err := c.net.DialContext(context.Background(), "tcp", tetherDNS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tcp.Close()
-	q := lookupFor(t, 2, "example.com.", 0)
-	tcp.Write(append(binary.BigEndian.AppendUint16(nil, uint16(len(q))), q...))
-	waitAsked(t, d)
-	waitAsked(t, d)
-	done := make(chan struct{})
-	go func() { s.Close(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Close waited for the DoH server")
+}
+
+func TestAServerFailureAnswersTheQuery(t *testing.T) {
+	q := lookupFor(t, 9, "example.com.", 1232)
+	serverFailure(t, q, servfail(q))
+	for _, bad := range [][]byte{nil, {1, 2, 3}, answerTo(t, q, 1)} {
+		if got := servfail(bad); got != nil {
+			t.Errorf("SERVFAIL %x for %x", got, bad)
+		}
 	}
 }
 
 func TestUDPSizeAndCutting(t *testing.T) {
 	for _, c := range []struct {
 		size, want int
-	}{{0, 512}, {256, 512}, {1232, 1232}, {4096, 4096}} {
+	}{{0, 512}, {256, 512}, {1232, 1232}, {4096, 4096}, {65535, udpMax}} {
 		if got := udpSize(lookupFor(t, 1, "example.com.", c.size)); got != c.want {
 			t.Errorf("EDNS %d: %d, want %d", c.size, got, c.want)
 		}

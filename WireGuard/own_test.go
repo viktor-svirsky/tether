@@ -1,16 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
 	"net"
 	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 // ownAre makes the iPhone's own addresses these, as net.InterfaceAddrs gives them: CIDR text, an
@@ -210,13 +210,18 @@ func TestAPlainServerOnAnOwnAddressStillAnswersFor10701(t *testing.T) {
 	s, c := setup(t)
 	ownAre(s, remote+"/32")
 	s.refreshLocal()
-	echo := netip.MustParseAddrPort(udpEcho(t))
-	s.SetDNS(&dnsUpstream{udp: []netip.AddrPort{echo}})
+	p := newPlain(t, 1)
+	viaPlain(s, p)
 	q := lookupFor(t, 5, "example.com.", 0)
-	if a, err := lookupUDP(c, q, 5*time.Second); err != nil || !bytes.Equal(a, q) {
-		t.Fatalf("over UDP: got %x %v, want the echo of %x", a, err, q)
+	a, err := lookupUDP(c, q, 5*time.Second)
+	if err != nil {
+		t.Fatalf("over UDP: %v", err)
 	}
-	conn, err := c.net.Dial("udp", echo.String())
+	if h, n := read(t, a); h.RCode != dnsmessage.RCodeSuccess || n != 1 {
+		t.Fatalf("over UDP: %v with %d answers, want the server's one", h.RCode, n)
+	}
+	p.askedOver(t, "udp")
+	conn, err := c.net.Dial("udp", p.addr.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,22 +231,13 @@ func TestAPlainServerOnAnOwnAddressStillAnswersFor10701(t *testing.T) {
 	if _, err := conn.Read(make([]byte, 512)); err == nil {
 		t.Fatal("the device reached the iPhone's own address by asking it directly")
 	}
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	p.noneAsked(t)
+	answers, err := lookupsTCP(c, 5*time.Second, q)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("over TCP: %v", err)
 	}
-	t.Cleanup(func() { l.Close() })
-	go func() {
-		for {
-			conn, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go func() { defer conn.Close(); io.Copy(conn, conn) }()
-		}
-	}()
-	s.SetDNS(&dnsUpstream{udp: []netip.AddrPort{netip.MustParseAddrPort(viaRemote(l.Addr().String()))}})
-	if answers, err := lookupsTCP(c, 5*time.Second, q); err != nil || !bytes.Equal(answers[0], q) {
-		t.Fatalf("over TCP: got %x %v, want the echo of %x", answers, err, q)
+	if h, n := read(t, answers[0]); h.RCode != dnsmessage.RCodeSuccess || n != 1 {
+		t.Fatalf("over TCP: %v with %d answers, want the server's one", h.RCode, n)
 	}
+	p.askedOver(t, "tcp")
 }
