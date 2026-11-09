@@ -31,6 +31,9 @@ func closeUnder(t *testing.T, s *Server) {
 // fetch that works only after that fails it too.
 func fetchesAgain(t *testing.T, c *client, addr string, within time.Duration) {
 	t.Helper()
+	if raceEnabled {
+		within *= 3 // the race detector makes the hosted runner several times slower
+	}
 	deadline := time.Now().Add(within)
 	for {
 		n, err := fetchBy(c, addr, deadline)
