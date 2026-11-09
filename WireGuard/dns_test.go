@@ -25,6 +25,20 @@ import (
 
 const tetherDNS = "10.7.0.1:53"
 
+// answerWait is how long a test waits for an answer it expects, long enough for a slow CI runner
+// under -race. A test that expects none waits a second.
+const answerWait = 30 * time.Second
+
+// scaled is a timeout or delay a test shortened, longer under -race, which slows a CI runner
+// several times over. Tests set the server's DNS timeouts and the fake servers' delays with it, so
+// their order holds however slow the runner is.
+func scaled(d time.Duration) time.Duration {
+	if raceEnabled {
+		return 5 * d
+	}
+	return d
+}
+
 // lookupFor is a query for name's A record, with an EDNS0 size when size isn't 0.
 func lookupFor(t testing.TB, id uint16, name string, size int) []byte {
 	t.Helper()
@@ -222,6 +236,7 @@ type plainServer struct {
 	truncate atomic.Bool // answers over UDP with TC set and no records, so the device asks over TCP
 	wrongID  atomic.Bool // answers over UDP with another ID
 	wrongQ   atomic.Bool // answers over UDP with the query's ID and another question
+	upper    atomic.Bool // answers with the question's name in capitals, over UDP and TCP
 	delay    atomic.Int64
 	tcp      net.Listener
 }
@@ -267,6 +282,9 @@ func newPlain(t *testing.T, records int) *plainServer {
 			if p.wrongID.Load() {
 				a[0]++
 			}
+			if p.upper.Load() {
+				upperName(a)
+			}
 			if p.wrongQ.Load() {
 				a = answerTo(t, lookupFor(t, binary.BigEndian.Uint16(buf), "other.example.", 0), p.records)
 			}
@@ -295,12 +313,25 @@ func newPlain(t *testing.T, records int) *plainServer {
 						continue
 					}
 					a := answerTo(t, q, p.records)
+					if p.upper.Load() {
+						upperName(a)
+					}
 					conn.Write(append(binary.BigEndian.AppendUint16(nil, uint16(len(a))), a...))
 				}
 			}()
 		}
 	}()
 	return p
+}
+
+// upperName puts the first question's name in m in capitals, as a server that changes its case does.
+// A label's length byte is under 64, so only the letters change.
+func upperName(m []byte) {
+	for i := dnsHeaderLen; i < len(m) && m[i] != 0; i++ {
+		if 'a' <= m[i] && m[i] <= 'z' {
+			m[i] -= 'a' - 'A'
+		}
+	}
 }
 
 func (p *plainServer) note(proto string) {
@@ -375,7 +406,7 @@ func TestALookupGoesOverDoH(t *testing.T) {
 	d := newDoH(t, 1)
 	viaDoH(s, d)
 	q := lookupFor(t, 0x1234, "example.com.", 0)
-	a, err := lookupUDP(c, q, 5*time.Second)
+	a, err := lookupUDP(c, q, answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +429,7 @@ func TestLookupsOverTCPGoOverDoH(t *testing.T) {
 	s, c := setup(t)
 	d := newDoH(t, 2)
 	viaDoH(s, d)
-	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 1, "one.example.", 0), lookupFor(t, 2, "two.example.", 0))
+	answers, err := lookupsTCP(c, answerWait, lookupFor(t, 1, "one.example.", 0), lookupFor(t, 2, "two.example.", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +439,7 @@ func TestLookupsOverTCPGoOverDoH(t *testing.T) {
 		}
 	}
 	// The connection is gone once the device closed it, like any other.
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(answerWait)
 	for s.tracked(deviceAddr) != 0 {
 		if time.Now().After(deadline) {
 			t.Fatalf("%d flows still open", s.tracked(deviceAddr))
@@ -422,21 +453,21 @@ func TestLookupsOverTCPGoOverDoH(t *testing.T) {
 func TestABigAnswerIsCutForUDP(t *testing.T) {
 	s, c := setup(t)
 	viaDoH(s, newDoH(t, 100)) // about 1.6 KB
-	a, err := lookupUDP(c, lookupFor(t, 7, "big.example.", 0), 5*time.Second)
+	a, err := lookupUDP(c, lookupFor(t, 7, "big.example.", 0), answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h, n := read(t, a); h.ID != 7 || !h.Truncated || n != 0 || len(a) > 512 {
 		t.Fatalf("without EDNS: %+v with %d records, %d bytes", h, n, len(a))
 	}
-	a, err = lookupUDP(c, lookupFor(t, 8, "big.example.", 4096), 5*time.Second)
+	a, err = lookupUDP(c, lookupFor(t, 8, "big.example.", 4096), answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h, n := read(t, a); h.Truncated || n != 100 {
 		t.Fatalf("with EDNS 4096: %+v with %d records", h, n)
 	}
-	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 9, "big.example.", 0))
+	answers, err := lookupsTCP(c, answerWait, lookupFor(t, 9, "big.example.", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +515,7 @@ func TestTheSecondServerIsABackup(t *testing.T) {
 	viaPlain(s, first, second)
 	for i := range 3 {
 		id := uint16(10 + i)
-		a, err := lookupUDP(c, lookupFor(t, id, "example.com.", 0), 5*time.Second)
+		a, err := lookupUDP(c, lookupFor(t, id, "example.com.", 0), answerWait)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -492,7 +523,7 @@ func TestTheSecondServerIsABackup(t *testing.T) {
 			t.Fatalf("lookup %d: %+v with %d records, want the first server's 1", i, h, n)
 		}
 	}
-	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 13, "example.com.", 0))
+	answers, err := lookupsTCP(c, answerWait, lookupFor(t, 13, "example.com.", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,12 +539,12 @@ func TestTheSecondServerIsABackup(t *testing.T) {
 // gets SERVFAIL.
 func TestASilentFirstServerLeavesItToTheSecond(t *testing.T) {
 	s, c := setup(t)
-	s.plainTimeout = 500 * time.Millisecond
+	s.plainTimeout, s.lookupTimeout = scaled(500*time.Millisecond), time.Minute
 	first, second := newPlain(t, 1), newPlain(t, 2)
 	first.silent.Store(true)
 	viaPlain(s, first, second)
 	start := time.Now()
-	a, err := lookupUDP(c, lookupFor(t, 21, "example.com.", 0), 5*time.Second)
+	a, err := lookupUDP(c, lookupFor(t, 21, "example.com.", 0), answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +554,7 @@ func TestASilentFirstServerLeavesItToTheSecond(t *testing.T) {
 	if h, n := read(t, a); h.ID != 21 || n != 2 {
 		t.Fatalf("%+v with %d records, want the second server's 2", h, n)
 	}
-	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 22, "example.com.", 0))
+	answers, err := lookupsTCP(c, answerWait, lookupFor(t, 22, "example.com.", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,12 +568,12 @@ func TestASilentFirstServerLeavesItToTheSecond(t *testing.T) {
 // An answer the first server gives after the second was asked is still taken.
 func TestALateAnswerFromTheFirstServerCounts(t *testing.T) {
 	s, c := setup(t)
-	s.plainTimeout = 500 * time.Millisecond
+	s.plainTimeout, s.lookupTimeout = scaled(500*time.Millisecond), time.Minute
 	first, second := newPlain(t, 1), newPlain(t, 2)
-	first.delay.Store(int64(750 * time.Millisecond))
+	first.delay.Store(int64(2 * s.plainTimeout)) // the second is asked halfway
 	second.silent.Store(true)
 	viaPlain(s, first, second)
-	a, err := lookupUDP(c, lookupFor(t, 61, "example.com.", 0), 5*time.Second)
+	a, err := lookupUDP(c, lookupFor(t, 61, "example.com.", 0), answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,11 +587,11 @@ func TestALateAnswerFromTheFirstServerCounts(t *testing.T) {
 // An answer with another ID isn't taken: the server counts as silent, and the second is asked.
 func TestAnAnswerWithAnotherIDIsIgnored(t *testing.T) {
 	s, c := setup(t)
-	s.plainTimeout = 300 * time.Millisecond
+	s.plainTimeout, s.lookupTimeout = scaled(300*time.Millisecond), time.Minute
 	first, second := newPlain(t, 1), newPlain(t, 2)
 	first.wrongID.Store(true)
 	viaPlain(s, first, second)
-	a, err := lookupUDP(c, lookupFor(t, 62, "example.com.", 0), 5*time.Second)
+	a, err := lookupUDP(c, lookupFor(t, 62, "example.com.", 0), answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,12 +604,12 @@ func TestAnAnswerWithAnotherIDIsIgnored(t *testing.T) {
 // waiting plainTimeout.
 func TestARefusedFirstServerAsksTheSecondAtOnce(t *testing.T) {
 	s, c := setup(t)
-	s.plainTimeout = 10 * time.Second
+	s.plainTimeout, s.lookupTimeout = time.Hour, time.Hour
 	first, second := newPlain(t, 1), newPlain(t, 2)
 	first.tcp.Close()
 	viaPlain(s, first, second)
 	// lookupsTCP gives up long before plainTimeout.
-	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 63, "example.com.", 0))
+	answers, err := lookupsTCP(c, answerWait, lookupFor(t, 63, "example.com.", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -592,7 +623,7 @@ func TestARefusedFirstServerAsksTheSecondAtOnce(t *testing.T) {
 func TestABigAnswerFromAPlainServerIsCut(t *testing.T) {
 	s, c := setup(t)
 	viaPlain(s, newPlain(t, 50)) // about 800 bytes
-	a, err := lookupUDP(c, lookupFor(t, 64, "big.example.", 0), 5*time.Second)
+	a, err := lookupUDP(c, lookupFor(t, 64, "big.example.", 0), answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -604,11 +635,11 @@ func TestABigAnswerFromAPlainServerIsCut(t *testing.T) {
 // An answer with the query's ID and another question isn't taken either.
 func TestAnAnswerToAnotherQuestionIsIgnored(t *testing.T) {
 	s, c := setup(t)
-	s.plainTimeout = 300 * time.Millisecond
+	s.plainTimeout, s.lookupTimeout = scaled(300*time.Millisecond), time.Minute
 	first, second := newPlain(t, 1), newPlain(t, 2)
 	first.wrongQ.Store(true)
 	viaPlain(s, first, second)
-	a, err := lookupUDP(c, lookupFor(t, 65, "example.com.", 0), 5*time.Second)
+	a, err := lookupUDP(c, lookupFor(t, 65, "example.com.", 0), answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,15 +648,98 @@ func TestAnAnswerToAnotherQuestionIsIgnored(t *testing.T) {
 	}
 }
 
+// A name's case doesn't matter (RFC 4343): an answer whose question is example.com. in capitals, as
+// from a server that changes the case, is taken, over UDP and TCP.
+func TestAnAnswerInOtherCaseCounts(t *testing.T) {
+	s, c := setup(t)
+	s.plainTimeout, s.lookupTimeout = time.Hour, time.Hour // the backup would be asked only after an hour
+	first, second := newPlain(t, 1), newPlain(t, 2)
+	first.upper.Store(true)
+	viaPlain(s, first, second)
+	a, err := lookupUDP(c, lookupFor(t, 69, "example.com.", 0), answerWait)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, a); h.ID != 69 || n != 1 {
+		t.Fatalf("over UDP: %+v with %d records, want the first server's 1", h, n)
+	}
+	answers, err := lookupsTCP(c, answerWait, lookupFor(t, 70, "Example.com.", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, n := read(t, answers[0]); h.ID != 70 || n != 1 {
+		t.Fatalf("over TCP: %+v with %d records, want the first server's 1", h, n)
+	}
+	second.noneAsked(t)
+}
+
+func TestQuestionsMatchWhateverTheCase(t *testing.T) {
+	q := lookupFor(t, 1, "example.com.", 0)
+	a := answerTo(t, q, 1)
+	upperName(a)
+	if !answers(q, a) {
+		t.Fatal("an answer in capitals wasn't taken")
+	}
+	aaaa := bytes.Clone(answerTo(t, q, 0))
+	// The question's type is the 2 bytes after its name: 12 + 13 bytes of example.com.
+	aaaa[dnsHeaderLen+13+1] = byte(dnsmessage.TypeAAAA)
+	if answers(q, aaaa) {
+		t.Fatal("an answer for another type was taken")
+	}
+}
+
+// A travel router whose clients only look names up through 10.7.0.1 carries their flows, so it keeps
+// its role while it's online, as one carrying their connections does.
+func TestARouterCarryingOnlyLookupsKeepsItsRole(t *testing.T) {
+	sPriv, sPub := keyPair(t)
+	aPriv, aPub := keyPair(t)
+	bPriv, bPub := keyPair(t)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	viaLoopback(s)
+	viaPlain(s, newPlain(t, 1))
+	a, b := netip.MustParseAddr("10.7.0.2"), netip.MustParseAddr("10.7.0.3")
+	if err := s.SetPeers([]Peer{{PublicKey: aPub, Address: a}, {PublicKey: bPub, Address: b}}); err != nil {
+		t.Fatal(err)
+	}
+	ca := newClient(t, s, sPub, aPriv, netip.MustParseAddr("192.168.4.20"))
+	cb := newClient(t, s, sPub, bPriv, netip.MustParseAddr("192.168.8.30"))
+	// The first lookup shows a sends for others and is dropped. A client's resolver asks again once
+	// a has the role.
+	lookupUDP(ca, lookupFor(t, 1, "example.com.", 0), 100*time.Millisecond)
+	deadline := time.Now().Add(answerWait)
+	for s.routerOf() != a {
+		if time.Now().After(deadline) {
+			t.Fatalf("router %v, want %v", s.routerOf(), a)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := lookupUDP(ca, lookupFor(t, 2, "example.com.", 0), answerWait); err != nil {
+		t.Fatal(err)
+	}
+	s.readHandshakes()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := cb.net.DialContext(ctx, "tcp", tcpServer(t, 10)); err == nil {
+		t.Fatal("another device sent for others while the router was online")
+	}
+	if s.routerOf() != a {
+		t.Fatalf("router %v, want it to stay %v", s.routerOf(), a)
+	}
+}
+
 // One server alone has the whole lookupTimeout, not only plainTimeout: a cold cache can take
 // seconds, and the device's own resolver would have waited for it.
 func TestASlowOnlyServerStillAnswers(t *testing.T) {
 	s, c := setup(t)
-	s.plainTimeout, s.lookupTimeout = 200*time.Millisecond, 2*time.Second
+	s.plainTimeout, s.lookupTimeout = scaled(200*time.Millisecond), scaled(2*time.Second)
 	p := newPlain(t, 1)
-	p.delay.Store(int64(600 * time.Millisecond))
+	p.delay.Store(int64(3 * s.plainTimeout))
 	viaPlain(s, p)
-	a, err := lookupUDP(c, lookupFor(t, 66, "example.com.", 0), 5*time.Second)
+	a, err := lookupUDP(c, lookupFor(t, 66, "example.com.", 0), answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,18 +753,17 @@ func TestASlowOnlyServerStillAnswers(t *testing.T) {
 func TestASlowNAT64PrefixDoesntAskTheBackup(t *testing.T) {
 	s, c := setup(t)
 	withoutIPv4(s)
-	s.plainTimeout, s.lookupTimeout = 300*time.Millisecond, 600*time.Millisecond
-	s.nat64.lookup = func(ctx context.Context) (netip.Prefix, error) {
-		select {
-		case <-time.After(time.Second):
-			return carrierNAT64, nil
-		case <-ctx.Done():
-			return netip.Prefix{}, ctx.Err()
-		}
+	s.plainTimeout, s.lookupTimeout = scaled(300*time.Millisecond), scaled(600*time.Millisecond)
+	// Longer than the whole lookup. It ignores its context, which ends at nat64LookupTimeout, and
+	// prefix takes what it returns.
+	hold := 3 * s.plainTimeout
+	s.nat64.lookup = func(context.Context) (netip.Prefix, error) {
+		time.Sleep(hold)
+		return carrierNAT64, nil
 	}
 	first, second := newPlain(t, 1), newPlain(t, 2)
 	viaPlain(s, first, second)
-	a, err := lookupUDP(c, lookupFor(t, 67, "example.com.", 0), 5*time.Second)
+	a, err := lookupUDP(c, lookupFor(t, 67, "example.com.", 0), answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,7 +773,7 @@ func TestASlowNAT64PrefixDoesntAskTheBackup(t *testing.T) {
 	s.nat64.mu.Lock()
 	s.nat64.expiry = time.Time{} // looked up again by the next lookup
 	s.nat64.mu.Unlock()
-	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 68, "example.com.", 0))
+	answers, err := lookupsTCP(c, answerWait, lookupFor(t, 68, "example.com.", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +794,7 @@ func TestAQueryThatCantBeReadIsAFormatError(t *testing.T) {
 	p.silent.Store(true)
 	viaPlain(s, p)
 	bad := lookupFor(t, 0x7070, "example.com.", 0)[:dnsHeaderLen] // QDCOUNT 1 and no question
-	a, err := lookupUDP(c, bad, 5*time.Second)
+	a, err := lookupUDP(c, bad, answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -689,7 +802,7 @@ func TestAQueryThatCantBeReadIsAFormatError(t *testing.T) {
 	if h, err := parser.Start(a); err != nil || h.ID != 0x7070 || !h.Response || h.RCode != dnsmessage.RCodeFormatError {
 		t.Fatalf("got %+v %v, want FORMERR", h, err)
 	}
-	answers, err := lookupsTCP(c, 5*time.Second, bad)
+	answers, err := lookupsTCP(c, answerWait, bad)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,7 +811,7 @@ func TestAQueryThatCantBeReadIsAFormatError(t *testing.T) {
 	}
 	p.noneAsked(t)
 	// Freed right after the answer, long before the 5 s a lookup may wait.
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(scaled(time.Second))
 	for s.lookupsOf(deviceAddr) != 0 {
 		if time.Now().After(deadline) {
 			t.Fatalf("%d lookups still waiting", s.lookupsOf(deviceAddr))
@@ -716,7 +829,7 @@ func TestLookupsOneAfterAnotherOverTCPToAPlainServer(t *testing.T) {
 	s, c := setup(t)
 	p := newPlain(t, 1)
 	viaPlain(s, p)
-	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 71, "a.example.", 0), lookupFor(t, 72, "b.example.", 0), lookupFor(t, 73, "c.example.", 0))
+	answers, err := lookupsTCP(c, answerWait, lookupFor(t, 71, "a.example.", 0), lookupFor(t, 72, "b.example.", 0), lookupFor(t, 73, "c.example.", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -738,7 +851,7 @@ func TestAnEmptyTCPFrameClosesTheConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	conn.SetDeadline(time.Now().Add(answerWait))
 	conn.Write([]byte{0, 0})
 	if n, err := conn.Read(make([]byte, 10)); err != io.EOF {
 		t.Fatalf("read %d bytes, %v, want the connection closed", n, err)
@@ -750,18 +863,19 @@ func TestAnEmptyTCPFrameClosesTheConnection(t *testing.T) {
 // timeouts.
 func TestNoAnswerIsAServerFailure(t *testing.T) {
 	s, c := setup(t)
-	s.plainTimeout, s.lookupTimeout = 200*time.Millisecond, 400*time.Millisecond
+	// Both servers are asked inside the budget with time to spare, so each sees the query.
+	s.plainTimeout, s.lookupTimeout = scaled(200*time.Millisecond), scaled(time.Second)
 	first, second := newPlain(t, 1), newPlain(t, 2)
 	first.silent.Store(true)
 	second.silent.Store(true)
 	viaPlain(s, first, second)
 	q := lookupFor(t, 0x4242, "example.com.", 0)
-	a, err := lookupUDP(c, q, 5*time.Second)
+	a, err := lookupUDP(c, q, answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
 	serverFailure(t, q, a)
-	answers, err := lookupsTCP(c, 5*time.Second, q)
+	answers, err := lookupsTCP(c, answerWait, q)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -777,12 +891,12 @@ func TestAnUnreachableDoHServerIsAServerFailure(t *testing.T) {
 	viaDoH(s, d)
 	d.Close()
 	q := lookupFor(t, 0x5151, "example.com.", 0)
-	a, err := lookupUDP(c, q, 10*time.Second)
+	a, err := lookupUDP(c, q, answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
 	serverFailure(t, q, a)
-	answers, err := lookupsTCP(c, 10*time.Second, q)
+	answers, err := lookupsTCP(c, answerWait, q)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -838,14 +952,14 @@ func TestACutAnswerFromAPlainServerSendsTheDeviceToTCP(t *testing.T) {
 	p := newPlain(t, 50)
 	p.truncate.Store(true)
 	viaPlain(s, p)
-	a, err := lookupUDP(c, lookupFor(t, 41, "big.example.", 0), 5*time.Second)
+	a, err := lookupUDP(c, lookupFor(t, 41, "big.example.", 0), answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h, n := read(t, a); h.ID != 41 || !h.Truncated || n != 0 {
 		t.Fatalf("over UDP: %+v with %d records", h, n)
 	}
-	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 42, "big.example.", 0))
+	answers, err := lookupsTCP(c, answerWait, lookupFor(t, 42, "big.example.", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -862,14 +976,14 @@ func TestAPlainServerIsReachedThroughTheCarriersNAT64(t *testing.T) {
 	dialed := withoutIPv4(s)
 	p := newPlain(t, 1)
 	viaPlain(s, p)
-	a, err := lookupUDP(c, lookupFor(t, 51, "example.com.", 0), 5*time.Second)
+	a, err := lookupUDP(c, lookupFor(t, 51, "example.com.", 0), answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h, n := read(t, a); h.ID != 51 || n != 1 {
 		t.Fatalf("over UDP: %+v with %d records", h, n)
 	}
-	answers, err := lookupsTCP(c, 5*time.Second, lookupFor(t, 52, "example.com.", 0))
+	answers, err := lookupsTCP(c, answerWait, lookupFor(t, 52, "example.com.", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -900,7 +1014,7 @@ func TestALookupIsAskedAgainOnAFailedConnection(t *testing.T) {
 	d := newDoH(t, 1)
 	viaDoH(s, d)
 	s.dohClient = &http.Client{Transport: &failOnce{RoundTripper: d.Client().Transport}}
-	if _, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), 5*time.Second); err != nil {
+	if _, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), answerWait); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -934,7 +1048,7 @@ func TestAnErrorFromTheServerIsNotAskedAgain(t *testing.T) {
 	}
 	// The device hears SERVFAIL at once.
 	q := lookupFor(t, 1, "example.com.", 0)
-	a, err := lookupUDP(c, q, 10*time.Second)
+	a, err := lookupUDP(c, q, answerWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -946,7 +1060,7 @@ func TestAnErrorFromTheServerIsNotAskedAgain(t *testing.T) {
 	// The next failure of the run isn't logged, and the first answer after them is.
 	lookupUDP(c, lookupFor(t, 2, "example.com.", 0), time.Second)
 	s.SetDNS(&dnsUpstream{doh: d.URL + "/abc123"})
-	if _, err := lookupUDP(c, lookupFor(t, 3, "example.com.", 0), 10*time.Second); err != nil {
+	if _, err := lookupUDP(c, lookupFor(t, 3, "example.com.", 0), answerWait); err != nil {
 		t.Fatal(err)
 	}
 	if line := next(); line != "DNS over HTTPS answers again" {
@@ -1000,7 +1114,7 @@ func TestASlowServerFreesTheLookup(t *testing.T) {
 	d := newDoH(t, 1)
 	d.holding(t)
 	viaDoH(s, d)
-	s.lookupTimeout = 300 * time.Millisecond
+	s.lookupTimeout = scaled(300 * time.Millisecond)
 	// The timeout's log line says the lookup started and ran out, whether on the held answer or,
 	// on a busy runner, on the TLS handshake before it.
 	failed := make(chan string, 10)

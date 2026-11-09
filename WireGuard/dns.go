@@ -129,6 +129,9 @@ func (s *Server) lookup(device netip.AddrPort, query []byte) {
 		return
 	}
 	s.lookups[owner]++
+	if device.Addr() != owner {
+		s.routed = true // a client's lookup through the router, as a cone marks its flows
+	}
 	key := s.keys[owner]
 	counts := s.trafficOfLocked(owner)
 	s.looking.Add(1) // under s.mu, so it comes before Close's Wait or not at all
@@ -352,7 +355,8 @@ func (s *Server) askTCP(ctx context.Context, server netip.AddrPort, query []byte
 }
 
 // answers says whether m is an answer to query: QR set, the query's ID and its questions (RFC 5452
-// 9.1), so a stray or forged packet to the port isn't taken.
+// 9.1), so a stray or forged packet to the port isn't taken. A name's case doesn't count (RFC 4343):
+// a server may change it, or echo the query's random case back.
 func answers(query, m []byte) bool {
 	if len(m) < dnsHeaderLen || m[2]&0x80 == 0 || m[0] != query[0] || m[1] != query[1] {
 		return false
@@ -362,7 +366,29 @@ func answers(query, m []byte) bool {
 		return false
 	}
 	got, err := questionsOf(m)
-	return err == nil && slices.Equal(got, asked)
+	return err == nil && slices.EqualFunc(got, asked, func(a, b dnsmessage.Question) bool {
+		return a.Type == b.Type && a.Class == b.Class && sameName(a.Name, b.Name)
+	})
+}
+
+// sameName compares two names ignoring the case of ASCII letters, the only ones DNS folds.
+func sameName(a, b dnsmessage.Name) bool {
+	if a.Length != b.Length {
+		return false
+	}
+	for i := range a.Length {
+		x, y := a.Data[i], b.Data[i]
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
 }
 
 func questionsOf(m []byte) ([]dnsmessage.Question, error) {
