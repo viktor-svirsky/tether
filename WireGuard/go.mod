@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	golang.org/x/crypto v0.58.0
-	golang.org/x/net v0.60.0
+	golang.org/x/net v0.62.0
 	golang.zx2c4.com/wireguard v0.0.0-20261006164505-2631ce99a06f
 	gvisor.dev/gvisor v0.0.0-20250503011706-39ed1f5ac29c
 )
