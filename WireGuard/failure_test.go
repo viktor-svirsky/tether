@@ -88,16 +88,17 @@ func resetOnceSent(conn *net.TCPConn) {
 	conn.SetLinger(0)
 }
 
-// connect opens a TCP connection from the device, with a deadline so a hang fails the test.
+// connect opens a TCP connection from the device, with a deadline so a hang fails the test. The
+// deadline covers the whole exchange, so it's fetch's.
 func connect(t *testing.T, c *client, addr string) net.Conn {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout())
 	defer cancel()
 	conn, err := c.net.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	conn.SetDeadline(time.Now().Add(15 * time.Second))
+	conn.SetDeadline(time.Now().Add(fetchTimeout()))
 	return conn
 }
 

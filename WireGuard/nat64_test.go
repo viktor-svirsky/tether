@@ -28,9 +28,13 @@ func unreachable(op string) error {
 
 // withoutIPv4 fails the server's dials and UDP to remote, as on an iPhone without IPv4, and sends
 // those to remote's NAT64 address to the test listeners on loopback. It returns the dials so far.
+// The server is already running, so the hooks change under s.mu, which a device's first packet takes
+// before anything reads them. Packets through a socket don't order memory for the race detector.
 func withoutIPv4(s *Server) (dialed func() []string) {
 	var mu sync.Mutex
 	var dials []string
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.nat64.lookup = func(context.Context) (netip.Prefix, error) { return carrierNAT64, nil }
 	r := netip.MustParseAddr(remote)
 	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -92,7 +96,7 @@ func TestUDPReachesAnIPv4HostThroughTheCarriersNAT64(t *testing.T) {
 	defer conn.Close()
 	for i := range 3 {
 		msg := fmt.Sprintf("ping %d", i)
-		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		conn.SetDeadline(time.Now().Add(fetchTimeout()))
 		conn.Write([]byte(msg))
 		buf := make([]byte, 100)
 		n, err := conn.Read(buf)
