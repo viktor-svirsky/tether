@@ -39,23 +39,36 @@ final class ConfigPageServerTests: XCTestCase {
         return try XCTUnwrap(server.port)
     }
 
-    /// Sends `bytes` and reads until the server closes. Nil when the connection fails.
-    private nonisolated func exchange(_ bytes: Data, port: UInt16, host: NWEndpoint.Host = "127.0.0.1") async -> Data? {
+    /// What the server sent before it closed (nil when the connection failed), and how it ended, so a
+    /// failed assertion says why nothing came (#131).
+    private struct Reply {
+        var data: Data?
+        var why: String
+    }
+
+    /// Sends `bytes` and reads until the server closes.
+    private nonisolated func exchange(_ bytes: Data, port: UInt16, host: NWEndpoint.Host = "127.0.0.1") async -> Reply {
         await withCheckedContinuation { done in
             let connection = NWConnection(host: host, port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
             let queue = DispatchQueue(label: "test.client")
             var received = Data()
             var finished = false
-            func finish(_ result: Data?) {
+            func finish(_ result: Data?, _ why: String) {
                 guard !finished else { return }
                 finished = true
                 connection.cancel()
-                done.resume(returning: result)
+                done.resume(returning: Reply(data: result, why: why))
             }
             func read() {
                 connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, isComplete, error in
                     if let data { received.append(data) }
-                    if isComplete { finish(received) } else if error != nil { finish(received.isEmpty ? nil : received) } else { read() }
+                    if isComplete {
+                        finish(received, "closed by the server")
+                    } else if let error {
+                        finish(received.isEmpty ? nil : received, "receive failed: \(error)")
+                    } else {
+                        read()
+                    }
                 }
             }
             connection.stateUpdateHandler = { state in
@@ -63,7 +76,7 @@ final class ConfigPageServerTests: XCTestCase {
                 case .ready:
                     if !bytes.isEmpty { connection.send(content: bytes, completion: .contentProcessed { _ in }) }
                     read()
-                case .failed, .waiting: finish(nil)
+                case .failed, .waiting: finish(nil, "connection \(state)")
                 default: break
                 }
             }
@@ -71,14 +84,18 @@ final class ConfigPageServerTests: XCTestCase {
         }
     }
 
-    private func text(_ data: Data?) -> String { data.flatMap { String(data: $0, encoding: .utf8) } ?? "" }
+    /// The answer as text, or why there is none.
+    private func text(_ reply: Reply) -> String {
+        guard let data = reply.data, !data.isEmpty else { return "no answer, \(reply.why)" }
+        return String(decoding: data, as: UTF8.self)
+    }
 
     /// Whether connections to `host` fail within 2 seconds. A stopped listener closes its socket
     /// asynchronously (#102), so one tried at once can still be accepted and closed.
     private func refusedSoon(port: UInt16, host: NWEndpoint.Host = "127.0.0.1") async throws -> Bool {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
-            if await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port, host: host) == nil { return true }
+            if await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port, host: host).data == nil { return true }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         return false
@@ -116,7 +133,7 @@ final class ConfigPageServerTests: XCTestCase {
         let port = try await listen(timeout: 0.3)
         let started = Date()
         let reply = await exchange(Data(), port: port)
-        XCTAssertEqual(reply ?? Data(), Data(), "closed with no answer")
+        XCTAssertEqual(reply.data ?? Data(), Data(), "closed with no answer")
         XCTAssertLessThan(Date().timeIntervalSince(started), 3)
         XCTAssertTrue(asked.isEmpty)
     }
@@ -143,7 +160,7 @@ final class ConfigPageServerTests: XCTestCase {
         defer { idle.forEach { $0.cancel() } }
         try await Task.sleep(for: .milliseconds(300)) // all eight accepted
         let ninth = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port)
-        XCTAssertEqual(ninth ?? Data(), Data(), "closed with no answer")
+        XCTAssertEqual(ninth.data ?? Data(), Data(), "closed with no answer")
         XCTAssertTrue(asked.isEmpty)
         try await Task.sleep(for: .milliseconds(1_500)) // the eight time out
         let later = text(await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port))
@@ -235,7 +252,7 @@ final class ConfigPageServerTests: XCTestCase {
         XCTAssertFalse(server.listening)
         XCTAssertEqual(server.readyHosts, [], "the IPv4 one may have been ready before")
         let reply = await exchange(Data("GET / HTTP/1.1\r\n\r\n".utf8), port: port)
-        XCTAssertNil(reply, "the IPv4 one stopped too")
+        XCTAssertNil(reply.data, "the IPv4 one stopped too: \(reply.why)")
     }
 
     /// A port free on 127.0.0.1 and ::1, below the range the system hands out for port 0 and for
