@@ -238,13 +238,19 @@ struct WireGuardSetup: Codable, Equatable {
 
     /// WireGuard names the tunnel after the file, so keep it to letters, digits and dashes, and to 15
     /// characters: a Linux interface name can't be longer, and wg-quick and WireGuard for Android refuse
-    /// one that is. A long name loses its dashes first, so "Device 10" stays told apart from "Device 1".
+    /// one that is. A long name loses its dashes, then letters before its last number, which keeps
+    /// "Device 10", "Device 100" and "Device 101" apart.
     static func fileName(for name: String) -> String {
         // ASCII only: wg-quick takes [a-zA-Z0-9_=+.-], and a Cyrillic or accented letter isn't in it.
         let ascii = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
         let parts = name.components(separatedBy: ascii.inverted).filter { !$0.isEmpty }
         var tunnel = (["Tether"] + parts).joined(separator: "-")
-        if tunnel.count > 15 { tunnel = String((["Tether"] + [parts.joined()]).joined(separator: "-").prefix(15)) }
+        if tunnel.count > 15 {
+            let joined = parts.joined()
+            let number = String(joined.reversed().prefix { $0.isNumber }.reversed()).suffix(8)
+            let room = 8 - number.count // "Tether-" takes 7 of the 15
+            tunnel = "Tether-" + joined.dropLast(number.count).prefix(room) + number
+        }
         return tunnel + ".conf"
     }
 }

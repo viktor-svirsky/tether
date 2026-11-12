@@ -73,6 +73,8 @@ final class HotspotSession {
     private(set) var wireGuardReadyProblem: String? { willSet { willChange() } }
     /// Why the code for the next device can't be saved, logged once for each new reason.
     private var readyReason: String?
+    /// The last reason WireGuard didn't start that went to the log, see `showProblem`.
+    private var loggedProblem: String?
     /// A rename, removal, pause or resume that couldn't be saved, shown on that device's screen until a change saves.
     private(set) var wireGuardDeviceProblem: DeviceProblem? { willSet { willChange() } }
     /// Why WireGuard isn't running, shown on the main screen: the saved setup's problem from launch on,
@@ -302,13 +304,18 @@ final class HotspotSession {
         }
     }
 
-    /// The setup's problem comes first: until it's solved, the server can't start anyway. A problem
-    /// is logged once, not on every try.
+    /// The setup's problem comes first: until it's solved, the server can't start anyway. Each reason
+    /// is logged once, not on every try. By the error, not the text on screen, which is the same for
+    /// different reasons.
     private func showProblem(because error: Error? = nil) {
         let problem = setupProblem ?? startProblem
-        guard problem != wireGuardProblem else { return }
-        wireGuardProblem = problem
-        if problem != nil, let error { log("WireGuard not started: \(error)") }
+        if problem == nil {
+            loggedProblem = nil
+        } else if let error, "\(error)" != loggedProblem {
+            loggedProblem = "\(error)"
+            log("WireGuard not started: \(error)")
+        }
+        if problem != wireGuardProblem { wireGuardProblem = problem }
     }
 
     /// The same as opening Tether, for Start Tether in Shortcuts: the 10 minutes' wait for the hotspot

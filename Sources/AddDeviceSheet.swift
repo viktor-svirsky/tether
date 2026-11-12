@@ -281,12 +281,12 @@ struct AddDeviceSheet: View {
             // An IPv6 address is up to 47 characters with http:// and its brackets, with no space to
             // break a line at. A zero-width space after each colon lets it wrap, to as many lines as it
             // needs: it's typed into another device, so none of it may be cut (#170). Plain text, not a
-            // link: a tap would open the page on this iPhone (#184). The copy button keeps it as it is.
+            // link: a tap would open the page on this iPhone (#184). Not selectable either, which would
+            // copy the zero-width spaces: the copy button copies the address as it is.
             Text(address.replacingOccurrences(of: ":", with: ":\u{200B}"))
                 .font(.title3.weight(.semibold))
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // VoiceOver says what it is, then the address, which as a label alone fails the audit.
                 .accessibilityLabel("Page address")

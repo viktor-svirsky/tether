@@ -620,6 +620,20 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(logged.filter { $0.hasPrefix("WireGuard not started") }, ["WireGuard not started: port in use"])
     }
 
+    /// The screen says the same for every reason, so a new reason is still logged (#190).
+    func testADifferentReasonIsLoggedToo() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        server.startError = FakeServer.Failure()
+        session.syncWithHotspot()
+        server.startError = FakeServer.Refused()
+        session.syncWithHotspot()
+        session.syncWithHotspot()
+        XCTAssertEqual(logged.filter { $0.hasPrefix("WireGuard not started") },
+                       ["WireGuard not started: port in use", "WireGuard not started: the device list repeats a key or address"])
+    }
+
     // MARK: Devices
 
     /// The server refuses a list by what's in it, so starting it again with the same list is refused
