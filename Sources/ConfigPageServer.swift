@@ -25,6 +25,8 @@ final class ConfigPageServer {
     private(set) var port: UInt16?
 
     private var listeners: [NWListener] = []
+    /// Where it listens, for the Host check and the hotspot check, see `ConfigPage`.
+    private var hosts: [String] = []
     /// Stopped listeners whose socket isn't closed yet. It closes a moment after `cancel`, when the
     /// listener reports `.cancelled`, and until then a listener on the same address and port fails
     /// with "address in use" (#102). New listeners start once these are gone.
@@ -45,6 +47,7 @@ final class ConfigPageServer {
     /// The port must be one for all of them, not 0, with more than one address.
     func start(hosts: [String], port: UInt16) {
         stop()
+        self.hosts = hosts
         for host in hosts {
             let parameters = NWParameters.tcp
             // Without it a listener on 172.20.10.1 takes the port for IPv6 too, and the one on the
@@ -144,7 +147,7 @@ final class ConfigPageServer {
                 var head = head
                 if let data { head.append(data) }
                 if ConfigPage.headComplete(head) {
-                    self.answer(connection, ConfigPage.Request(head))
+                    self.answer(connection, ConfigPage.Request(head, hosts: self.hosts))
                 } else if head.count >= Self.maxHead || (isComplete && !head.isEmpty) {
                     self.answer(connection, .malformed)
                 } else if isComplete {
@@ -157,7 +160,10 @@ final class ConfigPageServer {
     }
 
     private func answer(_ connection: NWConnection, _ request: ConfigPage.Request) {
-        let response = respond(request, Self.client(of: connection))
+        let client = Self.client(of: connection)
+        // No answer at all to the internet, see `ConfigPage.onHotspot`.
+        guard ConfigPage.onHotspot(client, hosts: hosts) else { return connection.cancel() }
+        let response = respond(request, client)
         // The final message ends the stream, so the client reads the whole body before the close.
         connection.send(content: response.bytes, contentContext: .finalMessage, isComplete: true,
                         completion: .contentProcessed { _ in Self.drain(connection) })

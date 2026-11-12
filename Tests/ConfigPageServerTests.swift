@@ -103,10 +103,10 @@ final class ConfigPageServerTests: XCTestCase {
 
     func testItAnswersOneRequestAndCloses() async throws {
         let port = try await listen()
-        let page = text(await exchange(Data("GET / HTTP/1.1\r\nHost: x\r\n\r\n".utf8), port: port))
+        let page = text(await exchange(Data("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8), port: port))
         XCTAssertTrue(page.hasPrefix("HTTP/1.1 200 OK\r\n"), page)
         XCTAssertTrue(page.hasSuffix("</html>\n"), "the whole body arrives before the close")
-        let config = text(await exchange(Data("GET /Tether.conf HTTP/1.1\r\n\r\n".utf8), port: port))
+        let config = text(await exchange(Data("GET \(ConfigPage.downloadPath) HTTP/1.1\r\n\r\n".utf8), port: port))
         XCTAssertTrue(config.hasSuffix("\r\n\r\n[Interface]\n"), config)
         XCTAssertEqual(asked.map(\.0), [.page, .config])
         XCTAssertEqual(asked.map(\.1), ["127.0.0.1", "127.0.0.1"], "who asked, for the log")
@@ -115,7 +115,7 @@ final class ConfigPageServerTests: XCTestCase {
     func testARequestInPiecesIsAnsweredOnceWhole() async throws {
         let port = try await listen()
         // One send, but the head is only complete at the end: the server must wait for all of it.
-        let head = "GET /Tether.conf HTTP/1.1\r\n" + String(repeating: "X-Pad: 1234567890\r\n", count: 200) + "\r\n"
+        let head = "GET \(ConfigPage.downloadPath) HTTP/1.1\r\n" + String(repeating: "X-Pad: 1234567890\r\n", count: 200) + "\r\n"
         let reply = text(await exchange(Data(head.utf8), port: port))
         XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200 OK"), reply)
         XCTAssertEqual(asked.map(\.0), [.config])

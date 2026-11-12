@@ -887,7 +887,7 @@ final class HotspotSessionTests: XCTestCase {
         address = hotspot
         session.syncWithHotspot()
         session.openAddWindow()
-        XCTAssertTrue(body(page.ask(.page)).contains("href=\"/Tether.conf\""))
+        XCTAssertTrue(body(page.ask(.page)).contains("href=\"\(ConfigPage.downloadPath)\""))
         let ready = try XCTUnwrap(session.wireGuardReady)
         let first = page.ask(.config)
         XCTAssertEqual(first.status, .ok)
