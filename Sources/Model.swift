@@ -76,7 +76,7 @@ final class Model: ObservableObject {
     /// the 1 s sampler, so it appears on time even on a screen where nothing else changes.
     @Published private(set) var expiryWarning: String?
 
-    /// For the Settings sheet, which refreshes it, see `refreshNoticePermission`.
+    /// For the Settings sheet. Refreshed each time Tether comes on screen and when Settings opens, see `refreshNoticePermission`.
     @Published private(set) var noticePermission: NoticePermission = .notAsked
     /// Where Settings saves the notification switches and the idle stop. A demo launch has its own, emptied at launch.
     let settingsDefaults: UserDefaults
@@ -422,6 +422,8 @@ final class Model: ObservableObject {
             model.session.cameOnScreen()
             model.localNetworkIntro.check() // afresh, for a change made in Settings
             model.startSampler() // samples at once, then every second again
+            // Before Settings opens, or it shows "Allow notifications" for a moment (#184).
+            Task { await model.refreshNoticePermission() }
         }
         observe(UIApplication.willResignActiveNotification) { model in
             model.session.leftScreen()

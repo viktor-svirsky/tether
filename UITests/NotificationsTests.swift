@@ -74,7 +74,7 @@ final class NotificationsTests: TetherUITestCase {
         openSettings()
         XCTAssertTrue(element("notices.allow").waitForExistence(timeout: 5))
         reveal(element("notices.footer")) // below Devices
-        XCTAssertEqual(label(of: "notices.footer"), "Only while Tether is in the background. On screen, the screen shows it.")
+        XCTAssertEqual(label(of: "notices.footer"), "Only while Tether is in the background. While it's open, you see it on screen.")
         assertNowhere(element("notices.denied"))
     }
 
@@ -178,5 +178,6 @@ final class NotificationsTests: TetherUITestCase {
         openSettings()
         let expires = reveal(element("settings.expires")).label
         XCTAssertNotNil(expires.range(of: #"^Stops opening.*\d"#, options: .regularExpression), expires)
+        XCTAssertEqual(reveal(element("settings.expiresFooter")).label, "With a free Apple ID, refresh Tether in SideStore or AltStore before then.")
     }
 }

@@ -8,7 +8,7 @@ final class HotspotSessionTests: XCTestCase {
     private let hotspot = "172.20.10.1"
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
     private let locked = "Its keys can't be read yet. Unlock this iPhone once."
-    private let couldntStart = "It couldn't start: port in use"
+    private let couldntStart = "It couldn't start. Tether tries again by itself. If this stays, share the log from Settings."
 
     private var server: FakeServer!
     private var sound: FakeSound!
@@ -634,7 +634,7 @@ final class HotspotSessionTests: XCTestCase {
         session.removeWireGuardDevice(peer.id)
         XCTAssertEqual(server.starts, [hotspot, hotspot], "tried again with the saved devices")
         XCTAssertFalse(server.running, "a removed device is never let in")
-        XCTAssertEqual(session.wireGuardProblem, "It couldn't start: \(FakeServer.Refused())")
+        XCTAssertEqual(session.wireGuardProblem, couldntStart)
         server.refusedAddress = nil
         session.syncWithHotspot()
         XCTAssertTrue(server.running)

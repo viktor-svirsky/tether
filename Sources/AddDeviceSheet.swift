@@ -14,6 +14,7 @@ struct AddDeviceSheet: View {
     @State private var readyID: WireGuardSetup.Peer.ID?
     /// Which way the device gets its config: a phone or tablet scans, a computer downloads.
     @State private var kind = Kind.phone
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     enum Kind: Hashable { case phone, computer }
 
@@ -33,11 +34,25 @@ struct AddDeviceSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
+                    // Above the steps: a device scanned first would only learn after that it can't work.
+                    if model.localNetworkDenied && !progress.finished {
+                        localNetworkWarning
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                            .background(Self.card)
+                    }
+                    if progress.device == nil {
+                        // Every step after this assumes WireGuard is on the other device (#169).
+                        Text("Install the free WireGuard app on the other device: App Store, Google Play, or wireguard.com/install.")
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("add.install")
+                    }
                     VStack(spacing: 0) {
                         StepRow(number: 1, mark: mark(progress.joined, step: 1, current: current), lineDone: progress.joined == .done,
                                 title: "Join this iPhone's hotspot", id: "add.step1") {
                             if progress.joined == .done {
-                                note("The hotspot is on")
+                                note("The hotspot is on. Join it on the new device too.")
                             } else {
                                 HotspotWaitingHint(id: "add")
                                     .font(.subheadline)
@@ -51,8 +66,8 @@ struct AddDeviceSheet: View {
                                 title: "Turn its tunnel on", id: "add.step3") {
                             switch (progress.tunnel, progress.device) {
                             case (.done, _): note("Connected")
-                            // The sheet covers the status card, and this is where a device would wait forever.
-                            case _ where model.localNetworkDenied: localNetworkWarning
+                            // It won't tick off by itself: the warning above says why.
+                            case _ where model.localNetworkDenied: note("Waiting for Local Network to be on")
                             case _ where model.staleConfigShown:
                                 Text("A device is trying to connect with a config that no longer works. If it's this one, delete its tunnel in WireGuard and give it the config again.")
                                     .font(.subheadline)
@@ -64,7 +79,7 @@ struct AddDeviceSheet: View {
                         }
                     }
                     .padding(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 18))
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .background(Self.card)
 
                     if progress.finished, let device = progress.device {
                         VStack(spacing: 14) {
@@ -132,6 +147,10 @@ struct AddDeviceSheet: View {
         }
     }
 
+    private static var card: some View {
+        RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color(.secondarySystemGroupedBackground))
+    }
+
     /// The first step that isn't done, the one the person is on.
     static func current(_ progress: AddDeviceProgress) -> Int {
         [progress.joined, progress.config, progress.tunnel].firstIndex { $0 != .done }.map { $0 + 1 } ?? 4
@@ -197,6 +216,9 @@ struct AddDeviceSheet: View {
                 .resizable()
                 .scaledToFit()
                 .frame(maxWidth: 200)
+                // The QR standard's quiet zone, four modules or more, which a dark card doesn't give (#178).
+                .padding(16)
+                .background(.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .frame(maxWidth: .infinity)
                 .accessibilityLabel("QR code for the next device")
                 .accessibilityIdentifier("add.qr")
@@ -252,25 +274,24 @@ struct AddDeviceSheet: View {
 
     /// One address of the page, with a button to copy it.
     private func addressRow(_ address: String, id: String, copyID: String) -> some View {
-        HStack(spacing: 10) {
-            if let url = URL(string: address) {
-                // An IPv6 address is up to 47 characters with http:// and its brackets, with no space
-                // to break a line at. A zero-width space after each colon lets it wrap to a second
-                // line at a readable size. The link and the copy button keep the address as it is.
-                Link(destination: url) {
-                    Text(address.replacingOccurrences(of: ":", with: ":\u{200B}"))
-                        .font(.title3.weight(.semibold))
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.85)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // VoiceOver says what it is, then the address, which as a label alone fails the audit.
-                    .accessibilityLabel("Page address")
-                    .accessibilityValue(address)
-                    .accessibilityIdentifier(id)
-            }
+        // At accessibility sizes the copy button goes under the address, which then has the whole width.
+        let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+                                                         : AnyLayout(HStackLayout(spacing: 10))
+        return layout {
+            // An IPv6 address is up to 47 characters with http:// and its brackets, with no space to
+            // break a line at. A zero-width space after each colon lets it wrap, to as many lines as it
+            // needs: it's typed into another device, so none of it may be cut (#170). Plain text, not a
+            // link: a tap would open the page on this iPhone (#184). The copy button keeps it as it is.
+            Text(address.replacingOccurrences(of: ":", with: ":\u{200B}"))
+                .font(.title3.weight(.semibold))
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // VoiceOver says what it is, then the address, which as a label alone fails the audit.
+                .accessibilityLabel("Page address")
+                .accessibilityValue(address)
+                .accessibilityIdentifier(id)
             Button {
                 UIPasteboard.general.string = address
             } label: {
@@ -405,7 +426,7 @@ enum ReadyCode {
         if let made, made.text == text, made.file.map({ FileManager.default.fileExists(atPath: $0.path) }) ?? false {
             return (made.qr, made.file)
         }
-        let code = (text: text, qr: QRCode.image(text), file: ConfigFile.write(text, named: "Tether"))
+        let code = (text: text, qr: QRCode.image(text), file: ConfigFile.write(text, named: ""))
         made = code
         return (code.qr, code.file)
     }

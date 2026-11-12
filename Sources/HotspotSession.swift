@@ -71,6 +71,8 @@ final class HotspotSession {
     private(set) var wireGuardReady: WireGuardSetup.Ready? { willSet { willChange() } }
     /// Why there's no QR code while the devices that have one still connect: making the next one couldn't be saved.
     private(set) var wireGuardReadyProblem: String? { willSet { willChange() } }
+    /// Why the code for the next device can't be saved, logged once for each new reason.
+    private var readyReason: String?
     /// A rename, removal, pause or resume that couldn't be saved, shown on that device's screen until a change saves.
     private(set) var wireGuardDeviceProblem: DeviceProblem? { willSet { willChange() } }
     /// Why WireGuard isn't running, shown on the main screen: the saved setup's problem from launch on,
@@ -285,7 +287,8 @@ final class HotspotSession {
             showProblem()
             log("WireGuard on \(hosts.joined(separator: " and ")) port \(WireGuardSetup.port), \(wireGuardPeers.count) devices")
         } catch {
-            startProblem = "It couldn't start: \(error)"
+            // The error goes to the log, see `showProblem`: on screen it says what to do.
+            startProblem = "It couldn't start. Tether tries again by itself. If this stays, share the log from Settings."
             showProblem(because: error)
         }
     }
@@ -294,7 +297,7 @@ final class HotspotSession {
     private static func problem(with error: Error) -> String {
         switch error {
         case is WireGuardDevices.Unreadable: "Its saved keys can't be read. Start over with new keys to use it."
-        case let unsaved as WireGuardDevices.Unsaved: "Its new keys can't be saved: \(unsaved.reason)."
+        case is WireGuardDevices.Unsaved: "Its new keys can't be saved. If this stays, share the log from Settings."
         default: "Its keys can't be read yet. Unlock this iPhone once."
         }
     }
@@ -614,11 +617,14 @@ final class HotspotSession {
             if monthlyUsage != before { usageUnsaved = true }
         }
         wireGuardReady = devices.setup.ready
-        let readyProblem = devices.readyError.map { "The code for the next device can't be saved: \($0)." }
-        if readyProblem != wireGuardReadyProblem {
-            wireGuardReadyProblem = readyProblem
-            if let readyProblem { log("WireGuard: \(readyProblem)") }
+        // The reason, a Keychain code say, goes to the log only, each new one once.
+        let reason = devices.readyError.map { "\($0)" }
+        if reason != readyReason {
+            readyReason = reason
+            if let reason { log("WireGuard: the code for the next device can't be saved: \(reason)") }
         }
+        let readyProblem = reason.map { _ in "The code for the next device can't be saved. Tether tries again by itself. If this stays, share the log from Settings." }
+        if readyProblem != wireGuardReadyProblem { wireGuardReadyProblem = readyProblem }
     }
 
     /// The server lets in exactly the saved devices, and the ready one while the add window is open. If

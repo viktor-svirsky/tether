@@ -4,7 +4,7 @@ import XCTest
 final class DeviceViewTests: TetherUITestCase {
     private let lockedText = "Its keys can't be read yet. Unlock this iPhone once."
     private let resetText = "Its saved keys can't be read. Start over with new keys to use it."
-    private let unsavedText = "Its new keys can't be saved: Keychain error -34018."
+    private let unsavedText = "Its new keys can't be saved. If this stays, share the log from Settings."
 
     // MARK: one device
 
@@ -243,9 +243,20 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(element("add.open"))
     }
 
+    /// It removes every device, so it asks first and says what it costs (#174).
+    func testStartingOverAsksFirst() {
+        launch(.wireGuardNeedsReset)
+        reveal(element("wireguard.reset")).tap()
+        XCTAssertTrue(app.staticTexts["Every device has to be added again. If you went back to an older Tether, update it instead."].waitForExistence(timeout: 5))
+        // Cancelling keeps the keys: the problem and the way out are still there.
+        cancelDialog()
+        XCTAssertEqual(staticText("wireguard.problem").label, resetText)
+    }
+
     func testStartingOverClearsTheProblemAndShowsTheQRCode() {
         launch(.wireGuardNeedsReset)
         reveal(element("wireguard.reset")).tap()
+        app.buttons["Start Over"].firstMatch.tap()
         waitUntilGone(element("wireguard.problem"))
         assertNowhere(element("wireguard.reset"))
         XCTAssertEqual(reveal(element("add.open")).label, "Add a device", "no device yet after starting over")

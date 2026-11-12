@@ -50,9 +50,6 @@ struct SettingsView: View {
         }
         // Settings may have changed it while Tether was away.
         .task { await model.refreshNoticePermission() }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            Task { await model.refreshNoticePermission() }
-        }
     }
 
     private var help: some View {
@@ -72,7 +69,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var about: some View {
-        Section("About") {
+        Section {
             LabeledContent("Version", value: Model.version)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("settings.version")
@@ -82,6 +79,13 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.expires")
             }
             LabeledContent("License", value: "MIT")
+        } header: {
+            Text("About")
+        } footer: {
+            if model.expires != nil {
+                Text("With a free Apple ID, refresh Tether in SideStore or AltStore before then.")
+                    .accessibilityIdentifier("settings.expiresFooter")
+            }
         }
     }
 
@@ -134,7 +138,7 @@ struct SettingsView: View {
                 }
             }
         } header: {
-            Text("Devices")
+            Text("DNS for your devices")
         } footer: {
             Text(dns == .controlD && DNSChoice.controlD(typed: dnsControlD) != nil ? Self.controlDFooter : Self.footer)
                 // In the label colour: this footer's grey just misses the contrast audit.
@@ -157,7 +161,7 @@ struct SettingsView: View {
                 Button("Allow notifications") { model.askForNotices() }
                     .accessibilityIdentifier("notices.allow")
             } footer: {
-                Text("Or Tether asks the first time something happens that it would tell.")
+                Text("Or Tether asks the first time it has something to tell you.")
             }
         }
         if model.noticePermission == .denied {
@@ -177,7 +181,7 @@ struct SettingsView: View {
         } header: {
             Text("Notify me when")
         } footer: {
-            Text("Only while Tether is in the background. On screen, the screen shows it.")
+            Text("Only while Tether is in the background. While it's open, you see it on screen.")
                 .accessibilityIdentifier("notices.footer")
         }
     }

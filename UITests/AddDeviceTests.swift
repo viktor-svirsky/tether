@@ -22,6 +22,7 @@ final class AddDeviceTests: TetherUITestCase {
     func testTheSheetShowsTheStepsAndTheCode() {
         launch(.waiting)
         openAddDevice()
+        XCTAssertEqual(label(of: "add.install"), "Install the free WireGuard app on the other device: App Store, Google Play, or wireguard.com/install.")
         XCTAssertEqual(label(of: "add.step1"), "Join this iPhone's hotspot")
         XCTAssertEqual(label(of: "add.step1.mark"), "Step 1 of 3")
         XCTAssertEqual(label(of: "add.hotspotHint"), "Turn on Personal Hotspot, then join it from the other device. Tether starts when the first device joins.")
@@ -38,7 +39,8 @@ final class AddDeviceTests: TetherUITestCase {
         assertNowhere(element("add.address"), element("add.share"), element("add.result"), element("add.done"), element("add.joinFirst"))
     }
 
-    /// A computer gets the page's address as a link, a button that copies it, and the file to share.
+    /// A computer gets the page's address as text, a button that copies it, and the file to share. Not a
+    /// link: a tap would open the page on this iPhone (#184).
     func testAComputerGetsTheAddressAndTheFile() {
         launch(.waiting)
         openAddDevice()
@@ -47,8 +49,7 @@ final class AddDeviceTests: TetherUITestCase {
         let address = reveal(element("add.address"))
         XCTAssertEqual(address.label, "Page address")
         XCTAssertEqual(address.value as? String, "http://172.20.10.1")
-        // iOS 18 reports a SwiftUI Link as a button.
-        XCTAssertTrue([.link, .button].contains(address.elementType), "a link or a button, so it can be tapped")
+        XCTAssertEqual(address.elementType, .staticText, "not a link")
         XCTAssertEqual(element("add.copy").label, "Copy the address")
         XCTAssertTrue(reveal(element("add.share")).label.contains("Share the file"))
         XCTAssertEqual(reveal(element("add.airdrop")).label, "AirDrop it to a Mac, then open it in WireGuard.")
@@ -73,11 +74,27 @@ final class AddDeviceTests: TetherUITestCase {
         try audit(only: "add.")
     }
 
+    /// The address is typed into another device, so all of it shows, also at the largest text size,
+    /// where the copy button goes under it (#170). The audit's clipped-text check sees an ellipsis.
+    func testTheWholeAddressShowsAtTheLargestTextSize() throws {
+        launch(.addDeviceComputerIPv6, arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
+        let mac = reveal(element("add.addressMac"))
+        let copy = reveal(element("add.copyMac"))
+        // Taller than the screen at this size, so only its width is checked: it wraps instead of running off.
+        let window = app.windows.firstMatch.frame
+        XCTAssertTrue(mac.frame.minX >= window.minX && mac.frame.maxX <= window.maxX, "\(mac.frame) outside \(window)")
+        // Under it, not beside it. The text's frame runs past its last line at this size, so it isn't
+        // compared with the button's top.
+        XCTAssertLessThan(copy.frame.minX, mac.frame.maxX, "the copy button is under the address, not beside it")
+        XCTAssertGreaterThan(copy.frame.minY, mac.frame.midY)
+        try audit(types: [.textClipped], only: "add.address")
+    }
+
     func testWithADeviceOnTheHotspotTheFirstStepIsTicked() {
         launch(.noDevices)
         openAddDevice()
         XCTAssertEqual(label(of: "add.step1.mark"), "Done")
-        XCTAssertTrue(text(containing: "The hotspot is on").exists)
+        XCTAssertTrue(text(containing: "The hotspot is on. Join it on the new device too.").exists)
         XCTAssertEqual(label(of: "add.step2.mark"), "Step 2 of 3")
         assertNowhere(element("add.hotspotPath"), element("add.hotspotHint"))
     }
@@ -124,7 +141,7 @@ final class AddDeviceTests: TetherUITestCase {
     func testAQRCodeThatCantBeSavedSaysWhyAndOffersNoButton() {
         launch(.qrCodeUnsaved)
         XCTAssertEqual(label(of: "status.title"), "Sharing")
-        XCTAssertEqual(reveal(staticText("add.problem")).label, "The code for the next device can't be saved: Keychain error -34018.")
+        XCTAssertEqual(reveal(staticText("add.problem")).label, "The code for the next device can't be saved. Tether tries again by itself. If this stays, share the log from Settings.")
         XCTAssertTrue(sectionHeader("ADD ANOTHER DEVICE").exists)
         XCTAssertTrue(reveal(element("device.iPad")).exists)
         assertNowhere(element("add.open"), element("wireguard.problem"))
