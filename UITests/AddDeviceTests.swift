@@ -18,12 +18,13 @@ final class AddDeviceTests: TetherUITestCase {
         assertNowhere(element("add.hint"))
     }
 
-    /// With the hotspot off nothing is ticked, and the code is there anyway: a device can scan it first.
+    /// With the hotspot off or empty nothing is ticked, and a device can scan the code first.
     func testTheSheetShowsTheStepsAndTheCode() {
         launch(.waiting)
         openAddDevice()
         XCTAssertEqual(label(of: "add.step1"), "Join this iPhone's hotspot")
         XCTAssertEqual(label(of: "add.step1.mark"), "Step 1 of 3")
+        XCTAssertEqual(label(of: "add.hotspotHint"), "Turn on Personal Hotspot, then join it from the other device. Tether starts when the first device joins.")
         XCTAssertEqual(label(of: "add.step2"), "Give it the config")
         XCTAssertEqual(label(of: "add.step2.mark"), "Step 2 of 3")
         XCTAssertEqual(label(of: "add.step3"), "Turn its tunnel on")
@@ -72,13 +73,13 @@ final class AddDeviceTests: TetherUITestCase {
         try audit(only: "add.")
     }
 
-    func testWithTheHotspotOnTheFirstStepIsTicked() {
+    func testWithADeviceOnTheHotspotTheFirstStepIsTicked() {
         launch(.noDevices)
         openAddDevice()
         XCTAssertEqual(label(of: "add.step1.mark"), "Done")
         XCTAssertTrue(text(containing: "The hotspot is on").exists)
         XCTAssertEqual(label(of: "add.step2.mark"), "Step 2 of 3")
-        assertNowhere(element("add.hotspotPath"))
+        assertNowhere(element("add.hotspotPath"), element("add.hotspotHint"))
     }
 
     func testTheSheetCloses() {

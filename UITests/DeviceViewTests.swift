@@ -229,7 +229,7 @@ final class DeviceViewTests: TetherUITestCase {
     /// Without the hotspot there's no QR code either, so a new user would have no way to add a device and no reason why.
     func testLockedKeysShowBeforeTheHotspotIsOn() {
         launch(.wireGuardLockedWaiting)
-        XCTAssertEqual(label(of: "status.title"), "Turn on Personal Hotspot")
+        XCTAssertEqual(label(of: "status.title"), "Waiting for a device on the hotspot")
         let banner = staticText("wireguard.problem")
         XCTAssertTrue(reveal(banner).exists)
         XCTAssertEqual(banner.label, lockedText)
