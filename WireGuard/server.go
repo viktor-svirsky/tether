@@ -237,9 +237,11 @@ type Server struct {
 	conns     map[netip.Addr]int
 	// The caps, see the constants. Tests lower them.
 	maxCones, maxDials, maxConns, maxPings, maxLookups int
-	// DNS on 10.7.0.1, see dns.go. Tests swap dohClient, lookupTimeout and plainTimeout.
-	upstream      atomic.Pointer[dnsUpstream]
-	dohClient     *http.Client
+	// DNS on 10.7.0.1, see dns.go. Tests swap dohClient, dohSpare, lookupTimeout and plainTimeout.
+	upstream  atomic.Pointer[dnsUpstream]
+	dohClient *http.Client
+	// dohSpare asks again next to a slow request, on a connection of its own, see doh.
+	dohSpare      *http.Client
 	lookupTimeout time.Duration
 	plainTimeout  time.Duration
 	dnsFailing    atomic.Bool        // see dnsResult
@@ -326,7 +328,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
-	s.dohClient, s.lookupTimeout = newDoHClient(dialer.DialContext), lookupTimeout
+	s.dohClient, s.dohSpare, s.lookupTimeout = newDoHClient(dialer.DialContext), newDoHClient(dialer.DialContext), lookupTimeout
 	s.plainTimeout = plainTimeout
 	s.stack = stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
@@ -417,6 +419,7 @@ func (s *Server) close() {
 			s.conesRunning.Wait() // closing the socket ends them at once
 			s.looking.Wait()      // the cancelled context ends their requests
 			s.dohClient.CloseIdleConnections()
+			s.dohSpare.CloseIdleConnections()
 			return
 		case <-time.After(50 * time.Millisecond):
 		}

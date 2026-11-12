@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -115,6 +116,8 @@ type dohServer struct {
 	held     atomic.Bool
 	free     chan struct{}
 	freeOnce sync.Once
+	// delay holds each answer back this long, for a slow but working server.
+	delay atomic.Int64
 }
 
 func newDoH(t *testing.T, records int) *dohServer {
@@ -129,6 +132,13 @@ func newDoH(t *testing.T, records int) *dohServer {
 		}
 		q, _ := io.ReadAll(r.Body)
 		d.asked <- q
+		if delay := time.Duration(d.delay.Load()); delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-r.Context().Done():
+				return
+			}
+		}
 		if d.held.Load() {
 			select {
 			case <-d.free:
@@ -170,6 +180,8 @@ func waitAsked(t *testing.T, d *dohServer) []byte {
 // a lock, and one may still run after its device gave up. SetDNS changes the URL at any time.
 func viaDoH(s *Server, d *dohServer) {
 	s.dohClient = d.Client()
+	// Its own transport, so its own connection, like the server's.
+	s.dohSpare = &http.Client{Transport: d.Client().Transport.(*http.Transport).Clone()}
 	s.SetDNS(&dnsUpstream{doh: d.URL + "/abc123"})
 }
 
@@ -1016,6 +1028,131 @@ func TestALookupIsAskedAgainOnAFailedConnection(t *testing.T) {
 	s.dohClient = &http.Client{Transport: &failOnce{RoundTripper: d.Client().Transport}}
 	if _, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), answerWait); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// silentConn is a connection whose writes vanish once it's dead, the way one does when the path
+// under it goes away without a reset: nothing fails, the request only hangs.
+type silentConn struct {
+	net.Conn
+	dead, closed atomic.Bool
+}
+
+func (c *silentConn) Close() error {
+	c.closed.Store(true)
+	return c.Conn.Close()
+}
+
+func (c *silentConn) Write(b []byte) (int, error) {
+	if c.dead.Load() {
+		return len(b), nil
+	}
+	return c.Conn.Write(b)
+}
+
+// A connection that goes quiet doesn't take the whole lookup: the first try gives up early, and the
+// lookup is answered on a new connection (#148).
+func TestALookupOnADeadConnectionIsAnsweredOnANewOne(t *testing.T) {
+	s, c := setup(t)
+	d := newDoH(t, 1)
+	viaDoH(s, d)
+	tr := d.Client().Transport.(*http.Transport).Clone()
+	tr.ForceAttemptHTTP2 = true
+	var mu sync.Mutex
+	var conns []*silentConn
+	tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		sc := &silentConn{Conn: conn}
+		mu.Lock()
+		conns = append(conns, sc)
+		mu.Unlock()
+		return sc, nil
+	}
+	s.dohClient, s.dohSpare = &http.Client{Transport: tr}, &http.Client{Transport: tr.Clone()}
+	s.lookupTimeout = scaled(2 * time.Second)
+	if _, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), answerWait); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	conns[0].dead.Store(true)
+	mu.Unlock()
+	answer, err := lookupUDP(c, lookupFor(t, 2, "example.org.", 0), answerWait)
+	if err != nil {
+		t.Fatal("the lookup after the connection died got no answer:", err)
+	}
+	if rcode := answer[3] & 0x0f; rcode != 0 {
+		t.Fatalf("the lookup after the connection died got rcode %d", rcode)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(conns) != 2 {
+		t.Fatalf("%d connections, want a second one for the dead first", len(conns))
+	}
+}
+
+// A slow but working server answers every lookup: a slow request isn't cut off, and the
+// connection it shares with other lookups stays open (#148).
+func TestASlowServerAnswersEveryLookup(t *testing.T) {
+	s, c := setup(t)
+	d := newDoH(t, 1)
+	viaDoH(s, d)
+	s.lookupTimeout = scaled(2 * time.Second)
+	// Past the 2/5 a first try had before it was cut off, so cutting it off would fail them.
+	d.delay.Store(int64(s.lookupTimeout * 7 / 10))
+	var wg sync.WaitGroup
+	failed := make(chan string, 6)
+	for i := range 6 {
+		wg.Go(func() {
+			time.Sleep(time.Duration(i) * scaled(100*time.Millisecond)) // staggered, like a page's lookups
+			answer, err := lookupUDP(c, lookupFor(t, uint16(i+1), fmt.Sprintf("host%d.example.com.", i), 0), answerWait)
+			if err != nil {
+				failed <- err.Error()
+			} else if rcode := answer[3] & 0x0f; rcode != 0 {
+				failed <- fmt.Sprintf("lookup %d got rcode %d", i, rcode)
+			}
+		})
+	}
+	wg.Wait()
+	close(failed)
+	for f := range failed {
+		t.Error(f)
+	}
+}
+
+// A connection that goes quiet is pinged, and closed when the ping goes unanswered, so later
+// lookups don't wait for their hedge on it (#148).
+func TestADoHConnectionThatFailsItsPingIsClosed(t *testing.T) {
+	d := newDoH(t, 1)
+	after, wait := dohPingAfter, dohPingWait
+	dohPingAfter, dohPingWait = scaled(200*time.Millisecond), scaled(200*time.Millisecond)
+	t.Cleanup(func() { dohPingAfter, dohPingWait = after, wait })
+	var conn atomic.Pointer[silentConn]
+	client := newDoHClient(func(ctx context.Context, network, address string) (net.Conn, error) {
+		c, err := (&net.Dialer{}).DialContext(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		sc := &silentConn{Conn: c}
+		conn.Store(sc)
+		return sc, nil
+	})
+	client.Transport.(*http.Transport).TLSClientConfig = d.Client().Transport.(*http.Transport).TLSClientConfig
+	s := &Server{dohClient: client, dohSpare: client, lookupTimeout: answerWait}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	t.Cleanup(s.cancel)
+	if _, err := s.doh(d.URL+"/abc123", lookupFor(t, 1, "example.com.", 0)); err != nil {
+		t.Fatal(err)
+	}
+	conn.Load().dead.Store(true)
+	deadline := time.Now().Add(answerWait)
+	for !conn.Load().closed.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("the quiet connection was never closed")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
