@@ -13,6 +13,8 @@ final class ConfigPageServer {
     var onChange: @MainActor () -> Void = {}
     /// Called when a listener fails, after all of them have stopped.
     var onFailure: @MainActor (Error) -> Void = { _ in }
+    /// A client that isn't on the hotspot, refused without an answer.
+    var onRefused: @MainActor (_ client: String) -> Void = { _ in }
 
     /// Started, and not failed or stopped since. HotspotSession starts one that isn't again.
     var running: Bool { !listeners.isEmpty }
@@ -123,6 +125,12 @@ final class ConfigPageServer {
     }
 
     private func accept(_ connection: NWConnection) {
+        // Before it takes a place: the internet mustn't fill them, see `ConfigPage.onHotspot`.
+        let client = Self.client(of: connection)
+        guard ConfigPage.onHotspot(client, hosts: hosts) else {
+            onRefused(client)
+            return connection.cancel()
+        }
         guard open < Self.maxConnections else { return connection.cancel() }
         open += 1
         connection.stateUpdateHandler = { [weak self] state in
@@ -160,10 +168,7 @@ final class ConfigPageServer {
     }
 
     private func answer(_ connection: NWConnection, _ request: ConfigPage.Request) {
-        let client = Self.client(of: connection)
-        // No answer at all to the internet, see `ConfigPage.onHotspot`.
-        guard ConfigPage.onHotspot(client, hosts: hosts) else { return connection.cancel() }
-        let response = respond(request, client)
+        let response = respond(request, Self.client(of: connection))
         // The final message ends the stream, so the client reads the whole body before the close.
         connection.send(content: response.bytes, contentContext: .finalMessage, isComplete: true,
                         completion: .contentProcessed { _ in Self.drain(connection) })

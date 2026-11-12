@@ -9,7 +9,7 @@ final class ConfigPageTests: XCTestCase {
 
     private let download = "GET \(ConfigPage.downloadPath) HTTP/1.1\r\n"
 
-    func testOnlyTheRequestLineCounts() {
+    func testTheRequestLineSaysWhatIsAsked() {
         let cases: [(head: String, request: ConfigPage.Request, line: UInt)] = [
             ("GET / HTTP/1.1\r\nHost: 172.20.10.1\r\n\r\n", .page, #line),
             ("GET / HTTP/1.0\r\n\r\n", .page, #line),
@@ -20,7 +20,7 @@ final class ConfigPageTests: XCTestCase {
             ("GET /tether.conf HTTP/1.1\r\n\r\n", .notFound, #line), // paths are case-sensitive
             ("GET /Tether.conf/ HTTP/1.1\r\n\r\n", .notFound, #line),
             ("HEAD / HTTP/1.1\r\n\r\n", .pageHead, #line),
-            ("HEAD /Tether.conf HTTP/1.1\r\n\r\n", .configHead, #line),
+            ("HEAD /Tether.conf?t=\(ConfigPage.token) HTTP/1.1\r\n\r\n", .configHead, #line),
             ("HEAD /favicon.ico HTTP/1.1\r\n\r\n", .notFound, #line),
             ("OPTIONS / HTTP/1.1\r\n\r\n", .notGet, #line),
             ("POST /Tether.conf HTTP/1.1\r\n\r\n", .notGet, #line),
@@ -50,6 +50,7 @@ final class ConfigPageTests: XCTestCase {
             ("[2607:FB91:88A2:E822:0:0:0:1]:80", .config, #line), // the same address, written another way
             (nil, .config, #line), // HTTP/1.0 may send none, and a rebinding browser always does
             ("evil.example", .malformed, #line),
+            ("172.20.10.1.", .malformed, #line), // a trailing dot is a name, not the address
             ("evil.example:80", .malformed, #line),
             ("172.20.10.2", .malformed, #line),
             ("[2607:fb91:88a2:e822::2]", .malformed, #line),
@@ -65,9 +66,15 @@ final class ConfigPageTests: XCTestCase {
     /// Another site can make a browser on the hotspot fetch the download (an <img>, say), and each
     /// download claims the ready device. Without the token from the page it gets the page (#158).
     func testADownloadWithoutThePagesTokenGetsThePage() {
-        XCTAssertEqual(request("GET /Tether.conf HTTP/1.1\r\n\r\n"), .page)
-        XCTAssertEqual(request("GET /Tether.conf?t=wrong HTTP/1.1\r\n\r\n"), .page)
-        XCTAssertEqual(request("HEAD /Tether.conf HTTP/1.1\r\n\r\n"), .configHead, "a HEAD claims nothing")
+        XCTAssertEqual(request("GET /Tether.conf HTTP/1.1\r\n\r\n"), .configWithoutToken)
+        XCTAssertEqual(request("GET /Tether.conf?t=wrong HTTP/1.1\r\n\r\n"), .configWithoutToken)
+        XCTAssertEqual(request("GET /Tether.conf?t=\(ConfigPage.token)x HTTP/1.1\r\n\r\n"), .configWithoutToken)
+        XCTAssertEqual(request("HEAD /Tether.conf HTTP/1.1\r\n\r\n"), .pageHead, "no config headers either")
+        var handler = ConfigPageHandler()
+        let inputs = ConfigPageHandler.Inputs(letIn: true, onScreen: true, ready: nil, host: nil, config: nil, stale: [], hosts: [], now: Date())
+        guard case let .answer(response) = handler.answer(.configWithoutToken, from: "172.20.10.3", inputs) else { return XCTFail("claimed") }
+        XCTAssertEqual(response.status, .notFound, "a download tool doesn't save the page as the config")
+        handler.forget()
         XCTAssertTrue(String(decoding: ConfigPage.page(.ready).body, as: UTF8.self).contains("href=\"\(ConfigPage.downloadPath)\""))
         XCTAssertGreaterThanOrEqual(ConfigPage.token.count, 16)
     }
@@ -82,6 +89,7 @@ final class ConfigPageTests: XCTestCase {
         XCTAssertFalse(ConfigPage.onHotspot("2001:db8::7", hosts: hosts))
         XCTAssertFalse(ConfigPage.onHotspot("2607:fb91:88a2:e823::5", hosts: hosts), "the next /64")
         XCTAssertFalse(ConfigPage.onHotspot("2001:db8::7", hosts: ["172.20.10.1"]), "no IPv6 here at all")
+        XCTAssertFalse(ConfigPage.onHotspot("somewhere:80", hosts: hosts), "not an address: refused, not let through")
     }
 
     func testAHeadIsCompleteAtTheEmptyLine() {

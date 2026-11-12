@@ -62,6 +62,7 @@ struct ConfigPageHandler {
                 return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
             }
             return .download(ready, host: host, config: config)
+        case .configWithoutToken: return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
         case .notFound: return .answer(ConfigPage.notFound)
         case .notGet: return .answer(ConfigPage.notGet)
         case .malformed: return .answer(ConfigPage.malformed)

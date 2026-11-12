@@ -28,6 +28,7 @@ protocol ConfigPageServing: AnyObject {
     /// Called when `readyHosts` changes.
     var onChange: @MainActor () -> Void { get set }
     var onFailure: @MainActor (Error) -> Void { get set }
+    var onRefused: @MainActor (_ client: String) -> Void { get set }
     /// Started, and not failed or stopped since.
     var running: Bool { get }
     /// Taking connections.
@@ -139,6 +140,8 @@ final class HotspotSession {
     private var startProblem: String?
     /// What the config page answers, see `pageResponse`.
     private var pageHandler = ConfigPageHandler()
+    /// Clients the page refused that are in the log already, see `pageRefused`.
+    private var refusedClients: Set<String> = []
     /// When the code behind Add a device works, by the clock, see `addWindowOpen`.
     private var addWindow = AddWindow()
     /// The ready device is on the server: the add window was open at the last `followAddWindow()`.
@@ -169,6 +172,14 @@ final class HotspotSession {
         page.respond = { [weak self] request, client in self?.pageResponse(request, from: client) ?? ConfigPage.notFound }
         page.onChange = { [weak self] in self?.pageChanged() }
         page.onFailure = { [weak self] error in self?.pageFailed(error) }
+        page.onRefused = { [weak self] client in self?.pageRefused(client) }
+    }
+
+    /// The first few, so a Mac outside the expected /64 shows in the log (#159), and a scan from the
+    /// internet doesn't fill it.
+    private func pageRefused(_ client: String) {
+        guard refusedClients.count < 10, refusedClients.insert(client).inserted else { return }
+        log("Config page: refused \(client), not on the hotspot")
     }
 
     /// One round of the watcher in `Model`.

@@ -32,6 +32,9 @@ enum ConfigPage {
     /// as a GET, without the body. Download managers send one first.
     enum Request: Equatable {
         case page, config, pageHead, configHead, notFound, notGet, malformed
+        /// A GET of the config without the page's token: it gets the page, with a 404 so a
+        /// download tool doesn't save it as the config.
+        case configWithoutToken
 
         /// `hosts`: where the page listens, see `HotspotSession.boundHosts`.
         init(_ head: Data, hosts: [String]) {
@@ -61,7 +64,7 @@ enum ConfigPage {
             case Substring(ConfigPage.configPath):
                 let query = target.drop { $0 != "?" }.dropFirst().prefix { $0 != "#" }
                 let tokened = query.split(separator: "&").contains { $0 == "t=\(ConfigPage.token)" }
-                self = head ? .configHead : tokened ? .config : .page
+                self = tokened ? (head ? .configHead : .config) : head ? .pageHead : .configWithoutToken
             default: self = .notFound
             }
         }
@@ -87,7 +90,10 @@ enum ConfigPage {
     /// be link-local or in that address's /64, the hotspot's (#159). An IPv4 one is on the hotspot or
     /// behind its NAT, which nobody outside gets through.
     static func onHotspot(_ client: String, hosts: [String]) -> Bool {
-        guard let address = ipv6(client) else { return true }
+        guard let address = ipv6(client) else {
+            var v4 = in_addr()
+            return inet_pton(AF_INET, client, &v4) == 1 // anything else isn't a client address
+        }
         if address[0] == 0xfe && address[1] & 0xc0 == 0x80 { return true } // fe80::/10
         return hosts.compactMap(ipv6).contains { $0.prefix(8) == address.prefix(8) }
     }

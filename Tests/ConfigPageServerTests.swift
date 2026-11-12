@@ -28,6 +28,7 @@ final class ConfigPageServerTests: XCTestCase {
             case .notFound: ConfigPage.notFound
             case .notGet: ConfigPage.notGet
             case .malformed: ConfigPage.malformed
+            case .configWithoutToken: ConfigPage.page(.ready, status: .notFound)
             }
         }
         let ready = expectation(description: "listening")
@@ -110,6 +111,13 @@ final class ConfigPageServerTests: XCTestCase {
         XCTAssertTrue(config.hasSuffix("\r\n\r\n[Interface]\n"), config)
         XCTAssertEqual(asked.map(\.0), [.page, .config])
         XCTAssertEqual(asked.map(\.1), ["127.0.0.1", "127.0.0.1"], "who asked, for the log")
+    }
+
+    /// A page that pointed its own name at this address sends that name as Host, and gets a 400 (#158).
+    func testAForeignHostGetsA400OverTheWire() async throws {
+        let port = try await listen()
+        let reply = text(await exchange(Data("GET \(ConfigPage.downloadPath) HTTP/1.1\r\nHost: evil.example\r\n\r\n".utf8), port: port))
+        XCTAssertTrue(reply.hasPrefix("HTTP/1.1 400 Bad Request"), reply)
     }
 
     func testARequestInPiecesIsAnsweredOnceWhole() async throws {
