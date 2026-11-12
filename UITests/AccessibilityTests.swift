@@ -233,6 +233,6 @@ final class AccessibilityTests: TetherUITestCase {
     func testDarkModeWaitingScreen() {
         XCUIDevice.shared.appearance = .dark
         launch(.waiting)
-        XCTAssertEqual(label(of: "status.title"), "Turn on Personal Hotspot")
+        XCTAssertEqual(label(of: "status.title"), "Waiting for a device on the hotspot")
     }
 }

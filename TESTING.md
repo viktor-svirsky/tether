@@ -86,6 +86,7 @@ These need another person or a game account, so they aren't scripted.
 
 | Test | How | It passes when |
 |---|---|---|
+| Hotspot off or empty | On a physical iPhone, open Tether with Personal Hotspot off, then turn it on in Settings without joining any device and return to Tether. Open Add a device in each state. Finally join the hotspot from another device | Both states say "Waiting for a device on the hotspot" on the main screen. The card and unticked step 1 say "Turn on Personal Hotspot, then join it from the other device. Tether starts when the first device joins." and keep the Settings link. Once a device joins, the waiting guidance disappears and step 1 ticks |
 | FaceTime audio | Call someone from the iPad and talk for 2 minutes | You both hear each other and it doesn't drop |
 | FaceTime video | The same, with video | The picture doesn't freeze for 5 seconds or more |
 | WhatsApp or Telegram call | Voice call from the iPad for 2 minutes | It connects within 10 seconds and doesn't drop |

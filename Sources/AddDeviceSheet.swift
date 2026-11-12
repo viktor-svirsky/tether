@@ -39,9 +39,8 @@ struct AddDeviceSheet: View {
                             if progress.joined == .done {
                                 note("The hotspot is on")
                             } else {
-                                HotspotSettingsLink()
+                                HotspotWaitingHint(id: "add")
                                     .font(.subheadline)
-                                    .accessibilityIdentifier("add.hotspotPath")
                             }
                         }
                         StepRow(number: 2, mark: mark(progress.config, step: 2, current: current), lineDone: progress.config == .done,
