@@ -17,7 +17,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
-    timeout-minutes: 45
+    timeout-minutes: 90 # the suite took 34 min on Oct 30 and ran past 45 on Nov 13
     strategy:
       fail-fast: false
       matrix:

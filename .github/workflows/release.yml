@@ -103,7 +103,7 @@ jobs:
     environment: release # waits for an approval, see the top
     timeout-minutes: 30
     permissions:
-      actions: read # see whether CI passed on this commit
+      actions: read # see whether CI and the UI tests passed on this commit
       contents: write # create the release and its tag
       issues: read # the notes list the issues fixed
       id-token: write # sign the attestation
@@ -121,6 +121,20 @@ jobs:
               echo "CI passed on $GITHUB_SHA"
           else
               echo "::error::CI hasn't passed on $GITHUB_SHA: it failed, is still running, or never ran. Release once it's green."
+              exit 1
+          fi
+      # Model, the views, KeepAlive and Shortcuts are outside the Swift package, so the UI suite is
+      # their only cover, and it runs by hand (ui-tests.yml). A release needs a green run of it on this
+      # commit too, from any branch: main and the release branch are the same commit then (#140).
+      - name: UI tests passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ui-tests.yml/runs?head_sha=$GITHUB_SHA&status=success" --jq .total_count)
+          if (( passed > 0 )); then
+              echo "UI tests passed on $GITHUB_SHA"
+          else
+              echo "::error::The UI tests haven't passed on $GITHUB_SHA. Run them (Actions > UI tests > Run workflow, on the release branch) and release once they're green."
               exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
