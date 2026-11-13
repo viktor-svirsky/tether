@@ -412,7 +412,7 @@ final class HotspotSession {
             connected = unpaused(server.snapshot().connected)
         }
         return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem,
-                                   idleStopped: idleStopped != nil)
+                                   idleStopped: idleStopped != nil, keptAlive: !running || keepAlive.sounding)
     }
 
     var wireGuardNeedsReset: Bool { devices.needsReset }

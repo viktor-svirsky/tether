@@ -769,6 +769,8 @@ final class HotspotSessionTests: XCTestCase {
         session.syncWithHotspot()
         server.connected = ["10.7.0.2", "10.7.0.3"]
         XCTAssertEqual(session.shortcutState(), ShortcutReply.State(running: true, connected: 2, problem: nil))
+        sound.silent = true // iOS gave the keep-alive no sound
+        XCTAssertFalse(session.shortcutState().sharing)
     }
 
     /// The notifications need who is connected in the background too, where the sampler doesn't run.
