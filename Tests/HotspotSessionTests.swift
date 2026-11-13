@@ -305,6 +305,26 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(changes, 1, "and only when it changes")
     }
 
+    /// Sharing with nothing moving, a sample and a watcher round change nothing on screen, so nothing
+    /// redraws every second (#166).
+    func testNothingIsPublishedWhenNothingChanged() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let scanned = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [scanned.address]
+        session.sampleTraffic()
+        session.sampleTraffic()
+        var changes = 0
+        session.willChange = { changes += 1 }
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        session.syncWithHotspot()
+        session.dnsChanged() // publishes the setup, the same as before
+        XCTAssertEqual(changes, 0)
+    }
+
     // MARK: Where a device's config points (#65)
 
     /// A device keeps the address Tether listened on when it connected with the QR code or downloaded its config.
