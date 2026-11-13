@@ -286,6 +286,91 @@ func TestLoadMemoryAtTheConnectionCap(t *testing.T) {
 		goroutines, runtime.NumGoroutine())
 }
 
+// floodServer greets each connection with "hi", then once start is closed sends to it until it fails.
+func floodServer(t *testing.T, start <-chan struct{}) string {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				c.Write([]byte("hi"))
+				<-start
+				buf := make([]byte, 16<<10)
+				for {
+					if _, err := c.Write(buf); err != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return viaRemote(l.Addr().String())
+}
+
+// A device with EACH open connections goes away, like a laptop with a torrent client that closes
+// its lid, and the far ends keep sending. gVisor queues each connection's send buffer for the
+// device, so what one stalled connection holds, times maxConns, must stay well inside
+// SetMemoryLimit's 192 MB. The device is down before anything is sent, so the growth is the
+// server's alone.
+func TestStalledConnectionsStayInsideTheMemoryLimit(t *testing.T) {
+	fullSizeOnly(t)
+	each := envInt("EACH", 64)
+	s, clients, _ := setupMany(t, 1)
+	start := make(chan struct{})
+	flood := floodServer(t, start)
+	var open []net.Conn
+	for range each {
+		conn, err := openHeld(clients[0], flood)
+		if err != nil {
+			t.Fatalf("connection %d: %v", len(open), err)
+		}
+		open = append(open, conn)
+	}
+	inUse := func() uint64 {
+		// Twice, so the buffers resends left in gVisor's pools are gone too.
+		runtime.GC()
+		runtime.GC()
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		return m.HeapInuse + m.StackInuse
+	}
+	clients[0].dev.Down()
+	before, taken := inUse(), s.down.Load()
+	close(start)
+	// The server takes from the far ends until each connection's send buffer is full.
+	for last, deadline := s.down.Load(), time.Now().Add(20*time.Second); time.Now().Before(deadline); {
+		time.Sleep(500 * time.Millisecond)
+		n := s.down.Load()
+		if n == last && n > taken {
+			break
+		}
+		last = n
+	}
+	if s.down.Load() == taken {
+		t.Fatal("the far ends sent nothing, so nothing was measured")
+	}
+	after := inUse()
+	growth := int64(after) - int64(before)
+	perConn := growth / int64(len(open))
+	t.Logf("%d stalled: server took %d KB per connection from the far ends, heap and stacks %d MB -> %d MB (%d KB per connection, %d MB at the cap of %d)",
+		len(open), int64(s.down.Load()-taken)/int64(len(open))>>10, before>>20, after>>20, perConn>>10,
+		perConn*maxConns>>20, maxConns)
+	// A third of the limit for one device's stalled connections leaves the rest to the idle ones
+	// and the other devices.
+	if budget := int64(64<<20) / maxConns; perConn > budget {
+		t.Errorf("a stalled connection holds %d KB, over the %d KB that keeps a device at its cap inside a third of the memory limit",
+			perConn>>10, budget>>10)
+	}
+}
+
 // A travel router and devices that connect directly, all busy at once: the router's client and
 // each device get all their bytes and echoes, the router keeps its role, and no device takes it.
 func TestARouterAndDevicesAtOnce(t *testing.T) {
