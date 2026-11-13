@@ -61,6 +61,23 @@ func TestPingGoesThroughTheTunnel(t *testing.T) {
 	}
 }
 
+// iOS closes a suspended app's sockets during a phone call (#106). The ping socket is opened again,
+// so pings through the tunnel work after the call, not only TCP and UDP (#151).
+func TestPingWorksAfterIOSClosedItsSocket(t *testing.T) {
+	s, c := setup(t)
+	if _, err := pingFrom(c, remote, 0, []byte("before"), 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	s.pings.conn.Load().Close()
+	var err error
+	for seq := 1; seq <= 5; seq++ { // the first one may go out on the closed socket
+		if _, err = pingFrom(c, remote, seq, []byte("after"), 2*time.Second); err == nil {
+			return
+		}
+	}
+	t.Fatal("no reply after the socket was closed:", err)
+}
+
 // A host that doesn't answer gets the device no reply, the same as from the iPhone.
 func TestAPingNobodyAnswersGetsNoReply(t *testing.T) {
 	_, c := setup(t)
