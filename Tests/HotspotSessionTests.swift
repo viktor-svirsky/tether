@@ -1192,6 +1192,24 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertFalse(letIn.contains(ready.publicKey), "its code no longer works")
     }
 
+    /// Handshake times are whole seconds. A window that ends at .25 s and a handshake at .75 s of the
+    /// same second read as the same time, and the device isn't added (#161).
+    func testAHandshakeInTheWindowsLastSecondIsntListed() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        now = minutes(0).addingTimeInterval(0.25)
+        session.leftScreen()
+        session.watch()
+        now = minutes(10.2)
+        server.connected = [ready.address]
+        server.handshakes = [ready.address: minutes(10)] // 0.75 s after the end, cut to the second
+        session.watch()
+        XCTAssertTrue(session.wireGuardPeers.isEmpty)
+    }
+
     /// A new code that can't be saved leaves no code rather than the old one, and the old one stays
     /// off the server after a relaunch too, where the Keychain still has it.
     func testACodeThatCantBeReplacedIsntLetIn() throws {

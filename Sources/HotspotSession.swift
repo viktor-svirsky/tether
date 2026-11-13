@@ -691,7 +691,9 @@ final class HotspotSession {
     /// have connected, whatever an older read says.
     private func claimReady(_ peers: [String: PeerStats], handshakeBy end: Date? = nil) {
         guard readyLetIn, let ready = wireGuardReady, let reached = peers[ready.address], reached.connected,
-              end == nil || reached.lastHandshake.map { $0 <= end! } ?? true,
+              // Handshake times come in whole seconds, so one in the window's last second can't be told
+              // from one just after it: only an earlier second counts.
+              end == nil || reached.lastHandshake.map { $0 < end!.wholeSecondsDown } ?? true,
               let host = host(reachedFrom: reached.endpoint),
               devices.claimReady(address: ready.address, host: host) else { return }
         log("WireGuard: a new device connected with the QR code")
@@ -912,4 +914,9 @@ enum Interfaces {
         }
         return out
     }
+}
+
+private extension Date {
+    /// This time with the fraction of a second dropped.
+    var wholeSecondsDown: Date { Date(timeIntervalSince1970: timeIntervalSince1970.rounded(.down)) }
 }
