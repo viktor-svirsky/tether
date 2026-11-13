@@ -140,7 +140,10 @@ struct AddDeviceSheet: View {
                 UIApplication.shared.isIdleTimerDisabled = self.progress.keepsScreenAwake
             }
             .onChange(of: progress.keepsScreenAwake) { _, awake in UIApplication.shared.isIdleTimerDisabled = awake }
+            // Claimed: its file now holds a key that works.
+            .onChange(of: progress.device != nil) { _, claimed in if claimed { ReadyCode.forget() } }
             .onDisappear {
+                ReadyCode.forget()
                 model.closeAddWindow()
                 UIApplication.shared.isIdleTimerDisabled = false
             }
@@ -421,23 +424,19 @@ private struct StepMark: View {
 enum ReadyCode {
     private static var made: (text: String, qr: UIImage?, file: URL?)?
 
+    /// Only a new config is made again, not each redraw: checking the file was a disk call a second.
     static func `for`(_ text: String) -> (qr: UIImage?, file: URL?) {
-        // The system may clear the temporary directory, so a missing file is written again.
-        if let made, made.text == text, made.file.map({ FileManager.default.fileExists(atPath: $0.path) }) ?? false {
-            return (made.qr, made.file)
-        }
+        if let made, made.text == text { return (made.qr, made.file) }
         let code = (text: text, qr: QRCode.image(text), file: ConfigFile.write(text, named: ""))
         made = code
         return (code.qr, code.file)
     }
-}
 
-/// The config as a .conf file to share. WireGuard names the tunnel after the file. It holds a
-/// private key, so it lives in the temporary directory.
-enum ConfigFile {
-    static func write(_ config: String, named name: String) -> URL? {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(WireGuardSetup.fileName(for: name))
-        return (try? config.write(to: url, atomically: true, encoding: .utf8)) == nil ? nil : url
+    /// The file holds a private key that works once a device has claimed it, so it goes when the
+    /// sheet closes or the code is claimed (#183). The next code writes a new one.
+    static func forget() {
+        made = nil
+        ConfigFile.removeAll()
     }
 }
 
