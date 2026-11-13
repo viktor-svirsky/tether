@@ -1,6 +1,9 @@
 # Tests for make_source.py. Run with `python3 scripts/test_make_source.py`, CI runs them too.
 import json
+import os
 import plistlib
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -59,6 +62,27 @@ class MakeSourceTests(unittest.TestCase):
             version["downloadURL"],
             "https://github.com/viktor-svirsky/tether/releases/download/v1.2.0/Tether.ipa",
         )
+
+    # A fork's release points at the fork's own ipa and images, not this repo's (#147).
+    def test_a_fork_points_at_itself(self):
+        app = make_source.source(self.ipa, "v1.2.0", "2026-10-29", "someone/tether")["apps"][0]
+        [version] = app["versions"]
+        self.assertEqual(version["downloadURL"], "https://github.com/someone/tether/releases/download/v1.2.0/Tether.ipa")
+        self.assertTrue(app["iconURL"].startswith("https://raw.githubusercontent.com/someone/tether/v1.2.0/"))
+
+    # The release workflow runs the script with GITHUB_REPOSITORY set, so that path is what ships.
+    def run_cli(self, repo):
+        env = {k: v for k, v in os.environ.items() if k != "GITHUB_REPOSITORY"}
+        if repo is not None:
+            env["GITHUB_REPOSITORY"] = repo
+        out = subprocess.run([sys.executable, str(Path(__file__).with_name("make_source.py")), str(self.ipa), "v1.2.0"],
+                             env=env, capture_output=True, text=True, check=True).stdout
+        [version] = json.loads(out)["apps"][0]["versions"]
+        return version["downloadURL"]
+
+    def test_the_command_reads_the_repo_from_the_workflow(self):
+        self.assertEqual(self.run_cli("someone/tether"), "https://github.com/someone/tether/releases/download/v1.2.0/Tether.ipa")
+        self.assertEqual(self.run_cli(None), "https://github.com/viktor-svirsky/tether/releases/download/v1.2.0/Tether.ipa")
 
     # SideStore keeps showing what it cached for an unchanged URL, so each release's images are its tag's.
     def test_the_images_point_at_this_release(self):

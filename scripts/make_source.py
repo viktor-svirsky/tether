@@ -6,16 +6,15 @@
 #   scripts/make_source.py Tether.ipa v1.2.0 > source.json
 import datetime
 import json
+import os
 import plistlib
 import re
 import sys
 import zipfile
 from pathlib import Path
 
-REPO = "https://github.com/viktor-svirsky/tether"
-# The release's own tag, so each release's screenshots get new URLs: SideStore keeps showing
-# what it cached for an unchanged URL, even after the file changed on main.
-RAW = "https://raw.githubusercontent.com/viktor-svirsky/tether/{tag}"
+# The repo the release is in, from the workflow, so a fork's source points at its own ipa (#147).
+DEFAULT_REPO = "viktor-svirsky/tether"
 
 
 def info_plist(ipa):
@@ -26,7 +25,11 @@ def info_plist(ipa):
         return plistlib.loads(archive.read(paths[0]))
 
 
-def source(ipa, tag, date):
+def source(ipa, tag, date, repo=DEFAULT_REPO):
+    repo_url = f"https://github.com/{repo}"
+    # The release's own tag, so each release's screenshots get new URLs: SideStore keeps showing
+    # what it cached for an unchanged URL, even after the file changed on main.
+    raw = f"https://raw.githubusercontent.com/{repo}/{tag}"
     info = info_plist(ipa)
     version = info["CFBundleShortVersionString"]
     if tag != f"v{version}":
@@ -37,7 +40,7 @@ def source(ipa, tag, date):
     return {
         "name": "Tether",
         "subtitle": "Share your iPhone's internet without the hotspot speed cap.",
-        "website": REPO,
+        "website": repo_url,
         "nsfw": False,
         "apps": [
             {
@@ -49,10 +52,10 @@ def source(ipa, tag, date):
                     "Tether runs a WireGuard server on your iPhone's Personal Hotspot. Your laptop "
                     "(Windows, Mac or Linux), Android phone, iPad or travel router connects to it with a WireGuard client, and Tether makes every connection "
                     "again from the iPhone, so the traffic counts as the phone's own. "
-                    f"Setup and caveats: {REPO}#readme"
+                    f"Setup and caveats: {repo_url}#readme"
                 ),
-                "iconURL": f"{RAW.format(tag=tag)}/Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
-                "screenshots": [f"{RAW.format(tag=tag)}/docs/{name}.png" for name in ("sharing", "add-device", "notifications")],
+                "iconURL": f"{raw}/Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+                "screenshots": [f"{raw}/docs/{name}.png" for name in ("sharing", "add-device", "notifications")],
                 "category": "utilities",
                 # The IPA is unsigned and has no entitlements. The signing app adds its own.
                 "appPermissions": {
@@ -64,10 +67,10 @@ def source(ipa, tag, date):
                         "version": version,
                         "buildVersion": build,
                         "date": date,
-                        "downloadURL": f"{REPO}/releases/download/{tag}/{Path(ipa).name}",
+                        "downloadURL": f"{repo_url}/releases/download/{tag}/{Path(ipa).name}",
                         "size": Path(ipa).stat().st_size,
                         "minOSVersion": info["MinimumOSVersion"],
-                        "localizedDescription": f"{REPO}/releases/tag/{tag}",
+                        "localizedDescription": f"{repo_url}/releases/tag/{tag}",
                     }
                 ],
             }
@@ -79,5 +82,5 @@ if __name__ == "__main__":
     if len(sys.argv) != 3:
         sys.exit("usage: make_source.py <Tether.ipa> <tag>")
     today = datetime.date.today().isoformat()
-    json.dump(source(sys.argv[1], sys.argv[2], today), sys.stdout, indent=2)
+    json.dump(source(sys.argv[1], sys.argv[2], today, os.environ.get("GITHUB_REPOSITORY") or DEFAULT_REPO), sys.stdout, indent=2)
     print()
