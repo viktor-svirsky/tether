@@ -849,10 +849,9 @@ func (s *Server) ownerLocked(src netip.Addr) netip.Addr {
 }
 
 func (s *Server) unpausedOwnerLocked(src netip.Addr) netip.Addr {
-	for _, addr := range s.peers {
-		if addr == src {
-			return src
-		}
+	// One lookup: cone() asks for every outgoing UDP packet, with s.mu held (#155).
+	if _, ok := s.keys[src]; ok {
+		return src
 	}
 	if s.router.IsValid() && !tunnelNet.Contains(src) {
 		for _, n := range routedNets {
