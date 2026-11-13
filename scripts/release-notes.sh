@@ -11,10 +11,20 @@
 #   - a commit by Dependabot: it quotes upstream notes, whose issue numbers aren't Tether's
 #   - an issue labelled tests, ci, dependencies or documentation: nothing changed in the app
 #   - a pull request, and an issue closed any other way than completed
+# With --require-change, nothing to list fails with exit 3 instead, for the Release workflow: a release
+# nobody using the app can tell apart from the last one isn't published (#139).
 # Reads the issues with gh, for GITHUB_REPOSITORY, and fails when it can't.
 set -euo pipefail
 
-previous=${1-}
+previous= require=
+for arg in "$@"; do
+    case $arg in
+        --require-change) require=1 ;;
+        -*) echo "usage: release-notes.sh [<previous>] [--require-change]" >&2; exit 2 ;;
+        *) [[ -z $previous ]] || { echo "usage: release-notes.sh [<previous>] [--require-change]" >&2; exit 2; }
+           previous=$arg ;;
+    esac
+done
 repo=${GITHUB_REPOSITORY:?release-notes.sh needs GITHUB_REPOSITORY}
 range=${previous:+$previous..}HEAD
 
@@ -46,6 +56,9 @@ for n in $numbers; do
 done
 if [[ -n $lines ]]; then
     printf '%s' "$lines"
+elif [[ -n $require ]]; then
+    echo "Nothing since ${previous:-the start} that people using the app would see: no release." >&2
+    exit 3
 else
     echo "- No change you'd see in the app."
 fi

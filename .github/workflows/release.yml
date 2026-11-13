@@ -122,6 +122,14 @@ jobs:
         # GITHUB_REF is main for workflow_run too, so its main-only check always passes there: decide
         # is what keeps other branches out.
         run: scripts/next-version.sh "$BUMP" >> "$GITHUB_OUTPUT"
+      # An automatic release with nothing in it, a test or CI fix that reached a release branch
+      # before main say, stops here (#139). A run by hand still releases what it's asked to.
+      - name: Something to release
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+        run: scripts/release-notes.sh "$PREVIOUS" --require-change > /dev/null
       - name: Unit tests
         run: |
           scripts/build-wireguard.sh
