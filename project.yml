@@ -10,7 +10,6 @@ settings:
     DEVELOPMENT_TEAM: 33TVZ53MZ2 # your team ID, see Xcode > Settings > Accounts
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
-    TARGETED_DEVICE_FAMILY: "1,2"
     # The app's bundle ID. Pass APP_BUNDLE_ID to xcodebuild to change it.
     APP_BUNDLE_ID: com.vsvirskyi.phoneshare
     MARKETING_VERSION: "" # the release passes its version, and other builds take the last one, see postBuildScripts
@@ -26,6 +25,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
+        TARGETED_DEVICE_FAMILY: "1" # iPhone only: an iPad runs it in an iPhone-sized window (#182)
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_CFBundleDisplayName: Tether
