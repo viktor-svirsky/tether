@@ -61,6 +61,26 @@ func TestPingGoesThroughTheTunnel(t *testing.T) {
 	}
 }
 
+// The server answers a ping to its own tunnel address, which routers ping to check the tunnel is
+// up (#132). A paused device gets no answer, like any other traffic of its.
+func TestTheServerAnswersAPingToItsOwnAddress(t *testing.T) {
+	s, c := setup(t)
+	for seq := range 3 {
+		data := []byte(fmt.Sprintf("ping %d", seq))
+		echo, err := pingFrom(c, "10.7.0.1", seq, data, 5*time.Second)
+		if err != nil {
+			t.Fatalf("ping %d: %v", seq, err)
+		}
+		if echo.Seq != seq || !bytes.Equal(echo.Data, data) {
+			t.Fatalf("ping %d came back as seq %d %q", seq, echo.Seq, echo.Data)
+		}
+	}
+	pause(t, s, true)
+	if echo, err := pingFrom(c, "10.7.0.1", 3, []byte("x"), 500*time.Millisecond); err == nil {
+		t.Fatalf("a paused device got a reply %v", echo)
+	}
+}
+
 // A host that doesn't answer gets the device no reply, the same as from the iPhone.
 func TestAPingNobodyAnswersGetsNoReply(t *testing.T) {
 	_, c := setup(t)
@@ -69,10 +89,10 @@ func TestAPingNobodyAnswersGetsNoReply(t *testing.T) {
 	}
 }
 
-// A ping to the tunnel's own addresses or a multicast one stays inside, like UDP.
+// A ping to another device's tunnel address or a multicast one stays inside, like UDP.
 func TestAPingToTheTunnelStaysInside(t *testing.T) {
 	_, c := setup(t)
-	for _, dst := range []string{"10.7.0.1", "10.7.0.3", "224.0.0.1"} {
+	for _, dst := range []string{"10.7.0.3", "224.0.0.1"} {
 		if echo, err := pingFrom(c, dst, 0, []byte("x"), 500*time.Millisecond); err == nil {
 			t.Fatalf("%s answered %v", dst, echo)
 		}

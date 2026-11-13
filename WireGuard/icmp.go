@@ -16,7 +16,8 @@ import (
 
 // Ping: a device's echo request goes out from the iPhone as a real one, and the real reply comes
 // back, so a ping through the tunnel says what a ping from the iPhone would. stackTun.Write hands
-// echo requests here before gVisor, which drops them, and replies are built like UDP's.
+// echo requests here before gVisor, which drops them, and replies are built like UDP's. A ping to
+// the server's own tunnel address is answered here, see answerPing.
 //
 // iOS lets an app ping without privileges, through a datagram ICMP socket. Darwin keeps the
 // identifier the app chose and hands such a socket every echo reply, so one socket serves every
@@ -73,6 +74,10 @@ func isEchoRequest(p []byte) bool {
 // queuePing runs on wireguard-go's receive goroutine, so it never blocks: the request waits for
 // sendPings, or is dropped when too many do.
 func (s *Server) queuePing(p []byte) {
+	if netip.AddrFrom4(header.IPv4(p).DestinationAddress().As4()) == dnsAddr.Addr() {
+		s.answerPing(p)
+		return
+	}
 	s.pings.once.Do(s.startPinging)
 	if s.pings.conn == nil {
 		return
@@ -80,6 +85,21 @@ func (s *Server) queuePing(p []byte) {
 	select {
 	case s.pings.queue <- slices.Clone(p):
 	default:
+	}
+}
+
+// answerPing replies to an echo request for the server's own tunnel address itself. Routers ping
+// it to check the tunnel is up, and take it down when it doesn't answer (#132). Nothing leaves the
+// iPhone, so nothing is counted. Pings to other tunnel addresses still get no reply, see leaves.
+func (s *Server) answerPing(p []byte) {
+	ip := header.IPv4(p)
+	src, dst := netip.AddrFrom4(ip.SourceAddress().As4()), netip.AddrFrom4(ip.DestinationAddress().As4())
+	m := header.ICMPv4(ip.Payload())
+	reply := echoReply(dst, src, m.Ident(), m.Sequence(), m.Payload(), s.nextID())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed && s.ownerLocked(src).IsValid() {
+		s.tun.inject(reply)
 	}
 }
 
