@@ -9,7 +9,11 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
+	"gvisor.dev/gvisor/pkg/buffer"
+	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/checksum"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
 // pingFrom sends one echo request from the device and returns the reply, or an error after wait.
@@ -27,7 +31,7 @@ func pingFrom(c *client, dst string, seq int, data []byte, wait time.Duration) (
 		return nil, err
 	}
 	pc.SetReadDeadline(time.Now().Add(wait))
-	buf := make([]byte, 2048)
+	buf := make([]byte, 65535)
 	n, err := pc.Read(buf)
 	if err != nil {
 		return nil, err
@@ -58,6 +62,32 @@ func TestPingGoesThroughTheTunnel(t *testing.T) {
 	// Each way the data, 6 bytes, three times, as UDP counts its payload.
 	if st := s.Stats(); st.Up != 18 || st.Down != 18 {
 		t.Fatalf("counted up %d down %d, want 18 each", st.Up, st.Down)
+	}
+}
+
+// A ping bigger than the tunnel's MTU, like ping -s 1400 to check the MTU, works as from the
+// iPhone: the request comes in as fragments and the reply goes back as fragments (#155).
+func TestPingBiggerThanTheMTUGoesThroughTheTunnel(t *testing.T) {
+	_, c := setup(t)
+	data := bytes.Repeat([]byte("big"), 1000)
+	echo, err := pingFrom(c, remote, 7, data, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if echo.Seq != 7 || !bytes.Equal(echo.Data, data) {
+		t.Fatalf("came back as seq %d with %d bytes, want seq 7 with %d", echo.Seq, len(echo.Data), len(data))
+	}
+}
+
+// The request half of the test above, which needs no reply: a host whose firewall drops pings
+// still shows the big request went out whole.
+func TestABigPingGoesOut(t *testing.T) {
+	s, c := setup(t)
+	pingFrom(c, remote, 0, make([]byte, 3000), 100*time.Millisecond)
+	for deadline := time.Now().Add(2 * time.Second); s.Stats().Up != 3000; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("counted up %d, want the 3000 bytes of the ping", s.Stats().Up)
+		}
 	}
 }
 
@@ -190,23 +220,56 @@ func TestAReplyFromAnotherHostIsntTaken(t *testing.T) {
 	}
 }
 
-func TestOnlyWholeEchoRequestsAreTakenFromTheStack(t *testing.T) {
-	request := echoReply(netip.MustParseAddr("10.7.0.2"), netip.MustParseAddr(remote), 1, 1, []byte("x"), 1)
-	header.ICMPv4(request[header.IPv4MinimumSize:]).SetType(header.ICMPv4Echo)
-	if !isEchoRequest(request) {
-		t.Fatal("an echo request wasn't one")
+// gVisor hands the handler every ICMP packet it put back together, and keeps what isn't taken.
+func TestOnlyEchoRequestsAreTakenFromTheStack(t *testing.T) {
+	s, _ := setup(t)
+	id := stack.TransportEndpointID{LocalAddress: tcpip.AddrFrom4([4]byte{198, 51, 100, 7}), RemoteAddress: tcpip.AddrFrom4([4]byte{10, 7, 0, 2})}
+	packet := func(typ header.ICMPv4Type, code header.ICMPv4Code, proto tcpip.NetworkProtocolNumber) *stack.PacketBuffer {
+		m := header.ICMPv4(make([]byte, header.ICMPv4MinimumSize+1))
+		m.SetType(typ)
+		m.SetCode(code)
+		pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(m)})
+		pkt.NetworkProtocolNumber = proto
+		pkt.TransportHeader().Consume(header.ICMPv4MinimumSize) // as gVisor parses it
+		t.Cleanup(pkt.DecRef)
+		return pkt
 	}
-	reply := echoReply(netip.MustParseAddr(remote), netip.MustParseAddr("10.7.0.2"), 1, 1, []byte("x"), 1)
-	fragment := append([]byte(nil), request...)
-	header.IPv4(fragment).SetFlagsFragmentOffset(header.IPv4FlagMoreFragments, 0)
-	udp := append([]byte(nil), request...)
-	udp[9] = uint8(header.UDPProtocolNumber)
-	short := request[:header.IPv4MinimumSize+4]
-	v6 := make([]byte, header.IPv6MinimumSize+8)
-	v6[0] = 6 << 4
-	for name, p := range map[string][]byte{"reply": reply, "fragment": fragment, "udp": udp, "short": short, "ipv6": v6, "empty": nil} {
-		if isEchoRequest(p) {
+	// One with another code isn't sent, but taken too, so gVisor doesn't answer it either.
+	for code := range 2 {
+		if !s.handlePing(id, packet(header.ICMPv4Echo, header.ICMPv4Code(code), header.IPv4ProtocolNumber)) {
+			t.Fatalf("an echo request with code %d wasn't taken", code)
+		}
+	}
+	for name, pkt := range map[string]*stack.PacketBuffer{
+		"reply":     packet(header.ICMPv4EchoReply, 0, header.IPv4ProtocolNumber),
+		"over ipv6": packet(header.ICMPv4Echo, 0, header.IPv6ProtocolNumber),
+	} {
+		if s.handlePing(id, pkt) {
 			t.Errorf("%s taken as an echo request", name)
 		}
+	}
+}
+
+// A reply to a big ping goes back as fragments that fit the tunnel, like a big UDP reply.
+func TestABigEchoReplyFitsTheTunnel(t *testing.T) {
+	data := bytes.Repeat([]byte("big"), 1000)
+	ps := echoReply(netip.MustParseAddr(remote), netip.MustParseAddr("10.7.0.2"), 1, 2, data, 3)
+	var msg []byte
+	for i, p := range ps {
+		ip := header.IPv4(p)
+		if len(p) > MTU || !ip.IsValid(len(p)) || !ip.IsChecksumValid() {
+			t.Fatalf("fragment %d of %d is not a valid IPv4 packet of at most the MTU", i, len(ps))
+		}
+		if ip.ID() != 3 || int(ip.FragmentOffset()) != len(msg) || ip.More() != (i < len(ps)-1) {
+			t.Fatalf("fragment %d: id %d offset %d more %v", i, ip.ID(), ip.FragmentOffset(), ip.More())
+		}
+		msg = append(msg, ip.Payload()...)
+	}
+	m := header.ICMPv4(msg)
+	if len(ps) < 2 || m.Type() != header.ICMPv4EchoReply || m.Ident() != 1 || m.Sequence() != 2 || !bytes.Equal(m.Payload(), data) {
+		t.Fatalf("%d packets carry type %d id %d seq %d with %d bytes", len(ps), m.Type(), m.Ident(), m.Sequence(), len(m.Payload()))
+	}
+	if checksum.Checksum(msg, 0) != 0xffff {
+		t.Fatal("the reply's checksum is wrong")
 	}
 }
