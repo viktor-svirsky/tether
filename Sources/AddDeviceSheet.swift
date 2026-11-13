@@ -425,8 +425,9 @@ enum ReadyCode {
     private static var made: (text: String, qr: UIImage?, file: URL?)?
 
     /// Only a new config is made again, not each redraw: checking the file was a disk call a second.
+    /// A file that couldn't be written is tried again on the next redraw.
     static func `for`(_ text: String) -> (qr: UIImage?, file: URL?) {
-        if let made, made.text == text { return (made.qr, made.file) }
+        if let made, made.text == text, made.file != nil { return (made.qr, made.file) }
         let code = (text: text, qr: QRCode.image(text), file: ConfigFile.write(text, named: ""))
         made = code
         return (code.qr, code.file)
