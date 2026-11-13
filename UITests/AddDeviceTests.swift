@@ -23,13 +23,14 @@ final class AddDeviceTests: TetherUITestCase {
         launch(.waiting)
         openAddDevice()
         XCTAssertEqual(label(of: "add.install"), "Install the free WireGuard app on the other device: App Store, Google Play, or wireguard.com/install.")
-        XCTAssertEqual(label(of: "add.step1"), "Join this iPhone's hotspot")
-        XCTAssertEqual(label(of: "add.step1.mark"), "Step 1 of 3")
+        // Each step is one stop for VoiceOver: its number, its title and how far it is (#175).
+        XCTAssertEqual(label(of: "add.step1"), "Step 1 of 3, Join this iPhone's hotspot")
+        XCTAssertEqual(value(of: element("add.step1")), "Current")
         XCTAssertEqual(label(of: "add.hotspotHint"), "Turn on Personal Hotspot, then join it from the other device. Tether starts when the first device joins.")
-        XCTAssertEqual(label(of: "add.step2"), "Give it the config")
-        XCTAssertEqual(label(of: "add.step2.mark"), "Step 2 of 3")
-        XCTAssertEqual(label(of: "add.step3"), "Turn its tunnel on")
-        XCTAssertEqual(label(of: "add.step3.mark"), "Step 3 of 3")
+        XCTAssertEqual(label(of: "add.step2"), "Step 2 of 3, Give it the config")
+        XCTAssertEqual(value(of: element("add.step2")), "")
+        XCTAssertEqual(label(of: "add.step3"), "Step 3 of 3, Turn its tunnel on")
+        XCTAssertEqual(value(of: element("add.step3")), "")
         XCTAssertEqual(label(of: "add.hotspotPath"), "Settings > Personal Hotspot > Allow Others to Join")
         XCTAssertTrue(app.segmentedControls.buttons["iPhone or iPad"].isSelected, "a phone or tablet first")
         XCTAssertEqual(element("add.qr").label, "QR code for the next device")
@@ -51,6 +52,7 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(address.value as? String, "http://172.20.10.1")
         XCTAssertEqual(address.elementType, .staticText, "not a link")
         XCTAssertEqual(element("add.copy").label, "Copy the address")
+        XCTAssertEqual(value(of: element("add.copy")), "")
         XCTAssertTrue(reveal(element("add.share")).label.contains("Share the file"))
         XCTAssertEqual(reveal(element("add.airdrop")).label, "AirDrop it to a Mac, then open it in WireGuard.")
         // The file stops working like the code. A download from the page is listed at once, so it doesn't.
@@ -90,12 +92,56 @@ final class AddDeviceTests: TetherUITestCase {
         try audit(types: [.textClipped], only: "add.address")
     }
 
+    /// Copy says it worked for a moment: the icon turns into a tick, and VoiceOver hears "Copied" (#175).
+    /// The test reads the button's value, which goes with the tick.
+    func testCopyingTheAddressSaysCopied() {
+        launch(.addDeviceComputer)
+        let copy = reveal(element("add.copy"))
+        copy.tap()
+        XCTAssertEqual(value(of: copy), "Copied")
+        XCTAssertEqual(copy.label, "Copy the address")
+        let cleared = expectation(for: NSPredicate(format: "value == ''"), evaluatedWith: copy)
+        XCTAssertEqual(XCTWaiter().wait(for: [cleared], timeout: 5), .completed, "it goes back to the copy icon")
+    }
+
+    /// At the largest text size a segmented control stays small, so the two kinds are full-width
+    /// buttons, one under the other. Each step's mark goes above its text, which gets the whole width
+    /// instead of a word or two a line (#176).
+    func testAtTheLargestTextSizeTheKindsAreButtonsAndTheStepsUseTheWidth() throws {
+        launch(.waiting, arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
+        reveal(element("add.open"), maxSwipes: 30).tap()
+        XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
+        let install = element("add.install")
+        let step1 = reveal(element("add.step1"), maxSwipes: 30)
+        XCTAssertLessThan(abs(step1.frame.minX - install.frame.minX), 20, "the title starts at the card's edge, not after the mark")
+        XCTAssertEqual(app.segmentedControls.count, 0)
+        let phone = reveal(element("add.kind.phone"), maxSwipes: 30)
+        XCTAssertTrue(phone.isSelected, "a phone or tablet first")
+        XCTAssertEqual(phone.label, "iPhone or iPad")
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThan(phone.frame.width, window.width * 0.6, "full width")
+        XCTAssertGreaterThan(phone.frame.height, 60, "it grows with the text")
+        let computer = element("add.kind.computer")
+        XCTAssertEqual(computer.label, "Computer")
+        XCTAssertFalse(computer.isSelected)
+        XCTAssertGreaterThanOrEqual(computer.frame.minY, phone.frame.maxY, "under it, not beside it")
+        try audit(only: "add.kind")
+        reveal(computer, maxSwipes: 30).tap()
+        XCTAssertTrue(computer.isSelected)
+        XCTAssertTrue(reveal(element("add.address"), maxSwipes: 30).isHittable)
+        XCTAssertTrue(reveal(element("add.share"), maxSwipes: 30).label.contains("Share the file"))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Share the file at the largest text size"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
     func testWithADeviceOnTheHotspotTheFirstStepIsTicked() {
         launch(.noDevices)
         openAddDevice()
-        XCTAssertEqual(label(of: "add.step1.mark"), "Done")
+        XCTAssertEqual(value(of: element("add.step1")), "Done")
         XCTAssertTrue(text(containing: "The hotspot is on. Join it on the new device too.").exists)
-        XCTAssertEqual(label(of: "add.step2.mark"), "Step 2 of 3")
+        XCTAssertEqual(value(of: element("add.step2")), "Current")
         assertNowhere(element("add.hotspotPath"), element("add.hotspotHint"))
     }
 
@@ -110,7 +156,7 @@ final class AddDeviceTests: TetherUITestCase {
     func testTheScreenshotScenariosOpenOnTheSheet() {
         launch(.addDeviceScreen)
         XCTAssertTrue(element("add.qr").waitForExistence(timeout: 5))
-        XCTAssertEqual(label(of: "add.step1.mark"), "Done")
+        XCTAssertEqual(value(of: element("add.step1")), "Done")
         app.terminate()
         launch(.addDeviceComputer)
         XCTAssertTrue(element("add.address").waitForExistence(timeout: 5))
@@ -120,9 +166,9 @@ final class AddDeviceTests: TetherUITestCase {
     func testADownloadedCodeWaitsForTheTunnel() {
         launch(.addDeviceWaiting)
         XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
-        XCTAssertEqual(label(of: "add.step2.mark"), "Done")
+        XCTAssertEqual(value(of: element("add.step2")), "Done")
         XCTAssertTrue(text(containing: "Windows PC has it").exists)
-        XCTAssertEqual(label(of: "add.step3.mark"), "Waiting")
+        XCTAssertEqual(value(of: element("add.step3")), "Waiting")
         XCTAssertTrue(text(containing: "Waiting for Windows PC to connect").exists)
         assertNowhere(element("add.qr"), element("add.kind"), element("add.done"), element("add.result"))
     }
@@ -130,7 +176,7 @@ final class AddDeviceTests: TetherUITestCase {
     func testOnceItConnectsDoneClosesTheSheet() {
         launch(.addDeviceDone)
         XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
-        XCTAssertEqual(label(of: "add.step3.mark"), "Done")
+        XCTAssertEqual(value(of: element("add.step3")), "Done")
         XCTAssertEqual(label(of: "add.result"), "iPad is connected")
         element("add.done").tap()
         waitUntilGone(element("add.step1"))

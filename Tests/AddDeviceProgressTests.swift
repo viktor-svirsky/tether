@@ -67,4 +67,34 @@ final class AddDeviceProgressTests: XCTestCase {
     func testARemovedDeviceGoesBackToTheStart() {
         XCTAssertEqual(progress(peers: [ipad], hotspotOn: true).config, .toDo)
     }
+
+    // MARK: what VoiceOver hears (#175)
+
+    /// The steps tick off by themselves, so VoiceOver says so without the person moving focus.
+    func testEachStepThatTicksOffIsAnnounced() {
+        XCTAssertEqual(progress(hotspotOn: true).announcement(after: progress()), "Step 1 done")
+        XCTAssertEqual(progress(peers: [laptop], hotspotOn: true).announcement(after: progress(hotspotOn: true)), "Step 2 done")
+    }
+
+    func testTheConnectionIsAnnouncedByTheDevicesName() {
+        let waiting = progress(peers: [laptop], hotspotOn: true)
+        XCTAssertEqual(progress(peers: [laptop], connected: [laptop.address], hotspotOn: true).announcement(after: waiting), "Device is connected")
+    }
+
+    /// A scan ticks the last two steps at once: the connection says it all.
+    func testAScanIsAnnouncedOnceAsConnected() {
+        let scanned = progress(peers: [laptop], connected: [laptop.address], hotspotOn: true)
+        XCTAssertEqual(scanned.announcement(after: progress(hotspotOn: true)), "Device is connected")
+    }
+
+    func testTwoStepsAtOnceAreAnnouncedTogether() {
+        XCTAssertEqual(progress(peers: [laptop], hotspotOn: true).announcement(after: progress()), "Steps 1 and 2 done")
+    }
+
+    /// Nothing ticked off: a step going back, the speeds redrawing, or no change at all.
+    func testNothingIsAnnouncedWhenNoStepTicksOff() {
+        XCTAssertNil(progress().announcement(after: progress()))
+        XCTAssertNil(progress().announcement(after: progress(hotspotOn: true)), "the hotspot went off")
+        XCTAssertNil(progress(peers: [ipad], hotspotOn: true).announcement(after: progress(hotspotOn: true)), "another device")
+    }
 }

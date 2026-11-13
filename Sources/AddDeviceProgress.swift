@@ -24,6 +24,20 @@ struct AddDeviceProgress: Equatable {
     /// on screen, and a locked iPhone isn't.
     var keepsScreenAwake: Bool { !finished }
 
+    /// What VoiceOver says when steps tick off by themselves since `old`, nil when none did. Otherwise
+    /// a VoiceOver user doesn't hear the sheet move on (#175). A scan ticks the last two steps at
+    /// once, and the connection says it all.
+    func announcement(after old: AddDeviceProgress) -> String? {
+        if finished, !old.finished, let device { return "\(device.name) is connected" }
+        let before = [old.joined, old.config, old.tunnel], now = [joined, config, tunnel]
+        let ticked = now.indices.filter { now[$0] == .done && before[$0] != .done }.map { String($0 + 1) }
+        switch ticked.count {
+        case 0: return nil
+        case 1: return "Step \(ticked[0]) done"
+        default: return "Steps \(ticked.joined(separator: " and ")) done"
+        }
+    }
+
     init(ready: WireGuardSetup.Peer.ID?, peers: [WireGuardSetup.Peer], connected: Set<String>, hotspotOn: Bool) {
         device = ready.flatMap { id in peers.first { $0.id == id } }
         let isConnected = device.map { connected.contains($0.address) } ?? false
