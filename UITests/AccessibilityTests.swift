@@ -180,7 +180,7 @@ final class AccessibilityTests: TetherUITestCase {
         XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
         XCTAssertTrue(reveal(element("add.qr"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("add.step3"), maxSwipes: 30).exists)
-        reveal(app.segmentedControls.buttons["Computer"], maxSwipes: 30).tap()
+        reveal(element("add.kind.computer"), maxSwipes: 30).tap()
         XCTAssertTrue(reveal(element("add.address"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("add.share"), maxSwipes: 30).isHittable)
     }

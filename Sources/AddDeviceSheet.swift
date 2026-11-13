@@ -15,6 +15,10 @@ struct AddDeviceSheet: View {
     /// Which way the device gets its config: a phone or tablet scans, a computer downloads.
     @State private var kind = Kind.phone
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// The copy button that was just tapped, which shows a tick for a moment.
+    @State private var copiedID: String?
+    /// Puts the copy icon back. A second tap starts it again.
+    @State private var copyReset: Task<Void, Never>?
 
     enum Kind: Hashable { case phone, computer }
 
@@ -139,6 +143,9 @@ struct AddDeviceSheet: View {
                 model.openAddWindow()
                 UIApplication.shared.isIdleTimerDisabled = self.progress.keepsScreenAwake
             }
+            .onChange(of: progress) { old, new in
+                if let text = new.announcement(after: old) { AccessibilityNotification.Announcement(text).post() }
+            }
             .onChange(of: progress.keepsScreenAwake) { _, awake in UIApplication.shared.isIdleTimerDisabled = awake }
             // Claimed: its file now holds a key that works.
             .onChange(of: progress.device != nil) { _, claimed in if claimed { ReadyCode.forget() } }
@@ -191,12 +198,19 @@ struct AddDeviceSheet: View {
         } else if let ready = model.wireGuardReady, let config = model.wireGuardConfig(for: ready) {
             let code = ReadyCode.for(config)
             VStack(alignment: .leading, spacing: 14) {
-                Picker("Kind of device", selection: $kind) {
-                    Text("iPhone or iPad").tag(Kind.phone)
-                    Text("Computer").tag(Kind.computer)
+                if dynamicTypeSize.isAccessibilitySize {
+                    // A segmented control keeps its small text at every size, so here the two kinds
+                    // are full-width buttons, one under the other (#176).
+                    kindButton("iPhone or iPad", .phone, id: "add.kind.phone")
+                    kindButton("Computer", .computer, id: "add.kind.computer")
+                } else {
+                    Picker("Kind of device", selection: $kind) {
+                        Text("iPhone or iPad").tag(Kind.phone)
+                        Text("Computer").tag(Kind.computer)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("add.kind")
                 }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("add.kind")
                 switch kind {
                 case .phone: scan(code.qr)
                 case .computer: download(hosts: model.pageHosts, file: code.file)
@@ -210,6 +224,15 @@ struct AddDeviceSheet: View {
             note(problem)
                 .accessibilityIdentifier("add.codeProblem")
         }
+    }
+
+    /// One kind of device at accessibility sizes, filled when it's the one chosen. One button whose
+    /// style changes, so VoiceOver keeps its focus on it after a tap.
+    private func kindButton(_ title: String, _ value: Kind, id: String) -> some View {
+        Button(title) { kind = value }
+            .buttonStyle(KindButtonStyle(selected: kind == value))
+            .accessibilityAddTraits(kind == value ? .isSelected : [])
+            .accessibilityIdentifier(id)
     }
 
     @ViewBuilder private func scan(_ qr: UIImage?) -> some View {
@@ -259,9 +282,20 @@ struct AddDeviceSheet: View {
             }
             .accessibilityHidden(true)
             ShareLink(item: file) {
-                Label("Share the file", systemImage: "square.and.arrow.up")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
+                Group {
+                    // At accessibility sizes the icon goes above the text: on one line the text
+                    // breaks inside a word (#176).
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 6) {
+                            Image(systemName: "square.and.arrow.up").accessibilityHidden(true)
+                            Text("Share the file")
+                        }
+                    } else {
+                        Label("Share the file", systemImage: "square.and.arrow.up")
+                    }
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
@@ -297,8 +331,16 @@ struct AddDeviceSheet: View {
                 .accessibilityIdentifier(id)
             Button {
                 UIPasteboard.general.string = address
+                // Without this nothing says the copy worked (#175).
+                copiedID = copyID
+                AccessibilityNotification.Announcement("Copied").post()
+                copyReset?.cancel()
+                copyReset = Task {
+                    guard (try? await Task.sleep(for: .seconds(2))) != nil else { return }
+                    copiedID = nil
+                }
             } label: {
-                Image(systemName: "doc.on.doc")
+                Image(systemName: copiedID == copyID ? "checkmark" : "doc.on.doc")
                     .font(.body.weight(.semibold))
                     .frame(width: 44, height: 44)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -306,6 +348,7 @@ struct AddDeviceSheet: View {
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
             .accessibilityLabel("Copy the address")
+            .accessibilityValue(copiedID == copyID ? "Copied" : "")
             .accessibilityIdentifier(copyID)
         }
         .padding(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 6))
@@ -331,6 +374,23 @@ struct AddDeviceSheet: View {
     }
 }
 
+/// A kind of device at accessibility sizes: filled like Done when chosen, plain otherwise.
+private struct KindButtonStyle: ButtonStyle {
+    let selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .multilineTextAlignment(.center)
+            .foregroundStyle(selected ? Color.white : Color.accentColor)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .padding(.horizontal, 16)
+            .background(selected ? Color.filledButton : Color(.tertiarySystemFill), in: Capsule())
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
 /// One step on the line: its mark, the title and what to do, and the line down to the next step,
 /// in the icon's colours once this step is done. The last step has no line.
 private struct StepRow<Content: View>: View {
@@ -342,13 +402,45 @@ private struct StepRow<Content: View>: View {
     let id: String
     @ViewBuilder let content: Content
     @ScaledMetric(relativeTo: .headline) private var markSize: CGFloat = 30
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            // The mark goes above the text, which then has the whole width instead of a word or two
+            // a line (#176). There is no room for the line beside it.
+            VStack(alignment: .leading, spacing: 8) {
+                stepMark
+                text
+            }
+            .padding(.bottom, lineDone == nil ? 0 : 22)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            row
+        }
+    }
+
+    private var stepMark: some View {
+        StepMark(number: number, state: mark)
+            .frame(width: markSize, height: markSize)
+    }
+
+    private var text: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.headline)
+                // The step's number and state are read with its title, as one stop (#175).
+                .accessibilityLabel("Step \(number) of 3, \(title)")
+                .accessibilityValue(mark.spoken)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier(id)
+            content
+        }
+    }
+
+    private var row: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 0) {
-                StepMark(number: number, state: mark)
-                    .frame(width: markSize, height: markSize)
-                    .accessibilityIdentifier("\(id).mark")
+                stepMark
                 if let lineDone {
                     Capsule()
                         .fill(lineDone ? AnyShapeStyle(LinearGradient(colors: StatusOrb.iconColors, startPoint: .top, endPoint: .bottom))
@@ -360,13 +452,7 @@ private struct StepRow<Content: View>: View {
             }
             // As wide as the mark, which grows with the text size.
             .frame(width: markSize + 4)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier(id)
-                content
-            }
+            text
             // The title's first line sits level with the mark.
             .padding(.top, 4)
             .padding(.bottom, lineDone == nil ? 0 : 22)
@@ -403,16 +489,19 @@ private struct StepMark: View {
                 Text("\(number)").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
             }
         }
-        .accessibilityElement()
-        .accessibilityLabel(label)
-        .accessibilityValue(state == .current ? "Current" : "")
+        // Read with the step's title instead, see `StepRow`.
+        .accessibilityHidden(true)
     }
+}
 
-    private var label: String {
-        switch state {
+extension StepMark.Look {
+    /// How far the step is, read after its title. Nothing for a step not reached yet.
+    var spoken: String {
+        switch self {
         case .done: "Done"
+        case .current: "Current"
         case .waiting: "Waiting"
-        case .current, .later: "Step \(number) of 3"
+        case .later: ""
         }
     }
 }
