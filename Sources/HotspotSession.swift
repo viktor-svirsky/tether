@@ -109,6 +109,8 @@ final class HotspotSession {
     private let dns: () -> DNSChoice.Upstream
     /// Where each device's data per month is saved, see `MonthlyUsage`. Nil keeps it in memory only.
     private let usageDefaults: UserDefaults?
+    /// Follows a time zone change while Tether runs for days on the silent sound: `.current` is a
+    /// snapshot from launch (#163).
     private let calendar: Calendar
     private var monthlyUsage: MonthlyUsage
     /// When it was last saved, and whether a read has changed it since.
@@ -147,7 +149,7 @@ final class HotspotSession {
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
          idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> DNSChoice.Upstream = { DNSChoice.defaultUpstream },
-         usageDefaults: UserDefaults? = nil, calendar: Calendar = .current, now: @escaping () -> Date = Date.init,
+         usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server

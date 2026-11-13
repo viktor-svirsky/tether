@@ -305,6 +305,20 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(changes, 1, "and only when it changes")
     }
 
+    /// Flown to another time zone mid-run, the month ends at the new zone's midnight, not the launch
+    /// zone's (#163).
+    func testTheMonthFollowsATimeZoneChange() throws {
+        let before = NSTimeZone.default
+        defer { NSTimeZone.default = before }
+        NSTimeZone.default = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        makeSession()
+        NSTimeZone.default = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
+        var london = Calendar(identifier: .gregorian)
+        london.timeZone = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
+        now = try XCTUnwrap(london.date(from: DateComponents(year: 2026, month: 11, day: 30, hour: 23, minute: 30)))
+        XCTAssertEqual(session.nextReset, london.date(from: DateComponents(year: 2026, month: 12, day: 1)))
+    }
+
     // MARK: Where a device's config points (#65)
 
     /// A device keeps the address Tether listened on when it connected with the QR code or downloaded its config.
