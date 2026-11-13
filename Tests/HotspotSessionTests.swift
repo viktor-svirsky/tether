@@ -1167,10 +1167,29 @@ final class HotspotSessionTests: XCTestCase {
         session.watch()
         now = minutes(9.9)
         server.connected = [ready.address]
+        server.handshakes = [ready.address: minutes(9.9)]
         now = minutes(10)
         session.watch()
         XCTAssertEqual(session.wireGuardPeers.map(\.id), [ready.id])
         XCTAssertEqual(letIn, [ready.publicKey], "the device, not the next code")
+    }
+
+    /// A handshake after the window ended, seen by the next round up to 20 s later, adds nothing: the
+    /// code no longer works (#161).
+    func testAHandshakeAfterTheWindowEndedIsntListed() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        session.leftScreen()
+        session.watch()
+        now = minutes(10.2)
+        server.connected = [ready.address]
+        server.handshakes = [ready.address: minutes(10.1)]
+        session.watch()
+        XCTAssertTrue(session.wireGuardPeers.isEmpty)
+        XCTAssertFalse(letIn.contains(ready.publicKey), "its code no longer works")
     }
 
     /// A new code that can't be saved leaves no code rather than the old one, and the old one stays
