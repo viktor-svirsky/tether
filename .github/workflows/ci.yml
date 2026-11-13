@@ -6,6 +6,10 @@ name: CI
 on:
   pull_request:
   push:
+  # Weekly as well, so govulncheck sees new Go advisories, which Dependabot doesn't cover for the
+  # standard library, and a runner image that dropped the pinned Xcode shows (#145).
+  schedule:
+    - cron: "17 6 * * 1"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -18,7 +22,7 @@ defaults:
 jobs:
   test:
     # A branch of this repo already runs on push, so its pull request doesn't run it a second time.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-26
     permissions:
       contents: read
@@ -26,6 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false # nothing here pushes with git, and the token shouldn't sit in .git/config
           fetch-depth: 0 # build-ipa.sh needs the commit count for the build number
       - uses: ./.github/actions/build-tools
       - name: Build the WireGuard server

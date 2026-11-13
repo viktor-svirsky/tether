@@ -44,6 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false # nothing here pushes with git, and the token shouldn't sit in .git/config
           sparse-checkout: scripts # for which-release.sh
       - name: What goes up
         id: bump
@@ -113,6 +114,7 @@ jobs:
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false # nothing here pushes with git, and the token shouldn't sit in .git/config
           fetch-depth: 0 # the build number is the commit count, and the tags give the last version
       - uses: ./.github/actions/build-tools
       - name: Pick the version
@@ -131,8 +133,12 @@ jobs:
           PREVIOUS: ${{ steps.version.outputs.previous }}
         run: scripts/release-notes.sh "$PREVIOUS" --require-change > /dev/null
       - name: Unit tests
+        # Go too: build-tools takes the newest Go 1.27.x now, which may be newer than CI's (#145).
         run: |
+          go version
+          xcodebuild -version
           scripts/build-wireguard.sh
+          go -C WireGuard test ./...
           swift test
           python3 scripts/test_make_source.py
           scripts/test-next-version.sh
@@ -169,7 +175,7 @@ jobs:
               echo
               echo "SHA-256 of Tether.ipa: \`$(shasum -a 256 "$out/Tether.ipa" | cut -d' ' -f1)\`"
               echo
-              echo "Check it was built here, from this release's commit: \`gh attestation verify Tether.ipa -R $GITHUB_REPOSITORY\`"
+              echo "Check it was built here, from this release's commit: \`gh attestation verify Tether.ipa -R $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml\`"
           } > "$out/notes.md"
           gh release create "v$VERSION" "$out/Tether.ipa" "$out/source.json" "$out/LICENSES.txt" \
             -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Tether $VERSION" --notes-file "$out/notes.md"
