@@ -29,7 +29,8 @@ const (
 	// nat64Keep is how long a found prefix is used before it's looked up again. A carrier doesn't
 	// change it, but the hotspot can move to another carrier with a new SIM.
 	nat64Keep = 10 * time.Minute
-	// nat64Retry is how long the well-known prefix stands in after a lookup failed.
+	// nat64Retry is how long the last prefix, or the well-known one when none was found, stands in
+	// after a lookup failed.
 	nat64Retry = time.Minute
 	// nat64LookupTimeout bounds the lookup, which the first connection through the NAT64 waits for.
 	nat64LookupTimeout = 2 * time.Second
@@ -60,7 +61,12 @@ func (n *nat64) prefix(ctx context.Context) netip.Prefix {
 	defer cancel()
 	p, err := lookup(ctx)
 	if err != nil {
+		// A carrier's own prefix stays: a lookup fails on a weak link, and the well-known prefix may
+		// not route there, which would break live traffic until the next lookup (#150).
 		p = wellKnownNAT64
+		if old := n.found.Load(); old != nil {
+			p = *old
+		}
 		n.expiry = time.Now().Add(nat64Retry)
 	} else {
 		n.expiry = time.Now().Add(nat64Keep)

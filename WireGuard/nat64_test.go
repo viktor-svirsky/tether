@@ -243,6 +243,34 @@ func TestAFailedLookupUsesTheWellKnownPrefixForAWhile(t *testing.T) {
 	}
 }
 
+// A failed lookup after a good one keeps the carrier's prefix: the well-known one may not route on
+// that carrier, and replies from the real NAT64 would stop being mapped back (#150).
+func TestAFailedLookupKeepsTheCarriersPrefix(t *testing.T) {
+	s := &Server{}
+	var fail atomic.Bool
+	s.nat64.lookup = func(context.Context) (netip.Prefix, error) {
+		if fail.Load() {
+			return netip.Prefix{}, errors.New("timed out")
+		}
+		return carrierNAT64, nil
+	}
+	if p := s.nat64.prefix(context.Background()); p != carrierNAT64 {
+		t.Fatalf("got %v", p)
+	}
+	fail.Store(true)
+	s.nat64.expiry = time.Now() // ten minutes on
+	if p := s.nat64.prefix(context.Background()); p != carrierNAT64 {
+		t.Fatalf("a failed lookup gave %v", p)
+	}
+	from := netip.MustParseAddrPort("[2001:db8:64::c633:6407]:53")
+	if got := s.fromNAT64(from); got != netip.MustParseAddrPort("198.51.100.7:53") {
+		t.Fatalf("a reply from the carrier's NAT64 became %v", got)
+	}
+	if time.Until(s.nat64.expiry) > nat64Retry {
+		t.Fatal("kept for longer than a retry before the next lookup")
+	}
+}
+
 func TestOnlyRepliesFromInsideTheNAT64PrefixAreMapped(t *testing.T) {
 	s := &Server{}
 	from := netip.MustParseAddrPort("[2001:db8:64::c633:6407]:53")
