@@ -960,14 +960,14 @@ final class HotspotSessionTests: XCTestCase {
         session.syncWithHotspot()
         session.openAddWindow()
         let first = page.ask(.config, from: "172.20.10.2")
-        now = now.addingTimeInterval(59)
+        now = now.addingTimeInterval(ConfigPageHandler.repeatWithin - 1)
         XCTAssertEqual(page.ask(.configHead, from: "172.20.10.2"), first.forHead)
         XCTAssertEqual(page.ask(.config, from: "172.20.10.2"), first)
         XCTAssertEqual(session.wireGuardPeers.count, 1)
         let other = page.ask(.config, from: "172.20.10.3")
         XCTAssertNotEqual(other.body, first.body, "another device gets its own")
-        now = now.addingTimeInterval(61)
-        XCTAssertNotEqual(page.ask(.config, from: "172.20.10.3").body, other.body, "a minute later it's a new device")
+        now = now.addingTimeInterval(ConfigPageHandler.repeatWithin + 1)
+        XCTAssertNotEqual(page.ask(.config, from: "172.20.10.3").body, other.body, "a few seconds later it's a new device")
         XCTAssertEqual(session.wireGuardPeers.count, 3)
     }
 

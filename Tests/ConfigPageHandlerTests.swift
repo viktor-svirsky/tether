@@ -63,15 +63,19 @@ final class ConfigPageHandlerTests: XCTestCase {
     }
 
     /// A browser or download manager that fetches twice mustn't list a second device.
-    func testTheSameClientAgainWithinAMinuteGetsTheSameConfig() {
+    func testTheSameClientAgainRightAwayGetsTheSameConfig() {
         var handler = ConfigPageHandler()
         let saved = ConfigPage.config(config, fileName: "Tether-Device.conf")
         handler.downloaded(saved, by: "172.20.10.3", at: start)
         XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(at: start.addingTimeInterval(ConfigPageHandler.repeatWithin - 1))), .answer(saved))
         XCTAssertEqual(handler.answer(.configHead, from: "172.20.10.3", inputs(at: start.addingTimeInterval(ConfigPageHandler.repeatWithin - 1))), .answer(saved.forHead))
-        // Even once the window has closed: it's the same download.
-        XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(letIn: false, at: start.addingTimeInterval(ConfigPageHandler.repeatWithin - 1))), .answer(saved))
-        // Another device, or a minute later, is a new download.
+        // Not once the window has closed or Tether left the screen: no key goes out then (#160).
+        XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(letIn: false, at: start.addingTimeInterval(1))),
+                       .answer(ConfigPage.page(.openAddDevice, status: .notFound)))
+        XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(onScreen: false, at: start.addingTimeInterval(1))),
+                       .answer(ConfigPage.page(.openTether, status: .notFound)))
+        // Another device, or a few seconds later (a second computer behind a travel router), is a new download.
+        XCTAssertLessThanOrEqual(ConfigPageHandler.repeatWithin, 5)
         XCTAssertEqual(handler.answer(.config, from: "172.20.10.4", inputs(at: start.addingTimeInterval(1))),
                        .download(ready, host: "172.20.10.1", config: config))
         XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(at: start.addingTimeInterval(ConfigPageHandler.repeatWithin))),
