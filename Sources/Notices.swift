@@ -32,6 +32,9 @@ struct Notice: Equatable {
     let id: String
     let title: String
     let body: String
+
+    /// For the log Settings shares: the kind, never the title, which names the device (#162).
+    var logLine: String { "notice: \(kind.rawValue)" }
 }
 
 /// A device near its data limit (90%), or paused at it, see `HotspotSession.checkLimits`. Each is
@@ -129,7 +132,7 @@ struct Notifier {
     /// shows the permission question only while Tether is on screen, so `Model` asks then.
     private(set) var wouldTell = false
 
-    init(defaults: UserDefaults, calendar: Calendar = .current) {
+    init(defaults: UserDefaults, calendar: Calendar = .autoupdatingCurrent) { // see HotspotSession.calendar
         self.defaults = defaults
         self.calendar = calendar
     }

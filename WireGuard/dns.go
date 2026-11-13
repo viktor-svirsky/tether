@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/netip"
@@ -450,40 +451,72 @@ func servfail(query []byte) []byte {
 // doh asks the DoH server and returns its answer with the query's ID. A request that fails before
 // the server answers is made once more on a new connection: a kept-alive connection dies without a
 // word when the iPhone moves between Wi-Fi and cellular, and only the first request on it finds
-// out. An error never carries the URL, since its path is the user's profile.
+// out. One that dies with no error at all only hangs, so a request still unanswered after 2/5 of
+// the lookup's time gets a second one next to it on dohSpare's own connection, and the first answer
+// wins (#148). The first isn't cancelled: on a slow but working server it's the one that answers,
+// and its connection carries other lookups too. An error never carries the URL, since its path is
+// the user's profile.
 func (s *Server) doh(doh string, query []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, s.lookupTimeout)
-	defer cancel()
+	defer cancel() // ends the request that didn't win
 	q := bytes.Clone(query)
 	q[0], q[1] = 0, 0 // RFC 8484 4.1: ID 0, so a cache on the way answers anyone who asks the same
+	type result struct {
+		answer []byte
+		err    error
+	}
+	results := make(chan result, 2)
+	ask := func(c *http.Client) {
+		answer, err := s.dohOnce(ctx, c, doh, q)
+		results <- result{answer, err}
+	}
+	go ask(s.dohClient)
+	asked, pending := 1, 1
+	hedge := time.NewTimer(s.lookupTimeout * 2 / 5)
+	defer hedge.Stop()
 	var err error
-	for range 2 {
-		var answer []byte
-		if answer, err = s.dohOnce(ctx, doh, q); err == nil {
-			answer[0], answer[1] = query[0], query[1]
-			return answer, nil
+	for pending > 0 {
+		select {
+		case <-hedge.C:
+			if asked < 2 {
+				asked, pending = asked+1, pending+1
+				go ask(s.dohSpare)
+			}
+		case r := <-results:
+			pending--
+			if r.err == nil {
+				r.answer[0], r.answer[1] = query[0], query[1]
+				return r.answer, nil
+			}
+			var ue *url.Error
+			if !errors.As(r.err, &ue) {
+				// The server answered and would answer the same again, or its answer broke off.
+				// The other request may still bring a good one.
+				if pending > 0 {
+					err = r.err
+					continue
+				}
+				return nil, r.err
+			}
+			err = ue.Err
+			if asked < 2 && ctx.Err() == nil {
+				s.dohClient.CloseIdleConnections()
+				asked, pending = asked+1, pending+1
+				go ask(s.dohClient)
+			}
 		}
-		var ue *url.Error
-		if !errors.As(err, &ue) {
-			return nil, err // the server answered, and would answer the same again
-		}
-		err = ue.Err
-		if ctx.Err() != nil {
-			break
-		}
-		s.dohClient.CloseIdleConnections()
 	}
 	return nil, err
 }
 
-func (s *Server) dohOnce(ctx context.Context, doh string, query []byte) ([]byte, error) {
+func (s *Server) dohOnce(ctx context.Context, c *http.Client, doh string, query []byte) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, doh, bytes.NewReader(query))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/dns-message")
 	req.Header.Set("Accept", "application/dns-message")
-	resp, err := s.dohClient.Do(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -501,6 +534,14 @@ func (s *Server) dohOnce(ctx context.Context, doh string, query []byte) ([]byte,
 	}
 	if len(answer) < dnsHeaderLen || len(answer) > dnsMessageMax {
 		return nil, fmt.Errorf("an answer of %d bytes", len(answer))
+	}
+	// A web page in place of DNS, from a wrong profile say, is the device's SERVFAIL and a line in
+	// the log, not garbage handed on as its answer (#152).
+	if mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); mt != "application/dns-message" {
+		return nil, fmt.Errorf("the server answered with %q, not DNS", mt)
+	}
+	if !answers(query, answer) {
+		return nil, errors.New("the server answered another question")
 	}
 	return answer, nil
 }
@@ -633,9 +674,16 @@ func (c *dnsConn) SetDeadline(time.Time) error      { return nil }
 func (c *dnsConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *dnsConn) SetWriteDeadline(time.Time) error { return nil }
 
+// A DoH connection that stops answering without a reset is pinged once nothing has come from it
+// for dohPingAfter, and closed when the ping goes unanswered for dohPingWait, so lookups stop going
+// to it (#148). Until then each lookup waits for its hedge, see doh, so not much longer. Not much
+// shorter either: an idle connection is pinged too, until IdleConnTimeout, and a ping wakes the
+// radio. Tests shorten them.
+var dohPingAfter, dohPingWait = 5 * time.Second, 3 * time.Second
+
 // newDoHClient is the HTTP client for DoH. Its connections keep TCP keepalive as rare as the
-// server's dials do, see Start, and one idle for a minute is closed rather than probed. No proxy:
-// lookups go out like the devices' traffic.
+// server's dials do, see Start, and one idle for a minute is closed. Before that, HTTP/2 pings find
+// one that went quiet. No proxy: lookups go out like the devices' traffic.
 func newDoHClient(dial func(ctx context.Context, network, address string) (net.Conn, error)) *http.Client {
 	return &http.Client{Transport: &http.Transport{
 		DialContext:         dial,
@@ -643,7 +691,20 @@ func newDoHClient(dial func(ctx context.Context, network, address string) (net.C
 		TLSHandshakeTimeout: lookupTimeout,
 		IdleConnTimeout:     time.Minute,
 		MaxIdleConnsPerHost: 2,
-	}}
+		HTTP2:               &http.HTTP2Config{SendPingTimeout: dohPingAfter, PingTimeout: dohPingWait},
+	},
+		// A redirect would turn the POST into a GET without the query, and answer with a page (#152).
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// newDoHSpare is the client a slow lookup asks again on, see doh. It keeps no connection: after a
+// network switch a kept one could be as dead as the main client's, and the second request would
+// wait on it too.
+func newDoHSpare(dial func(ctx context.Context, network, address string) (net.Conn, error)) *http.Client {
+	c := newDoHClient(dial)
+	c.Transport.(*http.Transport).DisableKeepAlives = true
+	return c
 }
 
 // configDNS is the device list's "dns": a DoH URL, or one or two plain IPv4 servers.

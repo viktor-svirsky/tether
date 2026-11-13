@@ -28,7 +28,7 @@ struct AddDeviceSection: View {
             .listRowInsets(EdgeInsets())
         } else if let problem = model.wireGuardReadyProblem {
             Section {
-                Label(problem, systemImage: "exclamationmark.triangle")
+                WarningLabel(problem)
                     .accessibilityIdentifier("add.problem")
             } header: {
                 Text(title)
@@ -58,15 +58,22 @@ struct AddDeviceSection: View {
 /// Why WireGuard isn't running, with the way out when the saved keys can't be read.
 struct WireGuardProblemSection: View {
     @ObservedObject var model: Model
+    @State private var confirmReset = false
 
     var body: some View {
         if let problem = model.wireGuardProblem {
             Section {
-                Label(problem, systemImage: "exclamationmark.triangle")
+                WarningLabel(problem)
                     .accessibilityIdentifier("wireguard.problem")
                 if model.wireGuardNeedsReset {
-                    Button("Start over with new keys", role: .destructive) { model.resetWireGuard() }
+                    // Every device has to be added again, and an update may have read the keys (#174).
+                    Button("Start over with new keys", role: .destructive) { confirmReset = true }
                         .accessibilityIdentifier("wireguard.reset")
+                        .confirmationDialog("Start over with new keys?", isPresented: $confirmReset, titleVisibility: .visible) {
+                            Button("Start Over", role: .destructive) { model.resetWireGuard() }
+                        } message: {
+                            Text("Every device has to be added again. If you went back to an older Tether, update it instead.")
+                        }
                 }
             } header: {
                 Text("WireGuard isn't running")
@@ -99,15 +106,14 @@ struct DeviceView: View {
                 // On top, where a rename is made, and the screen a failed removal stays on.
                 if let problem {
                     Section {
-                        Label(problem, systemImage: "exclamationmark.triangle")
+                        WarningLabel(problem)
                             .accessibilityIdentifier("device.problem")
                     }
                     .id("problem")
                 }
                 if model.needsNewConfig(current) {
                     Section {
-                        Label("Its config points at an old address of this iPhone, so it can't connect. Remove it, then add it again.",
-                              systemImage: "exclamationmark.triangle")
+                        WarningLabel("Its config points at an old address of this iPhone, so it can't connect. Remove it, then add it again.")
                             .accessibilityIdentifier("device.oldAddress")
                     }
                 }
@@ -143,7 +149,7 @@ struct DeviceView: View {
                     Button("Remove device", role: .destructive) { confirmRemove = true }
                         .accessibilityIdentifier("device.remove")
                 } footer: {
-                    Text("It can't connect any more. Delete its tunnel in its WireGuard app too.")
+                    Text("After that it can't connect. Delete its tunnel in its WireGuard app too.")
                 }
             }
             // Remove is at the bottom, so a removal that fails says so up there, out of sight with large text.
@@ -354,5 +360,20 @@ private struct LimitMeter: View {
         }
         .frame(height: 8)
         .accessibilityHidden(true)
+    }
+}
+
+/// A problem on a list row, with the orange warning icon the main screen uses.
+struct WarningLabel: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Label {
+            Text(text)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                .accessibilityHidden(true) // the text says it all, and iOS 26 would read the symbol
+        }
     }
 }

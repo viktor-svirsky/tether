@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -33,9 +34,14 @@ const (
 )
 
 type pinger struct {
-	once  sync.Once
-	conn  *icmp.PacketConn // nil when it couldn't be opened
-	queue chan []byte
+	once sync.Once
+	// conn is nil when it couldn't be opened. receivePings opens a new one when iOS closes it.
+	conn atomic.Pointer[icmp.PacketConn]
+	// closing is set by closePings, under mu, so receivePings opens no new socket after it.
+	closing bool
+	// reopened is when receivePings last opened the socket again.
+	reopened time.Time
+	queue    chan []byte
 	// running counts the two goroutines, for Close to wait for.
 	running sync.WaitGroup
 
@@ -74,7 +80,7 @@ func isEchoRequest(p []byte) bool {
 // sendPings, or is dropped when too many do.
 func (s *Server) queuePing(p []byte) {
 	s.pings.once.Do(s.startPinging)
-	if s.pings.conn == nil {
+	if s.pings.conn.Load() == nil {
 		return
 	}
 	select {
@@ -95,7 +101,7 @@ func (s *Server) startPinging() {
 		s.notice("ping: %v", err)
 		return
 	}
-	s.pings.conn = conn
+	s.pings.conn.Store(conn)
 	s.pings.queue = make(chan []byte, 256)
 	s.pings.waiting = map[uint16]waitingPing{}
 	s.pings.of = map[netip.Addr]int{}
@@ -107,8 +113,12 @@ func (s *Server) startPinging() {
 // closePings ends the goroutines. It's for Close, after the tunnel stopped writing.
 func (s *Server) closePings() {
 	s.pings.once.Do(func() {}) // none starts after this
-	if s.pings.conn != nil {
-		s.pings.conn.Close()
+	s.pings.mu.Lock()
+	s.pings.closing = true
+	conn := s.pings.conn.Load()
+	s.pings.mu.Unlock()
+	if conn != nil {
+		conn.Close()
 	}
 	s.pings.running.Wait()
 }
@@ -149,20 +159,28 @@ func (s *Server) sendPing(p []byte) {
 		return
 	}
 	to := s.toNet(netip.AddrPortFrom(dst, 0)).Addr()
-	if _, err := s.pings.conn.WriteTo(b, &net.UDPAddr{IP: to.AsSlice()}); err != nil {
+	if _, err := s.pings.conn.Load().WriteTo(b, &net.UDPAddr{IP: to.AsSlice()}); err != nil {
 		s.pings.take(id, dst)
 		return
 	}
 	s.count(counts, true, len(m.Payload())) // the data, as UDP and TCP count theirs
 }
 
-// receivePings hands each reply to the device whose request it answers, until the socket closes.
+// receivePings hands each reply to the device whose request it answers, until Close. A socket iOS
+// closed, during a phone call say (#106), is opened again, at most once a second like reopen, so
+// pings work after the call too (#151).
 func (s *Server) receivePings() {
 	buf := make([]byte, 65535)
 	for {
-		n, from, err := s.pings.conn.ReadFrom(buf)
+		conn := s.pings.conn.Load()
+		n, from, err := conn.ReadFrom(buf)
 		if err != nil {
-			return
+			// A failed read may leave the socket open: close it, or each recovery keeps a descriptor.
+			conn.Close()
+			if !s.reopenPings() {
+				return
+			}
+			continue
 		}
 		m, err := icmp.ParseMessage(1, buf[:n])
 		if err != nil || m.Type != ipv4.ICMPTypeEchoReply {
@@ -188,6 +206,35 @@ func (s *Server) receivePings() {
 			s.tun.inject(reply)
 		}
 		s.mu.Unlock()
+	}
+}
+
+// reopenPings opens a new ping socket after a read failed. False once the server is closing.
+func (s *Server) reopenPings() bool {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return false
+		case <-time.After(time.Until(s.pings.reopened.Add(time.Second))):
+		}
+		s.pings.reopened = time.Now()
+		conn, err := icmp.ListenPacket("udp4", "0.0.0.0")
+		if err != nil {
+			s.notice("ping: can't listen again: %v", err)
+			continue
+		}
+		s.pings.mu.Lock()
+		closing := s.pings.closing
+		if !closing {
+			s.pings.conn.Store(conn)
+		}
+		s.pings.mu.Unlock()
+		if closing {
+			conn.Close()
+			return false
+		}
+		s.notice("ping: listening again after its socket was closed")
+		return true
 	}
 }
 

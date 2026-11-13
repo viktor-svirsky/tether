@@ -1,26 +1,30 @@
 # Publishes the next version of Tether from main, once CI passed on it, in one of two ways:
-#   - Main moves to a release branch (release-X.Y) and CI passes there: X.Y.0 goes out by itself.
-#   - Actions > Release > Run workflow on main, for a patch, or to pick what goes up by hand.
+#   - Main moves to a release branch (release-X.Y) and CI passes there: X.Y.0 is next.
+#   - Actions > Release > Run workflow on main, for a patch, or to say what goes up by hand. When main
+#     is at a release branch whose version isn't out, that version goes out whatever was typed (#141).
 # It builds an unsigned Tether.ipa and publishes it as a GitHub release with source.json for
 # AltStore and SideStore, and the release creates the version tag. People add
 # https://github.com/viktor-svirsky/tether/releases/latest/download/source.json once and get every
 # release after that. Runs on GitHub's macOS runner, like CI.
+# Either way, the release job waits until Viktor approves it in the release environment
+# (Settings > Environments), so nothing is published that nobody looked at (#139).
 #
-# A release branch releases by itself only when it got to the commit before main did (which-release.sh),
+# A release branch releases without a manual run only when it got to the commit before main did (which-release.sh),
 # so a release branch cut from main, or fast-forwarded to a fix on main, releases nothing (#120). Take
 # main's fixes into a release branch with a merge commit, and push the release branch before main.
 # A release branch's version can go missing if main moves on before its CI run ends (CI cancels the
-# older run), or if the release branch moves after main reached it. Then run this by hand with minor.
+# older run), or if the release branch moves after main reached it. Then run this by hand with release-X.Y.
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "What goes up: patch 1.2.3 → 1.2.4, minor → 1.3.0, major → 2.0.0. The first release is 1.0.0."
-        type: choice
-        options: [patch, minor, major]
-        default: patch
+        description: "What goes up: patch 1.2.3 → 1.2.4, minor → 1.3.0, major → 2.0.0, or release-X.Y → X.Y.0. The first release is 1.0.0."
+        # Typed, with no default, so nobody ships a release branch as a patch by leaving it as it was,
+        # and a release branch can be named (#141). next-version.sh checks what was typed.
+        type: string
+        required: true
   # Every CI run that ends on main. The decide job lets only main at a release branch through.
   workflow_run:
     workflows: [CI]
@@ -58,6 +62,12 @@ jobs:
           GH_TOKEN: ${{ github.token }} # which-release.sh reads the branches' push history
         run: |
           if [[ $GITHUB_EVENT_NAME == workflow_dispatch ]]; then
+              # Main at a release branch releases that branch, so its features don't go out as a patch.
+              branch=$(scripts/which-release.sh "$GITHUB_SHA")
+              if [[ -n $branch && $INPUT != "$branch" ]]; then
+                  echo "::notice::Main is at $branch, so this releases $branch, not $INPUT."
+                  INPUT=$branch
+              fi
               echo "bump=$INPUT" >> "$GITHUB_OUTPUT"
               exit 0
           fi
@@ -90,6 +100,7 @@ jobs:
       group: release
       cancel-in-progress: false
     runs-on: macos-26
+    environment: release # waits for an approval, see the top
     timeout-minutes: 30
     permissions:
       actions: read # see whether CI and the UI tests passed on this commit

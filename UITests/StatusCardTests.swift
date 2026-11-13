@@ -2,9 +2,10 @@ import XCTest
 
 /// The card at the top of the main screen: is the phone sharing, and is anyone using it.
 final class StatusCardTests: TetherUITestCase {
-    func testWaitingTellsWhereToTurnOnTheHotspot() {
+    func testWaitingExplainsTheHotspotMayBeOffOrEmpty() {
         launch(.waiting)
-        XCTAssertEqual(label(of: "status.title"), "Turn on Personal Hotspot")
+        XCTAssertEqual(label(of: "status.title"), "Waiting for a device on the hotspot")
+        XCTAssertEqual(label(of: "status.hotspotHint"), "Turn on Personal Hotspot, then join it from the other device. Tether starts when the first device joins.")
         XCTAssertEqual(label(of: "status.hotspotPath"), "Settings > Personal Hotspot > Allow Others to Join")
         assertNowhere(element("status.headline"), element("status.howToConnect"))
     }
@@ -27,7 +28,7 @@ final class StatusCardTests: TetherUITestCase {
         launch(.wireGuardLocked)
         XCTAssertEqual(label(of: "status.title"), "Tether can't share yet")
         XCTAssertEqual(label(of: "status.headline"), "Personal Hotspot is on, but WireGuard isn't running.")
-        assertNowhere(element("status.stopHint"), element("status.hotspotPath"), message: "the hotspot is already on")
+        assertNowhere(element("status.stopHint"), element("status.hotspotPath"), element("status.hotspotHint"), message: "a device has joined the hotspot")
     }
 
     /// A sideloaded build stops opening when its 7-day profile runs out, so the main screen says so first.
@@ -57,6 +58,7 @@ final class StatusCardTests: TetherUITestCase {
     func testSharingSaysHowToStop() {
         launch(.sharing)
         XCTAssertEqual(label(of: "status.stopHint"), "To stop, turn off Personal Hotspot.")
+        assertNowhere(element("status.hotspotHint"), element("status.hotspotPath"))
         assertNowhere(element("sharing.switch"), message: "no switch: the hotspot is the switch")
     }
 

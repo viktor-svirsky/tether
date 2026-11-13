@@ -370,6 +370,21 @@ final class NotifierTests: XCTestCase {
                        ["Tether stops opening today: Refresh or reinstall it before then."])
     }
 
+    /// Built without a calendar, as the app does, the notifier follows a time zone change made after
+    /// launch: it's the 25th in London, and still the 24th in New York (#163).
+    func testTheExpiryDayFollowsATimeZoneChange() throws {
+        let before = NSTimeZone.default
+        defer { NSTimeZone.default = before }
+        NSTimeZone.default = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        notifier = Notifier(defaults: defaults)
+        NSTimeZone.default = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
+        var london = Calendar(identifier: .gregorian)
+        london.timeZone = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
+        let now = try XCTUnwrap(london.date(from: DateComponents(year: 2026, month: 11, day: 25, hour: 0, minute: 30)))
+        let expires = try XCTUnwrap(london.date(from: DateComponents(year: 2026, month: 11, day: 25, hour: 20)))
+        XCTAssertEqual(expiryRound(at: now, expires: expires), ["Tether stops opening today: Refresh or reinstall it before then."])
+    }
+
     func testTheDayToldIsSavedForTheNextLaunch() {
         expiryRound(at: day(24), expires: day(26))
         notifier = Notifier(defaults: defaults, calendar: utc)
@@ -388,6 +403,12 @@ final class NotifierTests: XCTestCase {
         XCTAssertEqual(expiryRound(at: day(24), expires: day(26)), [])
         defaults.set(true, forKey: NoticeKind.expiring.key)
         XCTAssertEqual(expiryRound(at: day(24, 13), expires: day(26)).count, 1, "turned on later the same day")
+    }
+
+    /// The shared log says what kind of notice went out, not its title, which names the device (#162).
+    func testANoticeLogLineNamesNoDevice() {
+        let notice = Notice(kind: .connected, id: "x", title: "Anna's MacBook connected", body: "")
+        XCTAssertEqual(notice.logLine, "notice: connected")
     }
 }
 

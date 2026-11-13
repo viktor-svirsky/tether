@@ -23,7 +23,7 @@ final class LocalNetworkIntroTests: TetherUITestCase {
         launch(.localNetworkIntro, screen: "intro.title")
         element("intro.continue").tap()
         waitUntilGone(element("intro.title"))
-        XCTAssertEqual(label(of: "status.title"), "Turn on Personal Hotspot")
+        XCTAssertEqual(label(of: "status.title"), "Waiting for a device on the hotspot")
     }
 
     /// Swiping down doesn't close it: only Continue does, so the check never waits for a later launch.
@@ -38,7 +38,7 @@ final class LocalNetworkIntroTests: TetherUITestCase {
         launch(nil, arguments: ["-localNetworkIntroduced", "NO"], screen: "intro.title")
         element("intro.continue").tap()
         waitUntilGone(element("intro.title"))
-        XCTAssertEqual(label(of: "status.title"), "Turn on Personal Hotspot")
+        XCTAssertEqual(label(of: "status.title"), "Waiting for a device on the hotspot")
     }
 
     func testOtherDemosDontShowIt() {

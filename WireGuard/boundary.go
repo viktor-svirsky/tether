@@ -96,6 +96,11 @@ func parseConfig(js string) ([]Peer, *dnsUpstream, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("device %d: %w", i+1, err)
 		}
+		// Inside the tunnel's network and not its DNS address: one at 10.7.0.1 would take DNS's
+		// place, and an IPv6 one would look set up while its UDP is dropped (#155).
+		if !a.Is4() || !tunnelNet.Contains(a) || a == dnsAddr.Addr() {
+			return nil, nil, fmt.Errorf("device %d: %v isn't a device address in %v", i+1, a, tunnelNet)
+		}
 		var key [32]byte
 		copy(key[:], p.Key)
 		if seenKeys[key] || seenAddrs[a] {

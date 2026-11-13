@@ -9,6 +9,11 @@ enum ConfigPage {
     /// never had it.
     static let port: UInt16 = 80
     static let configPath = "/Tether.conf"
+    /// In the page's download link, and a download without it gets the page: each download claims
+    /// the ready device, and another site can make a browser on the hotspot fetch a URL it knows, but
+    /// can't read the page for this (#158). New with each launch, like the page's code window.
+    static let token = (0..<16).map { _ in String("0123456789abcdef".randomElement()!) }.joined()
+    static var downloadPath: String { "\(configPath)?t=\(token)" }
 
     /// The address to type, without the port when it's 80.
     static func url(host: String, port: UInt16 = port) -> String {
@@ -21,12 +26,18 @@ enum ConfigPage {
         head.range(of: Data("\r\n\r\n".utf8)) != nil
     }
 
-    /// What a browser asks for. Only the request line counts: the headers are read and ignored.
-    /// A HEAD asks for the same as a GET, without the body. Download managers send one first.
+    /// What a browser asks for, from the request line. Of the headers only Host counts: one that isn't
+    /// an address of Tether's is a page on another site that pointed its own name at the iPhone (DNS
+    /// rebinding), and gets a 400, so its script can't read a config (#158). A HEAD asks for the same
+    /// as a GET, without the body. Download managers send one first.
     enum Request: Equatable {
         case page, config, pageHead, configHead, notFound, notGet, malformed
+        /// A GET of the config without the page's token: it gets the page, with a 404 so a
+        /// download tool doesn't save it as the config.
+        case configWithoutToken
 
-        init(_ head: Data) {
+        /// `hosts`: where the page listens, see `HotspotSession.boundHosts`.
+        init(_ head: Data, hosts: [String]) {
             guard let text = String(data: head, encoding: .utf8), let end = text.range(of: "\r\n") else {
                 self = .malformed
                 return
@@ -40,13 +51,59 @@ enum ConfigPage {
                 self = .notGet
                 return
             }
+            let lines = text[end.upperBound...].components(separatedBy: "\r\n")
+            let host = lines.first { $0.lowercased().hasPrefix("host:") }.map { $0.dropFirst(5).trimmingCharacters(in: .whitespaces) }
+            if let host, !hosts.contains(where: { ConfigPage.sameAddress(ConfigPage.address(inHost: host), $0) }) {
+                self = .malformed
+                return
+            }
             let head = parts[0] == "HEAD"
-            switch parts[1].prefix(while: { $0 != "?" && $0 != "#" }) {
+            let target = parts[1]
+            switch target.prefix(while: { $0 != "?" && $0 != "#" }) {
             case "/": self = head ? .pageHead : .page
-            case Substring(ConfigPage.configPath): self = head ? .configHead : .config
+            case Substring(ConfigPage.configPath):
+                let query = target.drop { $0 != "?" }.dropFirst().prefix { $0 != "#" }
+                let tokened = query.split(separator: "&").contains { $0 == "t=\(ConfigPage.token)" }
+                self = tokened ? (head ? .configHead : .config) : head ? .pageHead : .configWithoutToken
             default: self = .notFound
             }
         }
+    }
+
+    /// The address in a Host header: without the port, and an IPv6 one without its brackets.
+    static func address(inHost host: String) -> String {
+        if host.hasPrefix("["), let close = host.firstIndex(of: "]") {
+            return String(host[host.index(after: host.startIndex)..<close])
+        }
+        return host.split(separator: ":", omittingEmptySubsequences: false).count == 2
+            ? String(host.prefix { $0 != ":" }) : host
+    }
+
+    /// The same IP address, however it's written.
+    static func sameAddress(_ a: String, _ b: String) -> Bool {
+        if let a = ipv6(a), let b = ipv6(b) { return a == b }
+        return !a.isEmpty && a == b
+    }
+
+    /// Whether a client is on the hotspot. On an IPv6-only carrier the page listens on the iPhone's
+    /// global address, which the internet may reach if the carrier lets it in, so an IPv6 client must
+    /// be link-local or in that address's /64, the hotspot's (#159). An IPv4 one is on the hotspot or
+    /// behind its NAT, which nobody outside gets through.
+    static func onHotspot(_ client: String, hosts: [String]) -> Bool {
+        guard let address = ipv6(client) else {
+            var v4 = in_addr()
+            return inet_pton(AF_INET, client, &v4) == 1 // anything else isn't a client address
+        }
+        if address[0] == 0xfe && address[1] & 0xc0 == 0x80 { return true } // fe80::/10
+        return hosts.compactMap(ipv6).contains { $0.prefix(8) == address.prefix(8) }
+    }
+
+    /// The 16 bytes of an IPv6 address, without a zone (%bridge100). Nil for anything else.
+    private static func ipv6(_ text: String) -> [UInt8]? {
+        let plain = text.prefix { $0 != "%" }
+        var address = in6_addr()
+        guard plain.contains(":"), inet_pton(AF_INET6, String(plain), &address) == 1 else { return nil }
+        return withUnsafeBytes(of: address) { Array($0) }
     }
 
     enum Status: Equatable {
@@ -147,7 +204,7 @@ enum ConfigPage {
         let content = switch state {
         case .ready:
             """
-            <p><a class="button" href="\(configPath)">Download the config</a></p>
+            <p><a class="button" href="\(downloadPath)">Download the config</a></p>
             <p>Then import it in the WireGuard app.</p>
             <details>
             <summary>How, on Mac, Windows, Linux or a phone</summary>
