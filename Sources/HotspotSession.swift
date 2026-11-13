@@ -370,9 +370,10 @@ final class HotspotSession {
         let open = addWindowOpen
         // A setup that isn't read yet would bring back the saved code, so the new one waits for it.
         guard open != readyLetIn, !open || devices.loaded else { return }
-        // A device whose first handshake came since the last read is listed before its code goes.
+        // A device whose first handshake came since the last read is listed before its code goes, but
+        // only one from before the window ended: the next read can be 20 s later in the background (#161).
         if !open, running, server.running {
-            claimReady(server.snapshot().peers)
+            claimReady(server.snapshot().peers, handshakeBy: addWindow.ends)
         }
         readyLetIn = open
         if open {
@@ -708,8 +709,11 @@ final class HotspotSession {
     /// A device that connected with the QR code is listed, and the code changes for the next one.
     /// Not saved means not claimed: the next check tries again. A code that isn't on the server can't
     /// have connected, whatever an older read says.
-    private func claimReady(_ peers: [String: PeerStats]) {
+    private func claimReady(_ peers: [String: PeerStats], handshakeBy end: Date? = nil) {
         guard readyLetIn, let ready = wireGuardReady, let reached = peers[ready.address], reached.connected,
+              // Handshake times come in whole seconds, so one in the window's last second can't be told
+              // from one just after it: only an earlier second counts.
+              end == nil || reached.lastHandshake.map { $0 < end!.wholeSecondsDown } ?? true,
               let host = host(reachedFrom: reached.endpoint),
               devices.claimReady(address: ready.address, host: host) else { return }
         log("WireGuard: a new device connected with the QR code")
@@ -930,4 +934,9 @@ enum Interfaces {
         }
         return out
     }
+}
+
+private extension Date {
+    /// This time with the fraction of a second dropped.
+    var wholeSecondsDown: Date { Date(timeIntervalSince1970: timeIntervalSince1970.rounded(.down)) }
 }

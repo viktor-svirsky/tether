@@ -12,7 +12,7 @@ struct AddWindow {
     private var sheetShown = false
     /// When the window closes, once the sheet has closed or Tether has left the screen with it.
     /// Nil at launch, so the window starts closed.
-    private var ends: Date?
+    private(set) var ends: Date?
 
     func isOpen(now: Date, sceneActive: Bool) -> Bool {
         if sheetShown, sceneActive { return true }
