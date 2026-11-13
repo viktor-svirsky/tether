@@ -13,13 +13,14 @@ final class LocalNetworkWarningTests: TetherUITestCase {
         try audit()
     }
 
-    /// The last step is where a device waits to connect, so that's where it says why it never will.
-    func testLocalNetworkOffShowsInAddADevicesLastStep() throws {
+    /// At the top of Add a device, before a device scans a code that can't work yet (#184).
+    func testLocalNetworkOffShowsAtTheTopOfAddADevice() throws {
         for appearance in [XCUIDevice.Appearance.light, .dark] {
             XCUIDevice.shared.appearance = appearance
             launch(.localNetworkDenied)
             openAddDevice()
             XCTAssertEqual(reveal(element("add.localNetwork.title")).label, "Local Network is off for Tether")
+            XCTAssertLessThan(element("add.localNetwork.title").frame.maxY, element("add.step1").frame.minY, "above the steps")
             XCTAssertEqual(label(of: "add.localNetwork.problem"), "iOS blocks Tether's answers to your devices until it's on.")
             XCTAssertEqual(reveal(element("add.localNetwork.open")).label, "Turn on in Settings")
             assertNowhere(text(containing: "This ticks off by itself"), message: "it won't, until Local Network is on")

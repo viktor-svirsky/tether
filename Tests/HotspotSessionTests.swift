@@ -8,7 +8,7 @@ final class HotspotSessionTests: XCTestCase {
     private let hotspot = "172.20.10.1"
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
     private let locked = "Its keys can't be read yet. Unlock this iPhone once."
-    private let couldntStart = "It couldn't start: port in use"
+    private let couldntStart = "It couldn't start. Tether tries again by itself. If this stays, share the log from Settings."
 
     private var server: FakeServer!
     private var sound: FakeSound!
@@ -620,6 +620,20 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(logged.filter { $0.hasPrefix("WireGuard not started") }, ["WireGuard not started: port in use"])
     }
 
+    /// The screen says the same for every reason, so a new reason is still logged (#190).
+    func testADifferentReasonIsLoggedToo() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        server.startError = FakeServer.Failure()
+        session.syncWithHotspot()
+        server.startError = FakeServer.Refused()
+        session.syncWithHotspot()
+        session.syncWithHotspot()
+        XCTAssertEqual(logged.filter { $0.hasPrefix("WireGuard not started") },
+                       ["WireGuard not started: port in use", "WireGuard not started: the device list repeats a key or address"])
+    }
+
     // MARK: Devices
 
     /// The server refuses a list by what's in it, so starting it again with the same list is refused
@@ -634,12 +648,28 @@ final class HotspotSessionTests: XCTestCase {
         session.removeWireGuardDevice(peer.id)
         XCTAssertEqual(server.starts, [hotspot, hotspot], "tried again with the saved devices")
         XCTAssertFalse(server.running, "a removed device is never let in")
-        XCTAssertEqual(session.wireGuardProblem, "It couldn't start: \(FakeServer.Refused())")
+        XCTAssertEqual(session.wireGuardProblem, couldntStart)
         server.refusedAddress = nil
         session.syncWithHotspot()
         XCTAssertTrue(server.running)
         XCTAssertFalse(server.lastSetup?.serverPeers.contains(peer) ?? true, "the removed device isn't let in")
         XCTAssertNil(session.wireGuardProblem)
+    }
+
+    /// A retry of the next code that fails for another reason puts that reason in the log too (#190).
+    func testEachReasonTheNextCodeCantBeSavedIsLogged() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        secrets.savesFail = true
+        session.openAddWindow()
+        secrets.saveError = FlakySecrets.Full()
+        session.syncWithHotspot()
+        session.syncWithHotspot()
+        XCTAssertEqual(logged.filter { $0.hasPrefix("WireGuard: the code for the next device can't be saved") },
+                       ["WireGuard: the code for the next device can't be saved: Locked()",
+                        "WireGuard: the code for the next device can't be saved: Full()"])
     }
 
     func testARenameThatCantBeSavedSaysSoUntilAChangeSaves() throws {
