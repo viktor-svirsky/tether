@@ -151,7 +151,14 @@ final class FakeSound: KeepAliveSound {
     /// Started, but iOS gives it no sound.
     var silent = false
     var sounding: Bool { playing && !silent }
+    /// A call holds the audio now.
     var interrupted = false
+    /// A call came and went since the last round asked.
+    var interruptedSinceTaken = false
+    func takeInterruption() -> Bool {
+        defer { interruptedSinceTaken = false }
+        return interrupted || interruptedSinceTaken
+    }
     func start() { playing = true }
     func stop() { playing = false }
 }

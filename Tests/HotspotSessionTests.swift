@@ -1318,6 +1318,8 @@ final class HotspotSessionTests: XCTestCase {
         var wake = false
         /// A call, Siri or an alarm holds the audio.
         var call = false
+        /// One came and went since the last round, with no round in between.
+        var callEnded = false
         var plays: Bool
         var line: UInt = #line
     }
@@ -1329,6 +1331,7 @@ final class HotspotSessionTests: XCTestCase {
             address = round.hotspot ? hotspot : nil
             session.sceneActive = round.onScreen
             sound.interrupted = round.call
+            sound.interruptedSinceTaken = round.callEnded
             if round.wake { session.wake() } else { session.syncWithHotspot() }
             XCTAssertEqual(sound.playing, round.plays, line: round.line)
         }
@@ -1377,6 +1380,18 @@ final class HotspotSessionTests: XCTestCase {
             SoundRound(minute: 21, onScreen: false, plays: true), // the call is over, no device back yet
             SoundRound(minute: 29.9, onScreen: false, plays: true), // 10 minutes from the last round in the call
             SoundRound(minute: 30, onScreen: false, plays: false),
+        ])
+    }
+
+    /// A call that started and ended with no watcher round in between, while iOS held Tether back
+    /// say, still counts: the 10 minutes run from the first round after it.
+    func testACallBetweenTwoRoundsStillCounts() {
+        run([
+            SoundRound(minute: 0, onScreen: false, hotspot: true, plays: true),
+            SoundRound(minute: 1, onScreen: false, plays: true), // the hotspot goes
+            SoundRound(minute: 30, onScreen: false, callEnded: true, plays: true),
+            SoundRound(minute: 39.9, onScreen: false, plays: true),
+            SoundRound(minute: 40, onScreen: false, plays: false),
         ])
     }
 

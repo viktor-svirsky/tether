@@ -26,7 +26,16 @@ final class KeepAlive {
     var sounding: Bool { player?.isPlaying == true }
     /// A call, Siri or an alarm took the audio, and the sound hasn't played since. iOS doesn't always
     /// say when a call is over, so the next sound that plays is what ends it.
-    private(set) var interrupted = false
+    private var interrupted = false
+    /// An interruption came since `takeInterruption` was last asked. When the sound comes back
+    /// before the next watcher round, after Tether went unwatched through a call say, the round
+    /// still learns there was a call.
+    private var interruptedSinceTaken = false
+
+    func takeInterruption() -> Bool {
+        defer { interruptedSinceTaken = false }
+        return interrupted || interruptedSinceTaken
+    }
 
     func start() {
         if player?.isPlaying == true {
@@ -81,6 +90,7 @@ final class KeepAlive {
         player?.stop()
         player = nil
         interrupted = false
+        interruptedSinceTaken = false
         stopHoldingOn()
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         observers = []
@@ -94,6 +104,7 @@ final class KeepAlive {
             let reason = (info[AVAudioSessionInterruptionReasonKey] as? UInt).map(String.init) ?? "none"
             log("a call, Siri or an alarm interrupted the keep-alive sound (reason \(reason))")
             interrupted = true
+            interruptedSinceTaken = true
         case .ended:
             let options = AVAudioSession.InterruptionOptions(rawValue: info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
             log("interruption over (shouldResume: \(options.contains(.shouldResume)))")
