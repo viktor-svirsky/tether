@@ -1199,18 +1199,24 @@ func TestADoHConnectionThatFailsItsPingIsClosed(t *testing.T) {
 
 // Answers that aren't DNS give the device SERVFAIL, not a web page as its answer (#152).
 func TestADoHAnswerThatIsntDNSIsServfail(t *testing.T) {
+	var followed atomic.Bool
 	cases := map[string]http.HandlerFunc{
-		"a redirect to a page": func(w http.ResponseWriter, r *http.Request) {
+		// The page it leads to is a good answer, so only not following the redirect fails the lookup.
+		"a redirect": func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/page" {
-				w.Header().Set("Content-Type", "text/html")
-				w.Write([]byte(strings.Repeat("<html>not DNS</html>", 4)))
+				followed.Store(true)
+				q, _ := io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "application/dns-message")
+				w.Write(answerTo(t, q, 1))
 				return
 			}
 			http.Redirect(w, r, "/page", http.StatusFound)
 		},
-		"a page": func(w http.ResponseWriter, r *http.Request) {
+		// A good answer to the question, but not said to be DNS, so only the media type check fails it.
+		"another media type": func(w http.ResponseWriter, r *http.Request) {
+			q, _ := io.ReadAll(r.Body)
 			w.Header().Set("Content-Type", "text/html")
-			w.Write([]byte(strings.Repeat("<html>not DNS</html>", 4)))
+			w.Write(answerTo(t, q, 1))
 		},
 		"another question": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/dns-message")
@@ -1232,6 +1238,9 @@ func TestADoHAnswerThatIsntDNSIsServfail(t *testing.T) {
 			}
 			if rcode := answer[3] & 0x0f; rcode != 2 {
 				t.Fatalf("got rcode %d, want SERVFAIL", rcode)
+			}
+			if followed.Load() {
+				t.Fatal("the redirect was followed")
 			}
 		})
 	}
