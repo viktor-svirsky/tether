@@ -172,8 +172,11 @@ func (s *Server) sendPing(p []byte) {
 func (s *Server) receivePings() {
 	buf := make([]byte, 65535)
 	for {
-		n, from, err := s.pings.conn.Load().ReadFrom(buf)
+		conn := s.pings.conn.Load()
+		n, from, err := conn.ReadFrom(buf)
 		if err != nil {
+			// A failed read may leave the socket open: close it, or each recovery keeps a descriptor.
+			conn.Close()
 			if !s.reopenPings() {
 				return
 			}
