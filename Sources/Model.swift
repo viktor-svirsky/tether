@@ -242,7 +242,7 @@ final class Model: ObservableObject {
         if notifier.wouldTell { askForNotices() }
         let alarm = closedAlarm.check(now: Date(), sharing: session.sharing, on: NoticeKind.closed.isOn(in: settingsDefaults))
         if alarm != .none { poster.queue(alarm) }
-        for notice in notices { Self.append("notice: \(notice.title)") }
+        for notice in notices { Self.append(notice.logLine) }
         guard alarm != .none || !notices.isEmpty else { return }
         // An idle stop has just stopped the sound, and iOS suspends Tether soon after. Background time
         // lets the notice and the alarm's change get out first: a "Tether stopped sharing" left waiting
@@ -451,9 +451,10 @@ final class Model: ObservableObject {
         }
     }
 
-    /// Internal log, read in Console.app, and the log Settings shares.
+    /// Internal log, read in Console.app, and the log Settings shares. The system log gets the
+    /// redacted line too, or full addresses would end up in a sysdiagnose (#162).
     private static func append(_ s: String) {
-        logger.info("\(s, privacy: .public)")
+        logger.info("\(LogRedaction.redact(s), privacy: .public)")
         debugLog.append(s)
     }
 }
