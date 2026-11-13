@@ -9,8 +9,11 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  # A Go bump changes what the app runs, so it goes to the next release branch and ships after a
+  # test on the iPhone (#147). Point this at the new release branch when you start one.
   - package-ecosystem: gomod
     directory: /WireGuard
+    target-branch: release-1.9
     schedule:
       interval: weekly
     groups:
