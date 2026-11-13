@@ -610,4 +610,10 @@ final class FakeNoticeCenter: NoticeCenter {
     func remove(_ id: String) {
         calls.append("remove \(id)")
     }
+
+    /// The shared log says what kind of notice went out, not its title, which names the device (#162).
+    func testANoticeLogLineNamesNoDevice() {
+        let notice = Notice(kind: .connected, id: "x", title: "Anna's MacBook connected", body: "")
+        XCTAssertEqual(notice.logLine, "notice: connected")
+    }
 }
