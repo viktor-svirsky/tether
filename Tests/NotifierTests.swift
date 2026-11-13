@@ -389,6 +389,12 @@ final class NotifierTests: XCTestCase {
         defaults.set(true, forKey: NoticeKind.expiring.key)
         XCTAssertEqual(expiryRound(at: day(24, 13), expires: day(26)).count, 1, "turned on later the same day")
     }
+
+    /// The shared log says what kind of notice went out, not its title, which names the device (#162).
+    func testANoticeLogLineNamesNoDevice() {
+        let notice = Notice(kind: .connected, id: "x", title: "Anna's MacBook connected", body: "")
+        XCTAssertEqual(notice.logLine, "notice: connected")
+    }
 }
 
 /// Asking for permission and posting, with a fake notification center.
@@ -609,11 +615,5 @@ final class FakeNoticeCenter: NoticeCenter {
 
     func remove(_ id: String) {
         calls.append("remove \(id)")
-    }
-
-    /// The shared log says what kind of notice went out, not its title, which names the device (#162).
-    func testANoticeLogLineNamesNoDevice() {
-        let notice = Notice(kind: .connected, id: "x", title: "Anna's MacBook connected", body: "")
-        XCTAssertEqual(notice.logLine, "notice: connected")
     }
 }
