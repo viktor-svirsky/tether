@@ -656,6 +656,22 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertNil(session.wireGuardProblem)
     }
 
+    /// A retry of the next code that fails for another reason puts that reason in the log too (#190).
+    func testEachReasonTheNextCodeCantBeSavedIsLogged() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        secrets.savesFail = true
+        session.openAddWindow()
+        secrets.saveError = FlakySecrets.Full()
+        session.syncWithHotspot()
+        session.syncWithHotspot()
+        XCTAssertEqual(logged.filter { $0.hasPrefix("WireGuard: the code for the next device can't be saved") },
+                       ["WireGuard: the code for the next device can't be saved: Locked()",
+                        "WireGuard: the code for the next device can't be saved: Full()"])
+    }
+
     func testARenameThatCantBeSavedSaysSoUntilAChangeSaves() throws {
         makeSession()
         let peer = try XCTUnwrap(devices.connectReady())

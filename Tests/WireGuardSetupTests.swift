@@ -654,12 +654,15 @@ final class FlakySecrets: SecretStore {
     var saves = 0
     var data: Data?
     struct Locked: Error {}
+    struct Full: Error {}
+    /// What a failing save throws.
+    var saveError: Error = Locked()
     func load() throws -> Data? {
         if failing { throw Locked() }
         return data
     }
     func save(_ data: Data) throws {
-        if savesFail { throw Locked() }
+        if savesFail { throw saveError }
         saves += 1
         self.data = data
     }
