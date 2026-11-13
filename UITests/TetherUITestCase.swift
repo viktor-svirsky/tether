@@ -254,6 +254,14 @@ class TetherUITestCase: XCTestCase {
     ///
     /// `only`, when set, judges just the elements whose identifier starts with it, for a screen that is
     /// scrolled so that other texts are cut off at the edges.
+    /// iOS 26 fades whatever scrolls under the navigation bar, so the audit reads a text right below it
+    /// (the first section header) as fainter than it is.
+    private func underBar(_ element: XCUIElement) -> Bool {
+        let bar = app.navigationBars.firstMatch
+        guard bar.exists else { return false }
+        return element.frame.minY < bar.frame.maxY + 24
+    }
+
     func audit(types: XCUIAccessibilityAuditType = XCUIAccessibilityAuditType.all.subtracting([.dynamicType, .textClipped]),
                underSheet: Bool = false, only prefix: String? = nil, file: StaticString = #filePath, line: UInt = #line) throws {
         var allowed: [String] = []
@@ -267,7 +275,7 @@ class TetherUITestCase: XCTestCase {
                     || Self.filledButtons.contains(element?.identifier ?? "")
                     || (element?.elementType == .button && Self.systemButtons.contains(element?.label ?? ""))
                 let offScreen = issue.auditType == .contrast
-                    && element.map { !self.app.windows.firstMatch.frame.contains($0.frame) } ?? false
+                    && element.map { !self.app.windows.firstMatch.frame.contains($0.frame) || self.underBar($0) } ?? false
                 let known = (issue.compactDescription == "Contrast nearly passed" && (systemText || systemStyled))
                     || (underSheet && issue.compactDescription == "Potentially inaccessible text" && element == nil)
                     || offScreen

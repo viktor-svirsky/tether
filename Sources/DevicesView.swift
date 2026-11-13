@@ -373,6 +373,7 @@ struct WarningLabel: View {
             Text(text)
         } icon: {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                .accessibilityHidden(true) // the text says it all, and iOS 26 would read the symbol
         }
     }
 }
