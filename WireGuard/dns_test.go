@@ -1197,6 +1197,46 @@ func TestADoHConnectionThatFailsItsPingIsClosed(t *testing.T) {
 	}
 }
 
+// Answers that aren't DNS give the device SERVFAIL, not a web page as its answer (#152).
+func TestADoHAnswerThatIsntDNSIsServfail(t *testing.T) {
+	cases := map[string]http.HandlerFunc{
+		"a redirect to a page": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/page" {
+				w.Header().Set("Content-Type", "text/html")
+				w.Write([]byte(strings.Repeat("<html>not DNS</html>", 4)))
+				return
+			}
+			http.Redirect(w, r, "/page", http.StatusFound)
+		},
+		"a page": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(strings.Repeat("<html>not DNS</html>", 4)))
+		},
+		"another question": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/dns-message")
+			w.Write(answerTo(t, lookupFor(t, 0, "other.example.", 0), 1))
+		},
+	}
+	for name, handler := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, c := setup(t)
+			srv := httptest.NewTLSServer(handler)
+			t.Cleanup(srv.Close)
+			client := newDoHClient(nil)
+			client.Transport.(*http.Transport).TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig
+			s.dohClient, s.dohSpare = client, client
+			s.SetDNS(&dnsUpstream{doh: srv.URL + "/abc123"})
+			answer, err := lookupUDP(c, lookupFor(t, 7, "example.com.", 0), answerWait)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rcode := answer[3] & 0x0f; rcode != 2 {
+				t.Fatalf("got rcode %d, want SERVFAIL", rcode)
+			}
+		})
+	}
+}
+
 // A DoH server that answers with an error isn't asked again: it would answer the same.
 func TestAnErrorFromTheServerIsNotAskedAgain(t *testing.T) {
 	s, c := setup(t)
