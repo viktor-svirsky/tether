@@ -112,6 +112,8 @@ status=0
 issue 23 closed "Keep the code on screen" enhancement
 commit "$(printf 'Keep the code on screen\n\nFixes #23')" > /dev/null
 says "- Keep the code on screen (#23)" v1.4.0 --require-change
+# The flag alone is the first release with the check: the whole history counts.
+says "$("$script")" --require-change
 
 # No answer about an issue fails the run, instead of notes that leave it out without a word.
 commit "$(printf 'Something\n\nFixes #99')" > /dev/null
