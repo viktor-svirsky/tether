@@ -60,7 +60,7 @@ You need an iPhone with iOS 17 or later and a plan with Personal Hotspot. Tether
 SideStore and AltStore install apps on your iPhone signed with your own Apple ID. A free Apple ID is enough.
 
 1. Install SideStore or AltStore with their own guide: [SideStore](https://docs.sidestore.io), [AltStore](https://faq.altstore.io). It needs a computer for the setup.
-2. On iOS 16 or later, turn on Developer Mode: Settings > Privacy & Security > Developer Mode. The iPhone restarts and asks you to confirm. Apps signed with your own Apple ID don't open without it.
+2. Turn on Developer Mode: Settings > Privacy & Security > Developer Mode. The iPhone restarts and asks you to confirm. Apps signed with your own Apple ID don't open without it.
 3. Add Tether's source: on your iPhone, open [the add page](https://viktor-svirsky.github.io/tether/add/) and tap Add to SideStore or Add to AltStore. Or open Sources in SideStore or AltStore, tap + and paste this:
 
    ```

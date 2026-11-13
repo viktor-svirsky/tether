@@ -60,6 +60,13 @@ class MakeSourceTests(unittest.TestCase):
             "https://github.com/viktor-svirsky/tether/releases/download/v1.2.0/Tether.ipa",
         )
 
+    # A fork's release points at the fork's own ipa and images, not this repo's (#147).
+    def test_a_fork_points_at_itself(self):
+        app = make_source.source(self.ipa, "v1.2.0", "2026-10-29", "someone/tether")["apps"][0]
+        [version] = app["versions"]
+        self.assertEqual(version["downloadURL"], "https://github.com/someone/tether/releases/download/v1.2.0/Tether.ipa")
+        self.assertTrue(app["iconURL"].startswith("https://raw.githubusercontent.com/someone/tether/v1.2.0/"))
+
     # SideStore keeps showing what it cached for an unchanged URL, so each release's images are its tag's.
     def test_the_images_point_at_this_release(self):
         app = self.app()
