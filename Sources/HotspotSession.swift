@@ -50,6 +50,9 @@ protocol KeepAliveSound: AnyObject {
     var playing: Bool { get }
     /// Making its sound right now.
     var sounding: Bool { get }
+    /// Whether a call, Siri or an alarm holds the audio now, or did since the last time this was
+    /// asked. The second part counts a call that ended between two watcher rounds.
+    func takeInterruption() -> Bool
     func start()
     func stop()
 }
@@ -292,7 +295,11 @@ final class HotspotSession {
         let now = self.now()
         // On screen the wait keeps starting again, so the sound never stops there, and the 10 minutes
         // run from leaving the screen, to turn on Personal Hotspot in Settings, say.
-        if hotspot { waitingSince = nil } else if sceneActive || waitingSince == nil { waitingSince = now }
+        // A call can take the hotspot away for as long as it lasts, so the 10 minutes run from its
+        // end too. Before, a long call left Tether suspended and its devices cut off until someone
+        // opened it (#191). Not after an idle stop, which means to stop.
+        let call = keepAlive.takeInterruption() && idleStopped == nil
+        if hotspot { waitingSince = nil } else if sceneActive || call || waitingSince == nil { waitingSince = now }
         let plays = KeepAlivePolicy.plays(waitingSince: waitingSince, now: now)
         if plays { keepAlive.start() } else if keepAlive.playing {
             log("no hotspot for 10 minutes, letting iOS suspend Tether until it's opened")
