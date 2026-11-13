@@ -9,6 +9,8 @@ protocol WireGuardServing: AnyObject {
     /// stopped when they're refused.
     func start(hosts: [String], setup: WireGuardSetup, dns: DNSChoice.Upstream, port: UInt16) throws
     func stop()
+    /// Listens on `hosts` instead, on the same port, and keeps every device's session (#219).
+    func listen(on hosts: [String]) throws
     func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream) throws
     /// Opens the config page to the devices on exactly `hosts`, see `ConfigPageServing.readyHosts`.
     /// A start opens it nowhere.
@@ -138,6 +140,8 @@ final class HotspotSession {
     /// The one address `hotspotAddress` picked when the server started. The others come from it,
     /// see `boundHosts`.
     private var boundHost: String?
+    /// The last reason `listenToo` couldn't listen on a new IPv6 address, so a retry every round logs it once.
+    private var listenFailure: String?
     /// The carrier gives this iPhone IPv6 only, see `deviceHost`.
     private var onIPv6OnlyCarrier: Bool { willSet { willChange() } }
     /// Why the saved setup can't be used, see `checkSetup`.
@@ -206,7 +210,7 @@ final class HotspotSession {
         let ipv6Only = carrierIPv6Only()
         if ipv6Only != onIPv6OnlyCarrier { onIPv6OnlyCarrier = ipv6Only }
         let hotspot = hotspotAddress()
-        if running, hotspot != boundHost {
+        if running, hotspot != boundHost, !listenToo(on: hotspot) {
             log("hotspot address gone or changed, stopping")
             stopSharing()
         }
@@ -226,6 +230,32 @@ final class HotspotSession {
         downSpeed = 0
         upSpeed = 0
         running = true
+    }
+
+    /// On a carrier that gives the iPhone IPv6 only, the hotspot comes back with 172.20.10.1 before
+    /// its IPv6 address. Listening there too, on the same port, keeps the devices' sessions, where a
+    /// restart dropped them all a second time (#219). Says whether this handled the change. Anything
+    /// else, an address gone or a new IPv6 prefix, restarts.
+    private func listenToo(on hotspot: String?) -> Bool {
+        guard let hotspot, hotspot.contains(":"), let boundHost, !boundHost.contains(":"), server.running else { return false }
+        let hosts = Self.hosts(for: hotspot)
+        do {
+            try server.listen(on: hosts)
+        } catch {
+            // A new IPv6 address can't take a socket for a moment. A restart would fail on it too and
+            // drop every device, so the server keeps 172.20.10.1 and the next round tries again.
+            let failure = "WireGuard: can't listen on \(hotspot) yet, tries again: \(error)"
+            if failure != listenFailure { log(failure) }
+            listenFailure = failure
+            return true
+        }
+        listenFailure = nil
+        willChange() // the QR code and the page's addresses follow the new address
+        self.boundHost = hotspot
+        page.start(hosts: hosts, port: ConfigPage.port)
+        log("WireGuard on \(hosts.joined(separator: " and ")) port \(WireGuardSetup.port), the devices keep their sessions")
+        publishSetup()
+        return true
     }
 
     private func stopSharing() {

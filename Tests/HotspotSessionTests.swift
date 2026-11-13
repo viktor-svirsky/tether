@@ -184,6 +184,49 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(server.starts, ["\(hotspot),\(v6)", hotspot])
     }
 
+    /// On an IPv6-only carrier the hotspot comes back with 172.20.10.1 before its IPv6 address. Tether
+    /// listens on the IPv6 address too once it shows up, with no restart, so the devices keep their
+    /// sessions (#219). Everything a device is given then points at the IPv6 address.
+    func testAnIPv6AddressThatShowsUpLaterIsListenedOnWithoutARestart() {
+        makeSession()
+        let v6 = "2607:fb91:88a2:e822::a"
+        address = hotspot
+        session.syncWithHotspot()
+        var changes = 0
+        session.willChange = { changes += 1 }
+        address = v6
+        session.syncWithHotspot()
+        XCTAssertGreaterThan(changes, 0, "the screen shows the new addresses")
+        XCTAssertEqual(server.starts, [hotspot], "no restart")
+        XCTAssertEqual(server.listens, ["\(hotspot),\(v6)"])
+        XCTAssertTrue(server.running)
+        XCTAssertEqual(page.starts.last, "\(hotspot),\(v6):80")
+        XCTAssertEqual(session.pageHosts, [hotspot, v6])
+        XCTAssertEqual(session.deviceHost, v6)
+        session.syncWithHotspot()
+        XCTAssertEqual(server.listens.count, 1, "once")
+    }
+
+    /// An IPv6 address the server can't listen on yet doesn't restart it, which would fail on that
+    /// address too and drop every device. It keeps 172.20.10.1 and tries again each round.
+    func testAnIPv6AddressThatCantBeListenedOnYetIsTriedAgainWithoutARestart() {
+        makeSession()
+        let v6 = "2607:fb91:88a2:e822::a"
+        address = hotspot
+        session.syncWithHotspot()
+        server.listenError = FakeServer.Failure()
+        address = v6
+        session.syncWithHotspot()
+        session.syncWithHotspot()
+        XCTAssertEqual(server.starts, [hotspot], "no restart")
+        XCTAssertEqual(server.listens.count, 2, "tried each round")
+        XCTAssertEqual(session.pageHosts, [hotspot])
+        server.listenError = nil
+        session.syncWithHotspot()
+        XCTAssertEqual(server.starts, [hotspot])
+        XCTAssertEqual(session.pageHosts, [hotspot, v6])
+    }
+
     /// A config for 172.20.10.1 keeps working through a new IPv6 address, and back on a usual carrier.
     /// One for the old IPv6 address doesn't.
     func testAConfigFor172_20_10_1NeverNeedsANewOne() throws {

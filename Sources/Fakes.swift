@@ -72,6 +72,17 @@ final class FakeServer: WireGuardServing {
         page = hosts
     }
 
+    /// The addresses of each listen, comma-separated, see `listen(on:)`.
+    private(set) var listens: [String] = []
+    /// Thrown by every listen while set.
+    var listenError: Error?
+
+    func listen(on hosts: [String]) throws {
+        guard running else { return }
+        listens.append(hosts.joined(separator: ","))
+        if let listenError { throw listenError }
+    }
+
     func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream) throws {
         guard running else { return }
         if let refusedAddress, setup.serverPeers.contains(where: { $0.address == refusedAddress }) { throw Refused() }
