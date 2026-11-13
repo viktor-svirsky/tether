@@ -29,7 +29,10 @@ final class KeepAlive {
     private(set) var interrupted = false
 
     func start() {
-        if player?.isPlaying == true { return }
+        if player?.isPlaying == true {
+            interrupted = false // it plays again, by itself after the interruption, say
+            return
+        }
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, options: [.mixWithOthers])
         // Nobody hears it, so latency doesn't matter. The longest buffer iOS gives wakes the CPU
