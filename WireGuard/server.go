@@ -238,8 +238,14 @@ type Server struct {
 	arriving  map[stack.TransportEndpointID]*arrival
 	dials     map[netip.Addr]int
 	conns     map[netip.Addr]int
+	// syns keeps a SYN's arrival and gVisor's take on it together, apart from a forwardTCP that
+	// finds no arrival of its own and hands gVisor's slot back, see forwardTCP.
+	syns sync.Mutex
 	// The caps, see the constants. Tests lower them.
 	maxCones, maxDials, maxConns, maxPings, maxLookups int
+	// keepIdle and keepInterval are the keepalive on the devices' side of TCP, see forwardTCP.
+	// Tests shorten them.
+	keepIdle, keepInterval time.Duration
 	// DNS on 10.7.0.1, see dns.go. Tests swap dohClient, dohSpare, lookupTimeout and plainTimeout.
 	upstream  atomic.Pointer[dnsUpstream]
 	dohClient *http.Client
@@ -333,6 +339,8 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
 	s.dohClient, s.dohSpare, s.lookupTimeout = newDoHClient(dialer.DialContext), newDoHSpare(dialer.DialContext), lookupTimeout
 	s.plainTimeout = plainTimeout
+	// A device that leaves the hotspot is found in 2 minutes: 60 s idle, then 4 probes 15 s apart.
+	s.keepIdle, s.keepInterval = 60*time.Second, 15*time.Second
 	s.stack = stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol},
@@ -362,7 +370,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	s.stack.AddRoute(tcpip.Route{Destination: header.IPv4EmptySubnet, NIC: 1})
 	s.stack.AddRoute(tcpip.Route{Destination: header.IPv6EmptySubnet, NIC: 1})
 	// gVisor's own cap is above maxInFlight, so it never drops a SYN handleTCP has counted.
-	s.forwarder = tcp.NewForwarder(s.stack, 0, 2*maxInFlight, s.forwardTCP)
+	s.forwarder = tcp.NewForwarder(s.stack, 0, 2*maxInFlight, func(r *tcp.ForwarderRequest) { s.forwardTCP(r) })
 	s.stack.SetTransportProtocolHandler(tcp.ProtocolNumber, s.handleTCP)
 	s.stack.SetTransportProtocolHandler(udp.ProtocolNumber, s.handleUDP)
 
@@ -964,6 +972,8 @@ func (s *Server) handleTCP(id stack.TransportEndpointID, pkt *stack.PacketBuffer
 	if len(h) < header.TCPMinimumSize || h.Flags()&(header.TCPFlagSyn|header.TCPFlagAck) != header.TCPFlagSyn {
 		return false // not a new connection, so the stack answers with a reset
 	}
+	s.syns.Lock()
+	defer s.syns.Unlock()
 	s.mu.Lock()
 	a, again := s.arriving[id]
 	if !again {
@@ -1025,9 +1035,17 @@ func release(counts map[netip.Addr]int, device netip.Addr) {
 	}
 }
 
+// forwardRequest is what forwardTCP uses of gVisor's tcp.ForwarderRequest. Tests pause one.
+type forwardRequest interface {
+	ID() stack.TransportEndpointID
+	Complete(sendReset bool)
+	CreateEndpoint(*waiter.Queue) (tcpip.Endpoint, tcpip.Error)
+}
+
 // forwardTCP runs on its own goroutine: gVisor's TCP forwarder starts one per SYN handleTCP passes on.
-func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
+func (s *Server) forwardTCP(r forwardRequest) {
 	id := r.ID()
+	s.syns.Lock()
 	s.mu.Lock()
 	a := s.arriving[id]
 	mine := a != nil && !a.taken
@@ -1036,10 +1054,14 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	}
 	s.mu.Unlock()
 	if !mine {
-		// A SYN sent again after the dial for it was refused, before its arrival was gone.
+		// A SYN sent again after the dial for it was refused, before its arrival was gone. Until
+		// Complete, gVisor drops any new SYN with this id, so syns holds them all back till then.
+		// Otherwise one could make an arrival that no forwardTCP takes, and Close would wait on it.
 		r.Complete(true)
+		s.syns.Unlock()
 		return
 	}
+	s.syns.Unlock()
 	defer s.forwarding.Done()
 	// The arrival goes after Complete, so a SYN sent again in between still finds it.
 	refuse := func() {
@@ -1100,7 +1122,7 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 	}()
 	// A device that leaves the hotspot never closes its connections. Keepalive finds them.
 	ep.SocketOptions().SetKeepAlive(true)
-	idle, interval := tcpip.KeepaliveIdleOption(60*time.Second), tcpip.KeepaliveIntervalOption(15*time.Second)
+	idle, interval := tcpip.KeepaliveIdleOption(s.keepIdle), tcpip.KeepaliveIntervalOption(s.keepInterval)
 	ep.SetSockOpt(&idle)
 	ep.SetSockOpt(&interval)
 	ep.SetSockOptInt(tcpip.KeepaliveCountOption, 4)
@@ -1135,6 +1157,17 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 			resetIn()
 		}
 	}
+	// A device that half-closed and then left leaves only the far end's direction, which waits on
+	// the far end. Keepalive ends the device's endpoint, and gone says so, see the first copy.
+	gone := make(chan struct{}, 1)
+	hup := waiter.NewFunctionEntry(waiter.EventHUp|waiter.EventErr, func(waiter.EventMask) {
+		select {
+		case gone <- struct{}{}:
+		default:
+		}
+	})
+	wq.EventRegister(&hup)
+	defer wq.EventUnregister(&hup)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	// Closed once the far end's direction has ended and said why. delivered is what it has passed
@@ -1160,6 +1193,18 @@ func (s *Server) forwardTCP(r *tcp.ForwarderRequest) {
 			fail(true)
 		} else if c, ok := out.(interface{ CloseWrite() error }); ok {
 			c.CloseWrite()
+			// The far end may take long to answer, and the device may leave meanwhile.
+			for {
+				select {
+				case <-farEndRead:
+					return
+				case <-gone:
+					if tcp.EndpointState(ep.State()) == tcp.StateError {
+						fail(true)
+						return
+					}
+				}
+			}
 		}
 	}()
 	go func() {
