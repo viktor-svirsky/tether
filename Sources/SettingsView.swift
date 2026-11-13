@@ -166,8 +166,14 @@ struct SettingsView: View {
         }
         if model.noticePermission == .denied {
             Section {
-                Label("Notifications are off for Tether in iOS Settings.", systemImage: "bell.slash")
-                    .accessibilityIdentifier("notices.denied")
+                Label {
+                    Text("Notifications are off for Tether in iOS Settings.")
+                } icon: {
+                    Image(systemName: "bell.slash").accessibilityHidden(true)
+                }
+                // One element: on iOS 26 the symbol is a separate one named "Notifications Off".
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("notices.denied")
                 Button("Open iOS Settings") {
                     UIApplication.shared.open(URL(string: UIApplication.openNotificationSettingsURLString)!)
                 }
