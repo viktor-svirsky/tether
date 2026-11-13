@@ -5,11 +5,6 @@ import XCTest
 final class DevicePauseTests: TetherUITestCase {
     private let footer = "Pause stops it from connecting until you resume it."
 
-    override func tearDown() {
-        XCUIDevice.shared.appearance = .light
-        super.tearDown()
-    }
-
     func testADeviceHasPauseUnderItsStatusWithTheFooter() {
         launch(.sharing)
         openDevice("iPad")
