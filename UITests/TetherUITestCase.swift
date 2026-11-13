@@ -255,11 +255,13 @@ class TetherUITestCase: XCTestCase {
     /// `only`, when set, judges just the elements whose identifier starts with it, for a screen that is
     /// scrolled so that other texts are cut off at the edges.
     /// iOS 26 fades whatever scrolls under the navigation bar, so the audit reads a text right below it
-    /// (the first section header) as fainter than it is.
+    /// (the first section header) as fainter than it is. Only content that reaches below the bar
+    /// counts: the bar's own title and buttons are audited as usual.
     private func underBar(_ element: XCUIElement) -> Bool {
         let bar = app.navigationBars.firstMatch
         guard bar.exists else { return false }
-        return element.frame.minY < bar.frame.maxY + 24
+        let frame = element.frame
+        return frame.maxY > bar.frame.maxY && frame.minY < bar.frame.maxY + 24
     }
 
     func audit(types: XCUIAccessibilityAuditType = XCUIAccessibilityAuditType.all.subtracting([.dynamicType, .textClipped]),
