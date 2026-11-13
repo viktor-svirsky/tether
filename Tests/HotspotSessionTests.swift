@@ -1316,6 +1316,8 @@ final class HotspotSessionTests: XCTestCase {
         var onScreen: Bool
         var hotspot = false
         var wake = false
+        /// A call, Siri or an alarm holds the audio.
+        var call = false
         var plays: Bool
         var line: UInt = #line
     }
@@ -1326,6 +1328,7 @@ final class HotspotSessionTests: XCTestCase {
             now = minutes(round.minute)
             address = round.hotspot ? hotspot : nil
             session.sceneActive = round.onScreen
+            sound.interrupted = round.call
             if round.wake { session.wake() } else { session.syncWithHotspot() }
             XCTAssertEqual(sound.playing, round.plays, line: round.line)
         }
@@ -1360,6 +1363,20 @@ final class HotspotSessionTests: XCTestCase {
             SoundRound(minute: 70.9, onScreen: false, plays: true),
             SoundRound(minute: 71, onScreen: false, plays: false),
             SoundRound(minute: 80, onScreen: false, hotspot: true, plays: true), // the hotspot back, a device joined
+        ])
+    }
+
+    /// A call can take the hotspot away for as long as it lasts. The 10 minutes run from the call's
+    /// end, so a long call doesn't leave Tether suspended, with its devices cut off until someone
+    /// opens it (#191).
+    func testTheTenMinutesRunFromTheEndOfACall() {
+        run([
+            SoundRound(minute: 0, onScreen: false, hotspot: true, plays: true),
+            SoundRound(minute: 1, onScreen: false, call: true, plays: true), // the call takes the hotspot
+            SoundRound(minute: 20, onScreen: false, call: true, plays: true),
+            SoundRound(minute: 21, onScreen: false, plays: true), // the call is over, no device back yet
+            SoundRound(minute: 29.9, onScreen: false, plays: true), // 10 minutes from the last round in the call
+            SoundRound(minute: 30, onScreen: false, plays: false),
         ])
     }
 

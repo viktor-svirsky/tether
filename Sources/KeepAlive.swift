@@ -24,6 +24,9 @@ final class KeepAlive {
     var playing: Bool { player != nil }
     /// Making its sound right now. Starting it can fail, in the background say.
     var sounding: Bool { player?.isPlaying == true }
+    /// A call, Siri or an alarm took the audio, and the sound hasn't played since. iOS doesn't always
+    /// say when a call is over, so the next sound that plays is what ends it.
+    private(set) var interrupted = false
 
     func start() {
         if player?.isPlaying == true { return }
@@ -40,6 +43,7 @@ final class KeepAlive {
                 player?.volume = 0
             }
             if player?.play() != true { throw Silent() }
+            interrupted = false
             lastFailure = nil
         } catch {
             let failure = "keep-alive sound didn't start: \(error)"
@@ -73,6 +77,7 @@ final class KeepAlive {
     func stop() {
         player?.stop()
         player = nil
+        interrupted = false
         stopHoldingOn()
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         observers = []
@@ -85,6 +90,7 @@ final class KeepAlive {
         case .began:
             let reason = (info[AVAudioSessionInterruptionReasonKey] as? UInt).map(String.init) ?? "none"
             log("a call, Siri or an alarm interrupted the keep-alive sound (reason \(reason))")
+            interrupted = true
         case .ended:
             let options = AVAudioSession.InterruptionOptions(rawValue: info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
             log("interruption over (shouldResume: \(options.contains(.shouldResume)))")

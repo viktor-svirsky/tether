@@ -151,6 +151,7 @@ final class FakeSound: KeepAliveSound {
     /// Started, but iOS gives it no sound.
     var silent = false
     var sounding: Bool { playing && !silent }
+    var interrupted = false
     func start() { playing = true }
     func stop() { playing = false }
 }
