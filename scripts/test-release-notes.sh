@@ -104,6 +104,15 @@ issue 21 closed "Something from long ago" bug
 commit "$(printf 'Explain the notes\n\nA revert subject like "Fixes #21: ..." brought #21 back.')" > /dev/null
 says "- No change you'd see in the app." v1.4.0
 
+# --require-change stops a release that has nothing to show, like 1.9.0 (#120) or a test fix that
+# reached a release branch before main (#139): it fails with nothing on stdout.
+status=0
+"$script" v1.4.0 --require-change > "$tmp/out" 2> "$tmp/err" || status=$?
+[[ $status == 3 && ! -s $tmp/out && -s $tmp/err ]] || fail "v1.4.0 --require-change: want exit 3, an error and no notes, got exit $status"
+issue 23 closed "Keep the code on screen" enhancement
+commit "$(printf 'Keep the code on screen\n\nFixes #23')" > /dev/null
+says "- Keep the code on screen (#23)" v1.4.0 --require-change
+
 # No answer about an issue fails the run, instead of notes that leave it out without a word.
 commit "$(printf 'Something\n\nFixes #99')" > /dev/null
 status=0
