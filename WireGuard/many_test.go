@@ -292,7 +292,9 @@ func floodServer(t *testing.T, start <-chan struct{}) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { l.Close() })
+	// Ends the workers if the test stops before start, a failed setup say, so none waits forever.
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done); l.Close() })
 	go func() {
 		for {
 			c, err := l.Accept()
@@ -302,7 +304,11 @@ func floodServer(t *testing.T, start <-chan struct{}) string {
 			go func() {
 				defer c.Close()
 				c.Write([]byte("hi"))
-				<-start
+				select {
+				case <-start:
+				case <-done:
+					return
+				}
 				buf := make([]byte, 16<<10)
 				for {
 					if _, err := c.Write(buf); err != nil {
@@ -346,16 +352,19 @@ func TestStalledConnectionsStayInsideTheMemoryLimit(t *testing.T) {
 	before, taken := inUse(), s.down.Load()
 	close(start)
 	// The server takes from the far ends until each connection's send buffer is full.
+	settled := false
 	for last, deadline := s.down.Load(), time.Now().Add(20*time.Second); time.Now().Before(deadline); {
 		time.Sleep(500 * time.Millisecond)
 		n := s.down.Load()
 		if n == last && n > taken {
+			settled = true
 			break
 		}
 		last = n
 	}
-	if s.down.Load() == taken {
-		t.Fatal("the far ends sent nothing, so nothing was measured")
+	// A run that didn't fill the buffers measures less than a stalled connection holds.
+	if !settled {
+		t.Fatal("the far ends were still sending after 20 s, so the buffers weren't full when measured")
 	}
 	after := inUse()
 	growth := int64(after) - int64(before)
