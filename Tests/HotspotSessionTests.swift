@@ -321,6 +321,7 @@ final class HotspotSessionTests: XCTestCase {
         now = now.addingTimeInterval(1)
         session.sampleTraffic()
         session.syncWithHotspot()
+        session.dnsChanged() // publishes the setup, the same as before
         XCTAssertEqual(changes, 0)
     }
 
