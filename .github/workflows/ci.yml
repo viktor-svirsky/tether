@@ -36,16 +36,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&status=success" --jq .total_count)
+          # A lookup that fails counts as none, so the macOS job runs and decides CI's result.
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&status=success" --jq .total_count) || count=0
           echo "Push runs that passed on $GITHUB_SHA: $count"
           echo "passed=$([[ $count != 0 ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
   test:
     needs: passed-before
     # A branch of this repo already runs on push, so its pull request doesn't run it a second time.
-    # always(), so a pull request or the weekly run, which skip passed-before, still get here.
+    # !cancelled(), so a pull request or the weekly run, which skip passed-before, still get here,
+    # while a newer push still cancels it.
     if: >-
-      always() && needs.passed-before.outputs.passed != 'true' &&
+      !cancelled() && needs.passed-before.outputs.passed != 'true' &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: macos-26
     permissions:
