@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/netip"
@@ -534,6 +535,14 @@ func (s *Server) dohOnce(ctx context.Context, c *http.Client, doh string, query 
 	if len(answer) < dnsHeaderLen || len(answer) > dnsMessageMax {
 		return nil, fmt.Errorf("an answer of %d bytes", len(answer))
 	}
+	// A web page in place of DNS, from a wrong profile say, is the device's SERVFAIL and a line in
+	// the log, not garbage handed on as its answer (#152).
+	if mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); mt != "application/dns-message" {
+		return nil, fmt.Errorf("the server answered with %q, not DNS", mt)
+	}
+	if !answers(query, answer) {
+		return nil, errors.New("the server answered another question")
+	}
 	return answer, nil
 }
 
@@ -683,7 +692,10 @@ func newDoHClient(dial func(ctx context.Context, network, address string) (net.C
 		IdleConnTimeout:     time.Minute,
 		MaxIdleConnsPerHost: 2,
 		HTTP2:               &http.HTTP2Config{SendPingTimeout: dohPingAfter, PingTimeout: dohPingWait},
-	}}
+	},
+		// A redirect would turn the POST into a GET without the query, and answer with a page (#152).
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 // newDoHSpare is the client a slow lookup asks again on, see doh. It keeps no connection: after a

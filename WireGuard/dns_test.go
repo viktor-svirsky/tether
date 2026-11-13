@@ -1197,6 +1197,55 @@ func TestADoHConnectionThatFailsItsPingIsClosed(t *testing.T) {
 	}
 }
 
+// Answers that aren't DNS give the device SERVFAIL, not a web page as its answer (#152).
+func TestADoHAnswerThatIsntDNSIsServfail(t *testing.T) {
+	var followed atomic.Bool
+	cases := map[string]http.HandlerFunc{
+		// The page it leads to is a good answer, so only not following the redirect fails the lookup.
+		"a redirect": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/page" {
+				followed.Store(true)
+				q, _ := io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "application/dns-message")
+				w.Write(answerTo(t, q, 1))
+				return
+			}
+			http.Redirect(w, r, "/page", http.StatusFound)
+		},
+		// A good answer to the question, but not said to be DNS, so only the media type check fails it.
+		"another media type": func(w http.ResponseWriter, r *http.Request) {
+			q, _ := io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "text/html")
+			w.Write(answerTo(t, q, 1))
+		},
+		"another question": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/dns-message")
+			w.Write(answerTo(t, lookupFor(t, 0, "other.example.", 0), 1))
+		},
+	}
+	for name, handler := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, c := setup(t)
+			srv := httptest.NewTLSServer(handler)
+			t.Cleanup(srv.Close)
+			client := newDoHClient(nil)
+			client.Transport.(*http.Transport).TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig
+			s.dohClient, s.dohSpare = client, client
+			s.SetDNS(&dnsUpstream{doh: srv.URL + "/abc123"})
+			answer, err := lookupUDP(c, lookupFor(t, 7, "example.com.", 0), answerWait)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rcode := answer[3] & 0x0f; rcode != 2 {
+				t.Fatalf("got rcode %d, want SERVFAIL", rcode)
+			}
+			if followed.Load() {
+				t.Fatal("the redirect was followed")
+			}
+		})
+	}
+}
+
 // A DoH server that answers with an error isn't asked again: it would answer the same.
 func TestAnErrorFromTheServerIsNotAskedAgain(t *testing.T) {
 	s, c := setup(t)
