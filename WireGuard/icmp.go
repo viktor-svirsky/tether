@@ -10,14 +10,15 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
-	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/checksum"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
 // Ping: a device's echo request goes out from the iPhone as a real one, and the real reply comes
-// back, so a ping through the tunnel says what a ping from the iPhone would. stackTun.Write hands
-// echo requests here before gVisor, which drops them, and replies are built like UDP's.
+// back, so a ping through the tunnel says what a ping from the iPhone would. gVisor hands echo
+// requests to handlePing, after it put a fragmented one back together, and replies are built like
+// UDP's.
 //
 // iOS lets an app ping without privileges, through a datagram ICMP socket. Darwin keeps the
 // identifier the app chose and hands such a socket every echo reply, so one socket serves every
@@ -41,7 +42,7 @@ type pinger struct {
 	closing bool
 	// reopened is when receivePings last opened the socket again.
 	reopened time.Time
-	queue    chan []byte
+	queue    chan echoRequest
 	// running counts the two goroutines, for Close to wait for.
 	running sync.WaitGroup
 
@@ -62,31 +63,37 @@ type waitingPing struct {
 	at      time.Time
 }
 
-// isEchoRequest says p is a whole IPv4 echo request. A fragment of one isn't: ping never sends one
-// that big through a tunnel with this MTU.
-func isEchoRequest(p []byte) bool {
-	if len(p) < header.IPv4MinimumSize || p[0]>>4 != 4 {
-		return false
-	}
-	ip := header.IPv4(p)
-	if !ip.IsValid(len(p)) || ip.Protocol() != uint8(header.ICMPv4ProtocolNumber) || ip.More() || ip.FragmentOffset() != 0 {
-		return false
-	}
-	m := header.ICMPv4(ip.Payload())
-	return len(m) >= header.ICMPv4MinimumSize && m.Type() == header.ICMPv4Echo && m.Code() == 0
+type echoRequest struct {
+	src, dst netip.Addr
+	m        header.ICMPv4
 }
 
-// queuePing runs on wireguard-go's receive goroutine, so it never blocks: the request waits for
-// sendPings, or is dropped when too many do.
-func (s *Server) queuePing(p []byte) {
+// handlePing takes a device's echo request from gVisor. It runs on wireguard-go's receive
+// goroutine, so it never blocks: the request waits for sendPings, or is dropped when too many do.
+// Every echo request is taken, so gVisor never answers one itself.
+func (s *Server) handlePing(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
+	if pkt.NetworkProtocolNumber != header.IPv4ProtocolNumber {
+		return false
+	}
+	v := stack.PayloadSince(pkt.TransportHeader())
+	defer v.Release()
+	m := header.ICMPv4(v.AsSlice())
+	if len(m) < header.ICMPv4MinimumSize || m.Type() != header.ICMPv4Echo {
+		return false
+	}
+	if m.Code() != 0 {
+		return true
+	}
 	s.pings.once.Do(s.startPinging)
 	if s.pings.conn.Load() == nil {
-		return
+		return true
 	}
+	src, dst := netip.AddrFrom4(id.RemoteAddress.As4()), netip.AddrFrom4(id.LocalAddress.As4())
 	select {
-	case s.pings.queue <- slices.Clone(p):
+	case s.pings.queue <- echoRequest{src, dst, slices.Clone(m)}:
 	default:
 	}
+	return true
 }
 
 func (s *Server) startPinging() {
@@ -102,7 +109,7 @@ func (s *Server) startPinging() {
 		return
 	}
 	s.pings.conn.Store(conn)
-	s.pings.queue = make(chan []byte, 256)
+	s.pings.queue = make(chan echoRequest, 256)
 	s.pings.waiting = map[uint16]waitingPing{}
 	s.pings.of = map[netip.Addr]int{}
 	s.pings.running.Add(2)
@@ -134,10 +141,8 @@ func (s *Server) sendPings() {
 	}
 }
 
-func (s *Server) sendPing(p []byte) {
-	ip := header.IPv4(p)
-	src, dst := netip.AddrFrom4(ip.SourceAddress().As4()), netip.AddrFrom4(ip.DestinationAddress().As4())
-	m := header.ICMPv4(ip.Payload())
+func (s *Server) sendPing(p echoRequest) {
+	src, dst, m := p.src, p.dst, p.m
 	if !s.leaves(dst) {
 		return
 	}
@@ -198,12 +203,14 @@ func (s *Server) receivePings() {
 			continue // another app's, or one that waited too long
 		}
 		s.count(w.traffic, false, len(echo.Data))
-		reply := echoReply(w.dst, w.device, w.id, uint16(echo.Seq), echo.Data, s.nextID())
+		packets := echoReply(w.dst, w.device, w.id, uint16(echo.Seq), echo.Data, s.nextID())
 		s.mu.Lock()
 		// A reply whose owner went since, a removed device or a router that lost the role, is dropped.
 		// A device that got the same tunnel address meanwhile drops it itself: it sent no such ping.
 		if !s.closed && s.ownerLocked(w.device) == w.owner {
-			s.tun.inject(reply)
+			for _, p := range packets {
+				s.tun.inject(p)
+			}
 		}
 		s.mu.Unlock()
 	}
@@ -281,24 +288,13 @@ func (p *pinger) removeLocked(id uint16, w waitingPing) {
 	}
 }
 
-// echoReply builds the IPv4 packet of an echo reply from src to the device at dst.
-func echoReply(src, dst netip.Addr, id, seq uint16, data []byte, ipID uint16) []byte {
-	p := make([]byte, header.IPv4MinimumSize+header.ICMPv4MinimumSize+len(data))
-	ip := header.IPv4(p)
-	ip.Encode(&header.IPv4Fields{
-		TotalLength: uint16(len(p)),
-		ID:          ipID,
-		TTL:         64,
-		Protocol:    uint8(header.ICMPv4ProtocolNumber),
-		SrcAddr:     tcpip.AddrFrom4(src.As4()),
-		DstAddr:     tcpip.AddrFrom4(dst.As4()),
-	})
-	ip.SetChecksum(^ip.CalculateChecksum())
-	m := header.ICMPv4(p[header.IPv4MinimumSize:])
+// echoReply builds the IPv4 packets of an echo reply from src to the device at dst.
+func echoReply(src, dst netip.Addr, id, seq uint16, data []byte, ipID uint16) [][]byte {
+	m := header.ICMPv4(make([]byte, header.ICMPv4MinimumSize+len(data)))
 	m.SetType(header.ICMPv4EchoReply)
 	m.SetIdent(id)
 	m.SetSequence(seq)
 	copy(m.Payload(), data)
 	m.SetChecksum(header.ICMPv4Checksum(m[:header.ICMPv4MinimumSize], checksum.Checksum(data, 0)))
-	return p
+	return ipv4Packets(header.ICMPv4ProtocolNumber, src, dst, m, ipID)
 }

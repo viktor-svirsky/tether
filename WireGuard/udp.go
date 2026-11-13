@@ -289,8 +289,7 @@ func (c *cone) closed() bool {
 
 func (s *Server) nextID() uint16 { return uint16(s.ipID.Add(1)) }
 
-// replyPackets builds the IPv4 packet for a UDP reply, as fragments when it doesn't fit the
-// tunnel's MTU. The device's own stack puts the fragments back together.
+// replyPackets builds the IPv4 packets for a UDP reply.
 func replyPackets(src, dst netip.AddrPort, payload []byte, id uint16) [][]byte {
 	udpLen := header.UDPMinimumSize + len(payload)
 	if udpLen > 0xffff-header.IPv4MinimumSize {
@@ -304,14 +303,22 @@ func replyPackets(src, dst netip.AddrPort, payload []byte, id uint16) [][]byte {
 	xsum := header.PseudoHeaderChecksum(header.UDPProtocolNumber, srcAddr, dstAddr, uint16(udpLen))
 	xsum = checksum.Checksum(payload, xsum)
 	u.SetChecksum(^u.CalculateChecksum(xsum))
+	return ipv4Packets(header.UDPProtocolNumber, src.Addr(), dst.Addr(), datagram, id)
+}
 
+// ipv4Packets wraps a datagram from src to the device at dst in IPv4, as fragments when it
+// doesn't fit the tunnel's MTU. The device's own stack puts the fragments back together.
+func ipv4Packets(proto tcpip.TransportProtocolNumber, src, dst netip.Addr, datagram []byte, id uint16) [][]byte {
+	if len(datagram) > 0xffff-header.IPv4MinimumSize {
+		return nil
+	}
 	// Each fragment but the last carries a multiple of 8 bytes.
 	most := (MTU - header.IPv4MinimumSize) &^ 7
 	var packets [][]byte
-	for off := 0; off < udpLen; off += most {
-		end := min(off+most, udpLen)
+	for off := 0; off < len(datagram); off += most {
+		end := min(off+most, len(datagram))
 		flags := uint8(0)
-		if end < udpLen {
+		if end < len(datagram) {
 			flags = header.IPv4FlagMoreFragments
 		}
 		p := make([]byte, header.IPv4MinimumSize+end-off)
@@ -322,9 +329,9 @@ func replyPackets(src, dst netip.AddrPort, payload []byte, id uint16) [][]byte {
 			Flags:          flags,
 			FragmentOffset: uint16(off),
 			TTL:            64,
-			Protocol:       uint8(header.UDPProtocolNumber),
-			SrcAddr:        srcAddr,
-			DstAddr:        dstAddr,
+			Protocol:       uint8(proto),
+			SrcAddr:        tcpip.AddrFrom4(src.As4()),
+			DstAddr:        tcpip.AddrFrom4(dst.As4()),
 		})
 		ip.SetChecksum(^ip.CalculateChecksum())
 		copy(p[header.IPv4MinimumSize:], datagram[off:end])

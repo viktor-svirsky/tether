@@ -37,6 +37,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv6"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/icmp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 	"gvisor.dev/gvisor/pkg/waiter"
@@ -179,7 +180,7 @@ type Server struct {
 	cancel context.CancelFunc
 	// heard sees each line wireguard-go logs. Tests set it to look at the server mid-change.
 	heard atomic.Pointer[func(string)]
-	ipID  atomic.Uint32 // IPv4 identification for the UDP replies udp.go builds
+	ipID  atomic.Uint32 // IPv4 identification for the UDP and ping replies we build
 	// up and down are the byte totals. Atomic, since every read and write of every connection
 	// adds to them, and a lock there would make them all take turns.
 	up, down atomic.Uint64
@@ -343,7 +344,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	s.keepIdle, s.keepInterval = 60*time.Second, 15*time.Second
 	s.stack = stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
-		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol},
+		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol, icmp.NewProtocol4},
 	})
 	sack := tcpip.TCPSACKEnabled(true)
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &sack)
@@ -359,7 +360,6 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	timeWait := tcpip.TCPTimeWaitTimeoutOption(timeWaitTimeout)
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &timeWait)
 	s.tun = newStackTun()
-	s.tun.ping = s.queuePing
 	if err := s.stack.CreateNIC(1, s.tun.ep); err != nil {
 		s.cancel()
 		return nil, fmt.Errorf("create NIC: %v", err)
@@ -373,6 +373,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	s.forwarder = tcp.NewForwarder(s.stack, 0, 2*maxInFlight, func(r *tcp.ForwarderRequest) { s.forwardTCP(r) })
 	s.stack.SetTransportProtocolHandler(tcp.ProtocolNumber, s.handleTCP)
 	s.stack.SetTransportProtocolHandler(udp.ProtocolNumber, s.handleUDP)
+	s.stack.SetTransportProtocolHandler(icmp.ProtocolNumber4, s.handlePing)
 
 	logger := &device.Logger{Verbosef: s.notice, Errorf: s.noticeError}
 	s.bind = &hostBind{hosts: hosts, died: s.socketDied}
@@ -1316,11 +1317,8 @@ type stackTun struct {
 	incoming chan *buffer.View
 	done     chan struct{}
 	once     sync.Once
-	// ping takes the devices' echo requests, which gVisor would drop, see icmp.go. Nil in tests
-	// that make a stackTun of their own.
-	ping func([]byte)
 	// dropped counts the packets for devices that found incoming full: TCP's from WriteNotify and
-	// UDP replies from inject. Tests read it to tell this loss from any other.
+	// UDP and ping replies from inject. Tests read it to tell this loss from any other.
 	dropped atomic.Uint64
 }
 
@@ -1373,10 +1371,6 @@ func (t *stackTun) Write(bufs [][]byte, offset int) (int, error) {
 	for _, b := range bufs {
 		p := b[offset:]
 		if len(p) == 0 {
-			continue
-		}
-		if t.ping != nil && isEchoRequest(p) {
-			t.ping(p)
 			continue
 		}
 		pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(p)})
