@@ -268,6 +268,8 @@ final class HotspotSession {
             }
         } else if devices.prepareReady() { // a QR code that couldn't be saved before
             wireGuardPeersChanged()
+        } else {
+            publishReadyProblem() // a retry that failed, maybe for another reason
         }
         showSetupProblem()
     }
@@ -624,7 +626,12 @@ final class HotspotSession {
             if monthlyUsage != before { usageUnsaved = true }
         }
         wireGuardReady = devices.setup.ready
-        // The reason, a Keychain code say, goes to the log only, each new one once.
+        publishReadyProblem()
+    }
+
+    /// Why the next code can't be saved: on screen in plain words, and each new reason, a Keychain
+    /// code say, once in the log. Also after a failed retry, which changes nothing else (#190).
+    private func publishReadyProblem() {
         let reason = devices.readyError.map { "\($0)" }
         if reason != readyReason {
             readyReason = reason
