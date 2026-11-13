@@ -2,11 +2,6 @@ import XCTest
 
 /// Accessibility: the system audit on the screens, Dynamic Type at an accessibility size, and dark mode.
 final class AccessibilityTests: TetherUITestCase {
-    override func tearDown() {
-        XCUIDevice.shared.appearance = .light
-        super.tearDown()
-    }
-
     // MARK: audit
 
     func testMainScreenPassesTheAccessibilityAudit() throws {

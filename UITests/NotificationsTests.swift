@@ -4,11 +4,6 @@ import XCTest
 /// Its Help section is in SettingsHelpTests.
 /// When to post is covered by the unit tests (NotifierTests), since a demo launch connects no device.
 final class NotificationsTests: TetherUITestCase {
-    override func tearDown() {
-        XCUIDevice.shared.appearance = .light
-        super.tearDown()
-    }
-
     private func toggle(_ kind: String) -> XCUIElement {
         app.switches["notices.\(kind)"].firstMatch
     }
