@@ -71,9 +71,12 @@ const (
 	// against hosts that drop SYNs fills it, and its device's next ones are refused.
 	maxDials = 256
 	// maxConns caps a device's TCP connections, open or being dialed. An idle one measured under
-	// 80 KB: copy buffers, three goroutines and gVisor's endpoint. So under 40 MB at the cap. A
-	// browser stays well below it, a torrent client with a thousand peers reaches it and is
-	// refused more.
+	// 80 KB: copy buffers, three goroutines and gVisor's endpoint. So under 40 MB at the cap. One
+	// whose device stopped taking data while the far end keeps sending holds its send buffer on
+	// top: about 100 KB when it stalled cold, about 50 MB more at the cap. One that ran fast first
+	// keeps the buffer it grew, which can reach the 2 MB send maximum (750 KB measured), since gVisor
+	// doesn't shrink it (#149). A browser
+	// stays well below it, a torrent client with a thousand peers reaches it and is refused more.
 	maxConns = 512
 	// maxInFlight caps the TCP connections being dialed for all devices together, like gVisor's
 	// own cap it replaces, see handleTCP.
@@ -337,9 +340,10 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	sack := tcpip.TCPSACKEnabled(true)
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &sack)
 	// gVisor's defaults are 1 MB each way per connection. Smaller, auto-tuned buffers keep a page
-	// with dozens of connections well inside a background app's memory.
-	recv := tcpip.TCPReceiveBufferSizeRangeOption{Min: 4 << 10, Default: 256 << 10, Max: 2 << 20}
-	send := tcpip.TCPSendBufferSizeRangeOption{Min: 4 << 10, Default: 256 << 10, Max: 2 << 20}
+	// with dozens of connections well inside a background app's memory, and a device at maxConns
+	// whose connections stalled early too. A fast flow grows its own toward the max, see maxConns.
+	recv := tcpip.TCPReceiveBufferSizeRangeOption{Min: 4 << 10, Default: 64 << 10, Max: 2 << 20}
+	send := tcpip.TCPSendBufferSizeRangeOption{Min: 4 << 10, Default: 64 << 10, Max: 2 << 20}
 	moderate := tcpip.TCPModerateReceiveBufferOption(true)
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &recv)
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &send)
