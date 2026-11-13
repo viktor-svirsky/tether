@@ -88,7 +88,13 @@ final class LimitTests: XCTestCase {
         XCTAssertEqual(DataLimit.label(10_000_000_000), "10 GB")
         XCTAssertEqual(DataLimit.bytes(typedGB: "7.5"), 7_500_000_000)
         XCTAssertEqual(DataLimit.bytes(typedGB: " 3 "), 3_000_000_000)
-        for bad in ["", "0", "-1", "ten", "100001"] { XCTAssertNil(DataLimit.bytes(typedGB: bad), bad) }
+        XCTAssertEqual(DataLimit.bytes(typedGB: "7,5"), 7_500_000_000)
+        XCTAssertEqual(DataLimit.bytes(typedGB: "0.001"), 1_000_000, "1 MB, the smallest")
+        // Hex and exponents aren't GB anyone types, and an amount that rounds to almost nothing would
+        // pause the device at once (#165).
+        for bad in ["", "0", "-1", "ten", "100001", "0.0000000001", "0.0009", "0x10", "1e3", "7.5.1", ".", "+5", "inf", "nan"] {
+            XCTAssertNil(DataLimit.bytes(typedGB: bad), bad)
+        }
     }
 
     // MARK: Pause at the limit
