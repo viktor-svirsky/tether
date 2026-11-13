@@ -70,11 +70,14 @@ final class ConfigPageTests: XCTestCase {
         XCTAssertEqual(request("GET /Tether.conf?t=wrong HTTP/1.1\r\n\r\n"), .configWithoutToken)
         XCTAssertEqual(request("GET /Tether.conf?t=\(ConfigPage.token)x HTTP/1.1\r\n\r\n"), .configWithoutToken)
         XCTAssertEqual(request("HEAD /Tether.conf HTTP/1.1\r\n\r\n"), .pageHead, "no config headers either")
-        var handler = ConfigPageHandler()
-        let inputs = ConfigPageHandler.Inputs(letIn: true, onScreen: true, ready: nil, host: nil, config: nil, stale: [], hosts: [], now: Date())
-        guard case let .answer(response) = handler.answer(.configWithoutToken, from: "172.20.10.3", inputs) else { return XCTFail("claimed") }
-        XCTAssertEqual(response.status, .notFound, "a download tool doesn't save the page as the config")
-        handler.forget()
+        // Everything a download needs is there, so only the missing token keeps the ready device unclaimed.
+        var setup = WireGuardSetup.new()
+        setup.prepareReady()
+        let handler = ConfigPageHandler()
+        let inputs = ConfigPageHandler.Inputs(letIn: true, onScreen: true, ready: setup.ready, host: "172.20.10.1",
+                                              config: "[Interface]\n", stale: [], hosts: ["172.20.10.1"], now: Date())
+        XCTAssertEqual(handler.answer(.configWithoutToken, from: "172.20.10.3", inputs),
+                       .answer(ConfigPage.page(.ready, status: .notFound)), "the page with a 404, not a download")
         XCTAssertTrue(String(decoding: ConfigPage.page(.ready).body, as: UTF8.self).contains("href=\"\(ConfigPage.downloadPath)\""))
         XCTAssertGreaterThanOrEqual(ConfigPage.token.count, 16)
     }
