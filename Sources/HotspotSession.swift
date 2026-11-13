@@ -606,14 +606,14 @@ final class HotspotSession {
     }
 
     private func publishSetup() {
-        wireGuardPeers = devices.setup.peers
+        if devices.setup.peers != wireGuardPeers { wireGuardPeers = devices.setup.peers }
         // Only from a setup that was read: a locked Keychain lists no devices, and that isn't a removal.
         if devices.loaded {
             let before = monthlyUsage
             monthlyUsage.keep(only: Set(devices.setup.peers.map(\.id) + [devices.setup.ready?.id].compactMap { $0 }))
             if monthlyUsage != before { usageUnsaved = true }
         }
-        wireGuardReady = devices.setup.ready
+        if devices.setup.ready != wireGuardReady { wireGuardReady = devices.setup.ready }
         let readyProblem = devices.readyError.map { "The code for the next device can't be saved: \($0)." }
         if readyProblem != wireGuardReadyProblem {
             wireGuardReadyProblem = readyProblem
@@ -673,8 +673,9 @@ final class HotspotSession {
         absorb(snap.peers)
         countUsage(snap.peers)
         guard let speeds = sampler.sample(snap.totals, at: now) else { return } // nothing to compare with yet
-        upSpeed = speeds.up
-        downSpeed = speeds.down
+        // Only a change: every publish redraws every view that watches the model, each second (#166).
+        if speeds.up != upSpeed { upSpeed = speeds.up }
+        if speeds.down != downSpeed { downSpeed = speeds.down }
     }
 
     /// What each read of who is connected does, on screen (the sampler) or off (the watcher): a
