@@ -132,7 +132,7 @@ struct Notifier {
     /// shows the permission question only while Tether is on screen, so `Model` asks then.
     private(set) var wouldTell = false
 
-    init(defaults: UserDefaults, calendar: Calendar = .current) {
+    init(defaults: UserDefaults, calendar: Calendar = .autoupdatingCurrent) { // see HotspotSession.calendar
         self.defaults = defaults
         self.calendar = calendar
     }
