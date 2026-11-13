@@ -10,12 +10,16 @@ enum Format {
         return formatter.string(fromByteCount: Int64(clamping: n))
     }
 
-    /// Bits per second in the unit a person expects on a speed test.
-    static func speed(_ bps: Double) -> String {
+    /// Bits per second in the unit a person expects on a speed test. With the region's decimal
+    /// separator, like `bytes`, since `String(format:)` always prints a dot (#177).
+    static func speed(_ bps: Double, locale: Locale = .current) -> String {
+        func number(_ value: Double, digits: Int) -> String {
+            value.formatted(.number.precision(.fractionLength(digits)).locale(locale))
+        }
         switch bps {
-        case 1e6...: return String(format: "%.1f Mbit/s", bps / 1e6)
-        case 1e3...: return String(format: "%.0f kbit/s", bps / 1e3)
-        default: return String(format: "%.0f bit/s", bps)
+        case 1e6...: return "\(number(bps / 1e6, digits: 1)) Mbit/s"
+        case 1e3...: return "\(number(bps / 1e3, digits: 0)) kbit/s"
+        default: return "\(number(bps, digits: 0)) bit/s"
         }
     }
 
