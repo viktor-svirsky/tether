@@ -16,9 +16,15 @@
 # Reads the issues with gh, for GITHUB_REPOSITORY, and fails when it can't.
 set -euo pipefail
 
-previous=${1-}
-require=${2-}
-[[ -z $require || $require == --require-change ]] || { echo "usage: release-notes.sh [<previous>] [--require-change]" >&2; exit 2; }
+previous= require=
+for arg in "$@"; do
+    case $arg in
+        --require-change) require=1 ;;
+        -*) echo "usage: release-notes.sh [<previous>] [--require-change]" >&2; exit 2 ;;
+        *) [[ -z $previous ]] || { echo "usage: release-notes.sh [<previous>] [--require-change]" >&2; exit 2; }
+           previous=$arg ;;
+    esac
+done
 repo=${GITHUB_REPOSITORY:?release-notes.sh needs GITHUB_REPOSITORY}
 range=${previous:+$previous..}HEAD
 
