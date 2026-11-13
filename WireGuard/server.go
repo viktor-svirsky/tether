@@ -240,7 +240,7 @@ type Server struct {
 	// DNS on 10.7.0.1, see dns.go. Tests swap dohClient, dohSpare, lookupTimeout and plainTimeout.
 	upstream  atomic.Pointer[dnsUpstream]
 	dohClient *http.Client
-	// dohSpare asks again next to a slow request, on a connection of its own, see doh.
+	// dohSpare asks again next to a slow request, on a new connection each time, see doh.
 	dohSpare      *http.Client
 	lookupTimeout time.Duration
 	plainTimeout  time.Duration
@@ -328,7 +328,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
-	s.dohClient, s.dohSpare, s.lookupTimeout = newDoHClient(dialer.DialContext), newDoHClient(dialer.DialContext), lookupTimeout
+	s.dohClient, s.dohSpare, s.lookupTimeout = newDoHClient(dialer.DialContext), newDoHSpare(dialer.DialContext), lookupTimeout
 	s.plainTimeout = plainTimeout
 	s.stack = stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},

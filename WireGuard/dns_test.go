@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -181,7 +182,9 @@ func waitAsked(t *testing.T, d *dohServer) []byte {
 func viaDoH(s *Server, d *dohServer) {
 	s.dohClient = d.Client()
 	// Its own transport, so its own connection, like the server's.
-	s.dohSpare = &http.Client{Transport: d.Client().Transport.(*http.Transport).Clone()}
+	spare := d.Client().Transport.(*http.Transport).Clone()
+	spare.DisableKeepAlives = true
+	s.dohSpare = &http.Client{Transport: spare}
 	s.SetDNS(&dnsUpstream{doh: d.URL + "/abc123"})
 }
 
@@ -1071,7 +1074,9 @@ func TestALookupOnADeadConnectionIsAnsweredOnANewOne(t *testing.T) {
 		mu.Unlock()
 		return sc, nil
 	}
-	s.dohClient, s.dohSpare = &http.Client{Transport: tr}, &http.Client{Transport: tr.Clone()}
+	spare := tr.Clone()
+	spare.DisableKeepAlives = true
+	s.dohClient, s.dohSpare = &http.Client{Transport: tr}, &http.Client{Transport: spare}
 	s.lookupTimeout = scaled(2 * time.Second)
 	if _, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), answerWait); err != nil {
 		t.Fatal(err)
@@ -1119,6 +1124,42 @@ func TestASlowServerAnswersEveryLookup(t *testing.T) {
 	close(failed)
 	for f := range failed {
 		t.Error(f)
+	}
+}
+
+// The spare keeps no connection, so after a network switch that killed the main client's, the
+// second request still goes out on a live one (#193).
+func TestTheSpareDoHClientKeepsNoConnection(t *testing.T) {
+	if !newDoHSpare(nil).Transport.(*http.Transport).DisableKeepAlives {
+		t.Fatal("the spare keeps its connections")
+	}
+}
+
+// brokenBody answers 200 after a while, with a body that breaks off.
+type brokenBody struct{ after time.Duration }
+
+func (b brokenBody) RoundTrip(r *http.Request) (*http.Response, error) {
+	time.Sleep(b.after)
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(iotest.ErrReader(errors.New("connection lost"))),
+		Header: http.Header{}, Request: r}, nil
+}
+
+// An answer that breaks off while the second request is out doesn't fail the lookup: the second
+// one answers (#193).
+func TestABrokenAnswerWaitsForTheOtherRequest(t *testing.T) {
+	s, c := setup(t)
+	d := newDoH(t, 1)
+	viaDoH(s, d)
+	s.lookupTimeout = scaled(2 * time.Second)
+	// The second request goes out at 2/5 and is answered at 7/10, the first breaks off at 1/2.
+	s.dohClient = &http.Client{Transport: brokenBody{after: s.lookupTimeout / 2}}
+	d.delay.Store(int64(s.lookupTimeout * 3 / 10))
+	answer, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), answerWait)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rcode := answer[3] & 0x0f; rcode != 0 {
+		t.Fatalf("got rcode %d", rcode)
 	}
 }
 

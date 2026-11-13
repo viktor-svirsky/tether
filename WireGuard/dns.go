@@ -489,7 +489,13 @@ func (s *Server) doh(doh string, query []byte) ([]byte, error) {
 			}
 			var ue *url.Error
 			if !errors.As(r.err, &ue) {
-				return nil, r.err // the server answered, and would answer the same again
+				// The server answered and would answer the same again, or its answer broke off.
+				// The other request may still bring a good one.
+				if pending > 0 {
+					err = r.err
+					continue
+				}
+				return nil, r.err
 			}
 			err = ue.Err
 			if asked < 2 && ctx.Err() == nil {
@@ -678,6 +684,15 @@ func newDoHClient(dial func(ctx context.Context, network, address string) (net.C
 		MaxIdleConnsPerHost: 2,
 		HTTP2:               &http.HTTP2Config{SendPingTimeout: dohPingAfter, PingTimeout: dohPingWait},
 	}}
+}
+
+// newDoHSpare is the client a slow lookup asks again on, see doh. It keeps no connection: after a
+// network switch a kept one could be as dead as the main client's, and the second request would
+// wait on it too.
+func newDoHSpare(dial func(ctx context.Context, network, address string) (net.Conn, error)) *http.Client {
+	c := newDoHClient(dial)
+	c.Transport.(*http.Transport).DisableKeepAlives = true
+	return c
 }
 
 // configDNS is the device list's "dns": a DoH URL, or one or two plain IPv4 servers.
