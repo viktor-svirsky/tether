@@ -73,8 +73,9 @@ const (
 	// maxConns caps a device's TCP connections, open or being dialed. An idle one measured under
 	// 80 KB: copy buffers, three goroutines and gVisor's endpoint. So under 40 MB at the cap. One
 	// whose device stopped taking data while the far end keeps sending holds its send buffer on
-	// top: about 100 KB when it stalled cold, about 50 MB more at the cap, but up to 750 KB when it
-	// ran fast first, since gVisor's buffer grows with the flow and doesn't shrink (#149). A browser
+	// top: about 100 KB when it stalled cold, about 50 MB more at the cap. One that ran fast first
+	// keeps the buffer it grew, which can reach the 2 MB send maximum (750 KB measured), since gVisor
+	// doesn't shrink it (#149). A browser
 	// stays well below it, a torrent client with a thousand peers reaches it and is refused more.
 	maxConns = 512
 	// maxInFlight caps the TCP connections being dialed for all devices together, like gVisor's
