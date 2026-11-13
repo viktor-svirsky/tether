@@ -238,8 +238,8 @@ type Server struct {
 	arriving  map[stack.TransportEndpointID]*arrival
 	dials     map[netip.Addr]int
 	conns     map[netip.Addr]int
-	// syns keeps a SYN's arrival and gVisor's take on it together, so a forwardTCP that hands
-	// gVisor's slot back knows which arrivals came while it held it, see forwardTCP.
+	// syns keeps a SYN's arrival and gVisor's take on it together, apart from a forwardTCP that
+	// finds no arrival of its own and hands gVisor's slot back, see forwardTCP.
 	syns sync.Mutex
 	// The caps, see the constants. Tests lower them.
 	maxCones, maxDials, maxConns, maxPings, maxLookups int
@@ -1045,6 +1045,7 @@ type forwardRequest interface {
 // forwardTCP runs on its own goroutine: gVisor's TCP forwarder starts one per SYN handleTCP passes on.
 func (s *Server) forwardTCP(r forwardRequest) {
 	id := r.ID()
+	s.syns.Lock()
 	s.mu.Lock()
 	a := s.arriving[id]
 	mine := a != nil && !a.taken
@@ -1053,24 +1054,14 @@ func (s *Server) forwardTCP(r forwardRequest) {
 	}
 	s.mu.Unlock()
 	if !mine {
-		// A SYN sent again after the dial for it was refused, before its arrival was gone. While
-		// this held gVisor's slot for the id, gVisor dropped any new SYN with it, so an arrival
-		// made then has no forwardTCP and is ended here, or it would stay and Close would wait.
-		s.syns.Lock()
-		defer s.syns.Unlock()
+		// A SYN sent again after the dial for it was refused, before its arrival was gone. Until
+		// Complete, gVisor drops any new SYN with this id, so syns holds them all back till then.
+		// Otherwise one could make an arrival that no forwardTCP takes, and Close would wait on it.
 		r.Complete(true)
-		s.mu.Lock()
-		orphan := s.arriving[id]
-		left := orphan != nil && !orphan.taken
-		if left {
-			s.dialed(id, orphan, false)
-		}
-		s.mu.Unlock()
-		if left {
-			s.forwarding.Done()
-		}
+		s.syns.Unlock()
 		return
 	}
+	s.syns.Unlock()
 	defer s.forwarding.Done()
 	// The arrival goes after Complete, so a SYN sent again in between still finds it.
 	refuse := func() {

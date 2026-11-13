@@ -825,6 +825,8 @@ func (r pausedRequest) Complete(reset bool) {
 // so gVisor starts nothing for it. Its arrival must still end, or Close waits for it forever.
 func TestThreeCopiesOfOneSYNLeaveNoArrivalBehind(t *testing.T) {
 	s := startAlone(t)
+	// Runs after the releases below and before the server's Close, so a failed run still ends.
+	t.Cleanup(func() { endUnclaimed(s) })
 	reqs := make(chan *tcp.ForwarderRequest, 4)
 	s.forwarder = tcp.NewForwarder(s.stack, 0, 2*maxInFlight, func(r *tcp.ForwarderRequest) { reqs <- r })
 	// No device has 10.7.0.2, so its dials are refused at once.
@@ -848,22 +850,34 @@ func TestThreeCopiesOfOneSYNLeaveNoArrivalBehind(t *testing.T) {
 			return nil
 		}
 	}
+	// gate is a channel the test closes to let a paused request go on, also when the test fails.
+	gate := func() (c chan struct{}, open func()) {
+		c = make(chan struct{})
+		var once sync.Once
+		open = func() { once.Do(func() { close(c) }) }
+		t.Cleanup(open)
+		return c, open
+	}
 	send()
-	completed1, release1, done1 := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	r1 := next()
+	completed1, done1 := make(chan struct{}), make(chan struct{})
+	release1, open1 := gate()
 	go func() {
 		defer close(done1)
-		s.forwardTCP(pausedRequest{next(), func(run func()) { run(); close(completed1); <-release1 }})
+		s.forwardTCP(pausedRequest{r1, func(run func()) { run(); close(completed1); <-release1 }})
 	}()
 	wait(completed1, "the first request was never completed")
 	// gVisor is done with the first request, and its arrival is still there for the second SYN.
 	send()
-	reached2, release2, done2 := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	r2 := next()
+	reached2, done2 := make(chan struct{}), make(chan struct{})
+	release2, open2 := gate()
 	go func() {
 		defer close(done2)
-		s.forwardTCP(pausedRequest{next(), func(run func()) { close(reached2); <-release2; run() }})
+		s.forwardTCP(pausedRequest{r2, func(run func()) { close(reached2); <-release2; run() }})
 	}()
 	wait(reached2, "the second request never got to Complete")
-	close(release1)
+	open1()
 	wait(done1, "the first request never ended")
 	// No arrival now, and gVisor still holds the second request, so it drops the third SYN.
 	sent3 := make(chan struct{})
@@ -872,7 +886,7 @@ func TestThreeCopiesOfOneSYNLeaveNoArrivalBehind(t *testing.T) {
 	case <-sent3:
 	case <-time.After(200 * time.Millisecond): // it may wait for the second request, which is fine
 	}
-	close(release2)
+	open2()
 	wait(done2, "the second request never ended")
 	wait(sent3, "the third SYN was never taken")
 	// What gVisor starts from here runs as it would.
@@ -893,15 +907,24 @@ func TestThreeCopiesOfOneSYNLeaveNoArrivalBehind(t *testing.T) {
 	select {
 	case <-closed:
 	case <-time.After(5 * time.Second):
-		// Ends what's left, so the test's own Close can return.
-		s.mu.Lock()
-		left := len(s.arriving)
-		for id, a := range s.arriving {
-			s.dialed(id, a, false)
-			s.forwarding.Done()
-		}
-		s.mu.Unlock()
+		left := endUnclaimed(s) // so Close can return
 		<-closed
 		t.Fatalf("Close never returned, with %d arrivals nobody owned", left)
 	}
+}
+
+// endUnclaimed ends the arrivals no forwardTCP took, and says how many there were. A forwardTCP
+// that comes for one later finds nothing and only resets the SYN.
+func endUnclaimed(s *Server) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for id, a := range s.arriving {
+		if !a.taken {
+			s.dialed(id, a, false)
+			s.forwarding.Done()
+			n++
+		}
+	}
+	return n
 }
