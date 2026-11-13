@@ -83,7 +83,7 @@ Download `Tether.ipa` from the [latest release](https://github.com/viktor-svirsk
 Each [release](https://github.com/viktor-svirsky/tether/releases) has an unsigned `Tether.ipa`, built by GitHub Actions from the release's commit. GitHub signs a record of that build, so with the [GitHub CLI](https://cli.github.com) this shows the file you downloaded is the one built here:
 
 ```sh
-gh attestation verify Tether.ipa -R viktor-svirsky/tether
+gh attestation verify Tether.ipa -R viktor-svirsky/tether --signer-workflow viktor-svirsky/tether/.github/workflows/release.yml
 ```
 
 The release notes also list its SHA-256.
