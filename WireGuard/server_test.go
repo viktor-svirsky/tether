@@ -224,8 +224,9 @@ func udpEcho(t *testing.T) string {
 	return viaRemote(c.LocalAddr().String())
 }
 
-// fetchTimeout is how long fetch waits. A download of a few hundred KB can take longer than 15 s
-// under -race on CI's runners.
+// fetchTimeout is how long fetch, connect and a single echo wait. A download of a few hundred KB
+// can take longer than 15 s under -race on CI's runners, and so can the first echo, which waits
+// for the WireGuard handshake too.
 func fetchTimeout() time.Duration {
 	if raceEnabled {
 		return time.Minute
