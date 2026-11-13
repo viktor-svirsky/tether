@@ -23,6 +23,14 @@ final class ShortcutReplyTests: XCTestCase {
                        "Tether stopped sharing while idle. Open it, or run Start Tether, to share again.")
     }
 
+    /// The sound didn't start on a cold launch: iOS suspends Tether after the action, so a shortcut
+    /// mustn't be told it's sharing (#164).
+    func testStatusSaysWhenTetherCantKeepRunning() {
+        let state = State(running: true, connected: 0, keptAlive: false)
+        XCTAssertFalse(state.sharing)
+        XCTAssertEqual(ShortcutReply.status(state), "Tether couldn't keep running in the background. Open it once.")
+    }
+
     func testSharingNeedsWireGuardRunning() {
         XCTAssertTrue(State(running: true, connected: 0).sharing)
         XCTAssertFalse(State(running: true, connected: 0, problem: "Its keys can't be read yet.").sharing)
