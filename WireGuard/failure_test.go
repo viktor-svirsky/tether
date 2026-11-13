@@ -15,6 +15,7 @@ import (
 
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
+	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/waiter"
@@ -761,4 +762,146 @@ func TestAFarEndThatResetsWhileTheDeviceStillSendsGivesTheWholeReply(t *testing.
 		t.Fatalf("got %d of the %d bytes sent before the reset: %v", len(b), 64<<10, err)
 	}
 	uncounted(t, s, netip.MustParseAddr("10.7.0.2"))
+}
+
+// A device that half-closes, then leaves the hotspot, like a laptop that sent its request and
+// closed its lid while the far end works on the answer. Keepalive finds the device gone, and the
+// far end's connection must close then, not stay until the far end sends or gives up (#154).
+func TestAHalfClosedConnectionEndsWhenItsDeviceLeaves(t *testing.T) {
+	s, c := setup(t)
+	s.mu.Lock()
+	s.keepIdle, s.keepInterval = 500*time.Millisecond, 250*time.Millisecond // gone in 1.5 s
+	s.mu.Unlock()
+	asked, hold := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() { close(hold) })
+	target := farEnd(t, func(conn *net.TCPConn) {
+		io.Copy(io.Discard, conn) // the request, up to the device's FIN
+		close(asked)
+		<-hold // works on the answer and sends nothing
+	})
+	conn := connect(t, c, target)
+	conn.Write([]byte("hello"))
+	conn.(*gonet.TCPConn).CloseWrite()
+	select {
+	case <-asked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the device's FIN never reached the far end")
+	}
+	c.dev.Down()
+	drained(t, s, netip.MustParseAddr("10.7.0.2"), "the device left after half-closing")
+}
+
+// rawSYN is a device's SYN from src to dst, as wireguard-go hands it to the stack.
+func rawSYN(src, dst netip.AddrPort) []byte {
+	b := make([]byte, header.IPv4MinimumSize+header.TCPMinimumSize)
+	ip := header.IPv4(b)
+	ip.Encode(&header.IPv4Fields{
+		TotalLength: uint16(len(b)), TTL: 64, Protocol: uint8(header.TCPProtocolNumber),
+		SrcAddr: tcpip.AddrFrom4(src.Addr().As4()), DstAddr: tcpip.AddrFrom4(dst.Addr().As4()),
+	})
+	ip.SetChecksum(^ip.CalculateChecksum())
+	h := header.TCP(b[header.IPv4MinimumSize:])
+	h.Encode(&header.TCPFields{
+		SrcPort: src.Port(), DstPort: dst.Port(), SeqNum: 1, DataOffset: header.TCPMinimumSize,
+		Flags: header.TCPFlagSyn, WindowSize: 65535,
+	})
+	sum := header.PseudoHeaderChecksum(header.TCPProtocolNumber, ip.SourceAddress(), ip.DestinationAddress(), header.TCPMinimumSize)
+	h.SetChecksum(^h.CalculateChecksum(sum))
+	return b
+}
+
+// pausedRequest is gVisor's request with Complete handed to a test, which runs it when it likes.
+type pausedRequest struct {
+	*tcp.ForwarderRequest
+	complete func(run func())
+}
+
+func (r pausedRequest) Complete(reset bool) {
+	r.complete(func() { r.ForwarderRequest.Complete(reset) })
+}
+
+// Three copies of one SYN, in the order from #153: the first's dial is refused, the second comes
+// once gVisor is done with the first, and the third comes while gVisor still holds the second,
+// so gVisor starts nothing for it. Its arrival must still end, or Close waits for it forever.
+func TestThreeCopiesOfOneSYNLeaveNoArrivalBehind(t *testing.T) {
+	s := startAlone(t)
+	reqs := make(chan *tcp.ForwarderRequest, 4)
+	s.forwarder = tcp.NewForwarder(s.stack, 0, 2*maxInFlight, func(r *tcp.ForwarderRequest) { reqs <- r })
+	// No device has 10.7.0.2, so its dials are refused at once.
+	syn := rawSYN(netip.MustParseAddrPort("10.7.0.2:40000"), netip.MustParseAddrPort(remote+":80"))
+	send := func() { s.tun.Write([][]byte{syn}, 0) }
+	wait := func(c <-chan struct{}, what string) {
+		t.Helper()
+		select {
+		case <-c:
+		case <-time.After(5 * time.Second):
+			t.Fatal(what)
+		}
+	}
+	next := func() *tcp.ForwarderRequest {
+		t.Helper()
+		select {
+		case r := <-reqs:
+			return r
+		case <-time.After(5 * time.Second):
+			t.Fatal("gVisor started no request for the SYN")
+			return nil
+		}
+	}
+	send()
+	completed1, release1, done1 := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done1)
+		s.forwardTCP(pausedRequest{next(), func(run func()) { run(); close(completed1); <-release1 }})
+	}()
+	wait(completed1, "the first request was never completed")
+	// gVisor is done with the first request, and its arrival is still there for the second SYN.
+	send()
+	reached2, release2, done2 := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done2)
+		s.forwardTCP(pausedRequest{next(), func(run func()) { close(reached2); <-release2; run() }})
+	}()
+	wait(reached2, "the second request never got to Complete")
+	close(release1)
+	wait(done1, "the first request never ended")
+	// No arrival now, and gVisor still holds the second request, so it drops the third SYN.
+	sent3 := make(chan struct{})
+	go func() { send(); close(sent3) }()
+	select {
+	case <-sent3:
+	case <-time.After(200 * time.Millisecond): // it may wait for the second request, which is fine
+	}
+	close(release2)
+	wait(done2, "the second request never ended")
+	wait(sent3, "the third SYN was never taken")
+	// What gVisor starts from here runs as it would.
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		for {
+			select {
+			case r := <-reqs:
+				go s.forwardTCP(r)
+			case <-stop:
+				return
+			}
+		}
+	}()
+	closed := make(chan struct{})
+	go func() { s.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		// Ends what's left, so the test's own Close can return.
+		s.mu.Lock()
+		left := len(s.arriving)
+		for id, a := range s.arriving {
+			s.dialed(id, a, false)
+			s.forwarding.Done()
+		}
+		s.mu.Unlock()
+		<-closed
+		t.Fatalf("Close never returned, with %d arrivals nobody owned", left)
+	}
 }
