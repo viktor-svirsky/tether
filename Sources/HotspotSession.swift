@@ -28,6 +28,7 @@ protocol ConfigPageServing: AnyObject {
     /// Called when `readyHosts` changes.
     var onChange: @MainActor () -> Void { get set }
     var onFailure: @MainActor (Error) -> Void { get set }
+    var onRefused: @MainActor (_ client: String) -> Void { get set }
     /// Started, and not failed or stopped since.
     var running: Bool { get }
     /// Taking connections.
@@ -71,6 +72,10 @@ final class HotspotSession {
     private(set) var wireGuardReady: WireGuardSetup.Ready? { willSet { willChange() } }
     /// Why there's no QR code while the devices that have one still connect: making the next one couldn't be saved.
     private(set) var wireGuardReadyProblem: String? { willSet { willChange() } }
+    /// Why the code for the next device can't be saved, logged once for each new reason.
+    private var readyReason: String?
+    /// The last reason WireGuard didn't start that went to the log, see `showProblem`.
+    private var loggedProblem: String?
     /// A rename, removal, pause or resume that couldn't be saved, shown on that device's screen until a change saves.
     private(set) var wireGuardDeviceProblem: DeviceProblem? { willSet { willChange() } }
     /// Why WireGuard isn't running, shown on the main screen: the saved setup's problem from launch on,
@@ -109,6 +114,8 @@ final class HotspotSession {
     private let dns: () -> DNSChoice.Upstream
     /// Where each device's data per month is saved, see `MonthlyUsage`. Nil keeps it in memory only.
     private let usageDefaults: UserDefaults?
+    /// Follows a time zone change while Tether runs for days on the silent sound: `.current` is a
+    /// snapshot from launch (#163).
     private let calendar: Calendar
     private var monthlyUsage: MonthlyUsage
     /// When it was last saved, and whether a read has changed it since.
@@ -139,6 +146,8 @@ final class HotspotSession {
     private var startProblem: String?
     /// What the config page answers, see `pageResponse`.
     private var pageHandler = ConfigPageHandler()
+    /// Clients the page refused that are in the log already, see `pageRefused`.
+    private var refusedClients: Set<String> = []
     /// When the code behind Add a device works, by the clock, see `addWindowOpen`.
     private var addWindow = AddWindow()
     /// The ready device is on the server: the add window was open at the last `followAddWindow()`.
@@ -147,7 +156,7 @@ final class HotspotSession {
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
          idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> DNSChoice.Upstream = { DNSChoice.defaultUpstream },
-         usageDefaults: UserDefaults? = nil, calendar: Calendar = .current, now: @escaping () -> Date = Date.init,
+         usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -169,6 +178,14 @@ final class HotspotSession {
         page.respond = { [weak self] request, client in self?.pageResponse(request, from: client) ?? ConfigPage.notFound }
         page.onChange = { [weak self] in self?.pageChanged() }
         page.onFailure = { [weak self] error in self?.pageFailed(error) }
+        page.onRefused = { [weak self] client in self?.pageRefused(client) }
+    }
+
+    /// The first few, so a Mac outside the expected /64 shows in the log (#159), and a scan from the
+    /// internet doesn't fill it.
+    private func pageRefused(_ client: String) {
+        guard refusedClients.count < 10, refusedClients.insert(client).inserted else { return }
+        log("Config page: refused \(client), not on the hotspot")
     }
 
     /// One round of the watcher in `Model`.
@@ -264,6 +281,8 @@ final class HotspotSession {
             }
         } else if devices.prepareReady() { // a QR code that couldn't be saved before
             wireGuardPeersChanged()
+        } else {
+            publishReadyProblem() // a retry that failed, maybe for another reason
         }
         showSetupProblem()
     }
@@ -285,7 +304,8 @@ final class HotspotSession {
             showProblem()
             log("WireGuard on \(hosts.joined(separator: " and ")) port \(WireGuardSetup.port), \(wireGuardPeers.count) devices")
         } catch {
-            startProblem = "It couldn't start: \(error)"
+            // The error goes to the log, see `showProblem`: on screen it says what to do.
+            startProblem = "It couldn't start. Tether tries again by itself. If this stays, share the log from Settings."
             showProblem(because: error)
         }
     }
@@ -294,18 +314,23 @@ final class HotspotSession {
     private static func problem(with error: Error) -> String {
         switch error {
         case is WireGuardDevices.Unreadable: "Its saved keys can't be read. Start over with new keys to use it."
-        case let unsaved as WireGuardDevices.Unsaved: "Its new keys can't be saved: \(unsaved.reason)."
+        case is WireGuardDevices.Unsaved: "Its new keys can't be saved. If this stays, share the log from Settings."
         default: "Its keys can't be read yet. Unlock this iPhone once."
         }
     }
 
-    /// The setup's problem comes first: until it's solved, the server can't start anyway. A problem
-    /// is logged once, not on every try.
+    /// The setup's problem comes first: until it's solved, the server can't start anyway. Each reason
+    /// is logged once, not on every try. By the error, not the text on screen, which is the same for
+    /// different reasons.
     private func showProblem(because error: Error? = nil) {
         let problem = setupProblem ?? startProblem
-        guard problem != wireGuardProblem else { return }
-        wireGuardProblem = problem
-        if problem != nil, let error { log("WireGuard not started: \(error)") }
+        if problem == nil {
+            loggedProblem = nil
+        } else if let error, "\(error)" != loggedProblem {
+            loggedProblem = "\(error)"
+            log("WireGuard not started: \(error)")
+        }
+        if problem != wireGuardProblem { wireGuardProblem = problem }
     }
 
     /// The same as opening Tether, for Start Tether in Shortcuts: the 10 minutes' wait for the hotspot
@@ -358,9 +383,10 @@ final class HotspotSession {
         let open = addWindowOpen
         // A setup that isn't read yet would bring back the saved code, so the new one waits for it.
         guard open != readyLetIn, !open || devices.loaded else { return }
-        // A device whose first handshake came since the last read is listed before its code goes.
+        // A device whose first handshake came since the last read is listed before its code goes, but
+        // only one from before the window ended: the next read can be 20 s later in the background (#161).
         if !open, running, server.running {
-            claimReady(server.snapshot().peers)
+            claimReady(server.snapshot().peers, handshakeBy: addWindow.ends)
         }
         readyLetIn = open
         if open {
@@ -386,7 +412,7 @@ final class HotspotSession {
             connected = unpaused(server.snapshot().connected)
         }
         return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem,
-                                   idleStopped: idleStopped != nil)
+                                   idleStopped: idleStopped != nil, keptAlive: !running || keepAlive.sounding)
     }
 
     var wireGuardNeedsReset: Bool { devices.needsReset }
@@ -606,19 +632,27 @@ final class HotspotSession {
     }
 
     private func publishSetup() {
-        wireGuardPeers = devices.setup.peers
+        if devices.setup.peers != wireGuardPeers { wireGuardPeers = devices.setup.peers }
         // Only from a setup that was read: a locked Keychain lists no devices, and that isn't a removal.
         if devices.loaded {
             let before = monthlyUsage
             monthlyUsage.keep(only: Set(devices.setup.peers.map(\.id) + [devices.setup.ready?.id].compactMap { $0 }))
             if monthlyUsage != before { usageUnsaved = true }
         }
-        wireGuardReady = devices.setup.ready
-        let readyProblem = devices.readyError.map { "The code for the next device can't be saved: \($0)." }
-        if readyProblem != wireGuardReadyProblem {
-            wireGuardReadyProblem = readyProblem
-            if let readyProblem { log("WireGuard: \(readyProblem)") }
+        if devices.setup.ready != wireGuardReady { wireGuardReady = devices.setup.ready }
+        publishReadyProblem()
+    }
+
+    /// Why the next code can't be saved: on screen in plain words, and each new reason, a Keychain
+    /// code say, once in the log. Also after a failed retry, which changes nothing else (#190).
+    private func publishReadyProblem() {
+        let reason = devices.readyError.map { "\($0)" }
+        if reason != readyReason {
+            readyReason = reason
+            if let reason { log("WireGuard: the code for the next device can't be saved: \(reason)") }
         }
+        let readyProblem = reason.map { _ in "The code for the next device can't be saved. Tether tries again by itself. If this stays, share the log from Settings." }
+        if readyProblem != wireGuardReadyProblem { wireGuardReadyProblem = readyProblem }
     }
 
     /// The server lets in exactly the saved devices, and the ready one while the add window is open. If
@@ -673,8 +707,9 @@ final class HotspotSession {
         absorb(snap.peers)
         countUsage(snap.peers)
         guard let speeds = sampler.sample(snap.totals, at: now) else { return } // nothing to compare with yet
-        upSpeed = speeds.up
-        downSpeed = speeds.down
+        // Only a change: every publish redraws every view that watches the model, each second (#166).
+        if speeds.up != upSpeed { upSpeed = speeds.up }
+        if speeds.down != downSpeed { downSpeed = speeds.down }
     }
 
     /// What each read of who is connected does, on screen (the sampler) or off (the watcher): a
@@ -688,8 +723,11 @@ final class HotspotSession {
     /// A device that connected with the QR code is listed, and the code changes for the next one.
     /// Not saved means not claimed: the next check tries again. A code that isn't on the server can't
     /// have connected, whatever an older read says.
-    private func claimReady(_ peers: [String: PeerStats]) {
+    private func claimReady(_ peers: [String: PeerStats], handshakeBy end: Date? = nil) {
         guard readyLetIn, let ready = wireGuardReady, let reached = peers[ready.address], reached.connected,
+              // Handshake times come in whole seconds, so one in the window's last second can't be told
+              // from one just after it: only an earlier second counts.
+              end == nil || reached.lastHandshake.map { $0 < end!.wholeSecondsDown } ?? true,
               let host = host(reachedFrom: reached.endpoint),
               devices.claimReady(address: ready.address, host: host) else { return }
         log("WireGuard: a new device connected with the QR code")
@@ -910,4 +948,9 @@ enum Interfaces {
         }
         return out
     }
+}
+
+private extension Date {
+    /// This time with the fraction of a second dropped.
+    var wholeSecondsDown: Date { Date(timeIntervalSince1970: timeIntervalSince1970.rounded(.down)) }
 }

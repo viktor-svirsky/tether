@@ -13,6 +13,9 @@ class TetherUITestCase: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
+        // Every test starts light, whatever ran before it on this simulator: a test that ends in dark
+        // would leave the next ones auditing dark only (#180).
+        XCUIDevice.shared.appearance = .light
     }
 
     /// Launches Tether in a demo scenario, in English with US formats so every text is stable.

@@ -8,7 +8,7 @@ final class HotspotSessionTests: XCTestCase {
     private let hotspot = "172.20.10.1"
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
     private let locked = "Its keys can't be read yet. Unlock this iPhone once."
-    private let couldntStart = "It couldn't start: port in use"
+    private let couldntStart = "It couldn't start. Tether tries again by itself. If this stays, share the log from Settings."
 
     private var server: FakeServer!
     private var sound: FakeSound!
@@ -303,6 +303,40 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(changes, 1, "the screen hears of it")
         session.syncWithHotspot()
         XCTAssertEqual(changes, 1, "and only when it changes")
+    }
+
+    /// Sharing with nothing moving, a sample and a watcher round change nothing on screen, so nothing
+    /// redraws every second (#166).
+    func testNothingIsPublishedWhenNothingChanged() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let scanned = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [scanned.address]
+        session.sampleTraffic()
+        session.sampleTraffic()
+        var changes = 0
+        session.willChange = { changes += 1 }
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        session.syncWithHotspot()
+        session.dnsChanged() // publishes the setup, the same as before
+        XCTAssertEqual(changes, 0)
+    }
+
+    /// Flown to another time zone mid-run, the month ends at the new zone's midnight, not the launch
+    /// zone's (#163).
+    func testTheMonthFollowsATimeZoneChange() throws {
+        let before = NSTimeZone.default
+        defer { NSTimeZone.default = before }
+        NSTimeZone.default = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        makeSession()
+        NSTimeZone.default = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
+        var london = Calendar(identifier: .gregorian)
+        london.timeZone = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
+        now = try XCTUnwrap(london.date(from: DateComponents(year: 2026, month: 11, day: 30, hour: 23, minute: 30)))
+        XCTAssertEqual(session.nextReset, london.date(from: DateComponents(year: 2026, month: 12, day: 1)))
     }
 
     // MARK: Where a device's config points (#65)
@@ -620,6 +654,20 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(logged.filter { $0.hasPrefix("WireGuard not started") }, ["WireGuard not started: port in use"])
     }
 
+    /// The screen says the same for every reason, so a new reason is still logged (#190).
+    func testADifferentReasonIsLoggedToo() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        server.startError = FakeServer.Failure()
+        session.syncWithHotspot()
+        server.startError = FakeServer.Refused()
+        session.syncWithHotspot()
+        session.syncWithHotspot()
+        XCTAssertEqual(logged.filter { $0.hasPrefix("WireGuard not started") },
+                       ["WireGuard not started: port in use", "WireGuard not started: the device list repeats a key or address"])
+    }
+
     // MARK: Devices
 
     /// The server refuses a list by what's in it, so starting it again with the same list is refused
@@ -634,12 +682,28 @@ final class HotspotSessionTests: XCTestCase {
         session.removeWireGuardDevice(peer.id)
         XCTAssertEqual(server.starts, [hotspot, hotspot], "tried again with the saved devices")
         XCTAssertFalse(server.running, "a removed device is never let in")
-        XCTAssertEqual(session.wireGuardProblem, "It couldn't start: \(FakeServer.Refused())")
+        XCTAssertEqual(session.wireGuardProblem, couldntStart)
         server.refusedAddress = nil
         session.syncWithHotspot()
         XCTAssertTrue(server.running)
         XCTAssertFalse(server.lastSetup?.serverPeers.contains(peer) ?? true, "the removed device isn't let in")
         XCTAssertNil(session.wireGuardProblem)
+    }
+
+    /// A retry of the next code that fails for another reason puts that reason in the log too (#190).
+    func testEachReasonTheNextCodeCantBeSavedIsLogged() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        secrets.savesFail = true
+        session.openAddWindow()
+        secrets.saveError = FlakySecrets.Full()
+        session.syncWithHotspot()
+        session.syncWithHotspot()
+        XCTAssertEqual(logged.filter { $0.hasPrefix("WireGuard: the code for the next device can't be saved") },
+                       ["WireGuard: the code for the next device can't be saved: Locked()",
+                        "WireGuard: the code for the next device can't be saved: Full()"])
     }
 
     func testARenameThatCantBeSavedSaysSoUntilAChangeSaves() throws {
@@ -705,6 +769,8 @@ final class HotspotSessionTests: XCTestCase {
         session.syncWithHotspot()
         server.connected = ["10.7.0.2", "10.7.0.3"]
         XCTAssertEqual(session.shortcutState(), ShortcutReply.State(running: true, connected: 2, problem: nil))
+        sound.silent = true // iOS gave the keep-alive no sound
+        XCTAssertFalse(session.shortcutState().sharing)
     }
 
     /// The notifications need who is connected in the background too, where the sampler doesn't run.
@@ -887,7 +953,7 @@ final class HotspotSessionTests: XCTestCase {
         address = hotspot
         session.syncWithHotspot()
         session.openAddWindow()
-        XCTAssertTrue(body(page.ask(.page)).contains("href=\"/Tether.conf\""))
+        XCTAssertTrue(body(page.ask(.page)).contains("href=\"\(ConfigPage.downloadPath)\""))
         let ready = try XCTUnwrap(session.wireGuardReady)
         let first = page.ask(.config)
         XCTAssertEqual(first.status, .ok)
@@ -960,14 +1026,14 @@ final class HotspotSessionTests: XCTestCase {
         session.syncWithHotspot()
         session.openAddWindow()
         let first = page.ask(.config, from: "172.20.10.2")
-        now = now.addingTimeInterval(59)
+        now = now.addingTimeInterval(ConfigPageHandler.repeatWithin - 1)
         XCTAssertEqual(page.ask(.configHead, from: "172.20.10.2"), first.forHead)
         XCTAssertEqual(page.ask(.config, from: "172.20.10.2"), first)
         XCTAssertEqual(session.wireGuardPeers.count, 1)
         let other = page.ask(.config, from: "172.20.10.3")
         XCTAssertNotEqual(other.body, first.body, "another device gets its own")
-        now = now.addingTimeInterval(61)
-        XCTAssertNotEqual(page.ask(.config, from: "172.20.10.3").body, other.body, "a minute later it's a new device")
+        now = now.addingTimeInterval(ConfigPageHandler.repeatWithin + 1)
+        XCTAssertNotEqual(page.ask(.config, from: "172.20.10.3").body, other.body, "a few seconds later it's a new device")
         XCTAssertEqual(session.wireGuardPeers.count, 3)
     }
 
@@ -1167,10 +1233,47 @@ final class HotspotSessionTests: XCTestCase {
         session.watch()
         now = minutes(9.9)
         server.connected = [ready.address]
+        server.handshakes = [ready.address: minutes(9.9)]
         now = minutes(10)
         session.watch()
         XCTAssertEqual(session.wireGuardPeers.map(\.id), [ready.id])
         XCTAssertEqual(letIn, [ready.publicKey], "the device, not the next code")
+    }
+
+    /// A handshake after the window ended, seen by the next round up to 20 s later, adds nothing: the
+    /// code no longer works (#161).
+    func testAHandshakeAfterTheWindowEndedIsntListed() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        session.leftScreen()
+        session.watch()
+        now = minutes(10.2)
+        server.connected = [ready.address]
+        server.handshakes = [ready.address: minutes(10.1)]
+        session.watch()
+        XCTAssertTrue(session.wireGuardPeers.isEmpty)
+        XCTAssertFalse(letIn.contains(ready.publicKey), "its code no longer works")
+    }
+
+    /// Handshake times are whole seconds. A window that ends at .25 s and a handshake at .75 s of the
+    /// same second read as the same time, and the device isn't added (#161).
+    func testAHandshakeInTheWindowsLastSecondIsntListed() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        now = minutes(0).addingTimeInterval(0.25)
+        session.leftScreen()
+        session.watch()
+        now = minutes(10.2)
+        server.connected = [ready.address]
+        server.handshakes = [ready.address: minutes(10)] // 0.75 s after the end, cut to the second
+        session.watch()
+        XCTAssertTrue(session.wireGuardPeers.isEmpty)
     }
 
     /// A new code that can't be saved leaves no code rather than the old one, and the old one stays

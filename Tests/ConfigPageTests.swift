@@ -3,22 +3,24 @@ import XCTest
 
 /// What the config page reads from a request, and the answers it sends.
 final class ConfigPageTests: XCTestCase {
-    private func request(_ text: String) -> ConfigPage.Request {
-        ConfigPage.Request(Data(text.utf8))
+    private func request(_ text: String, hosts: [String] = ["172.20.10.1"]) -> ConfigPage.Request {
+        ConfigPage.Request(Data(text.utf8), hosts: hosts)
     }
 
-    func testOnlyTheRequestLineCounts() {
+    private let download = "GET \(ConfigPage.downloadPath) HTTP/1.1\r\n"
+
+    func testTheRequestLineSaysWhatIsAsked() {
         let cases: [(head: String, request: ConfigPage.Request, line: UInt)] = [
             ("GET / HTTP/1.1\r\nHost: 172.20.10.1\r\n\r\n", .page, #line),
             ("GET / HTTP/1.0\r\n\r\n", .page, #line),
             ("GET /?from=qr HTTP/1.1\r\n\r\n", .page, #line), // the query is ignored
-            ("GET /Tether.conf HTTP/1.1\r\n\r\n", .config, #line),
-            ("GET /Tether.conf?x=1 HTTP/1.1\r\n\r\n", .config, #line),
+            ("GET /Tether.conf?t=\(ConfigPage.token) HTTP/1.1\r\n\r\n", .config, #line),
+            ("GET /Tether.conf?x=1&t=\(ConfigPage.token) HTTP/1.1\r\n\r\n", .config, #line),
             ("GET /favicon.ico HTTP/1.1\r\n\r\n", .notFound, #line),
             ("GET /tether.conf HTTP/1.1\r\n\r\n", .notFound, #line), // paths are case-sensitive
             ("GET /Tether.conf/ HTTP/1.1\r\n\r\n", .notFound, #line),
             ("HEAD / HTTP/1.1\r\n\r\n", .pageHead, #line),
-            ("HEAD /Tether.conf HTTP/1.1\r\n\r\n", .configHead, #line),
+            ("HEAD /Tether.conf?t=\(ConfigPage.token) HTTP/1.1\r\n\r\n", .configHead, #line),
             ("HEAD /favicon.ico HTTP/1.1\r\n\r\n", .notFound, #line),
             ("OPTIONS / HTTP/1.1\r\n\r\n", .notGet, #line),
             ("POST /Tether.conf HTTP/1.1\r\n\r\n", .notGet, #line),
@@ -34,7 +36,63 @@ final class ConfigPageTests: XCTestCase {
         for c in cases {
             XCTAssertEqual(request(c.head), c.request, line: c.line)
         }
-        XCTAssertEqual(ConfigPage.Request(Data([0x47, 0x45, 0x54, 0x20, 0xFF, 0xFE, 0x0D, 0x0A])), .malformed, "not UTF-8")
+        XCTAssertEqual(ConfigPage.Request(Data([0x47, 0x45, 0x54, 0x20, 0xFF, 0xFE, 0x0D, 0x0A]), hosts: []), .malformed, "not UTF-8")
+    }
+
+    /// A page from another site that points its name at the iPhone (DNS rebinding) sends its own name
+    /// as Host, and gets a 400 instead of a config it could read (#158).
+    func testOnlyTetherOwnAddressesAreAcceptedAsHost() {
+        let hosts = ["172.20.10.1", "2607:fb91:88a2:e822::1"]
+        let cases: [(host: String?, request: ConfigPage.Request, line: UInt)] = [
+            ("172.20.10.1", .config, #line),
+            ("172.20.10.1:80", .config, #line),
+            ("[2607:fb91:88a2:e822::1]", .config, #line),
+            ("[2607:FB91:88A2:E822:0:0:0:1]:80", .config, #line), // the same address, written another way
+            (nil, .config, #line), // HTTP/1.0 may send none, and a rebinding browser always does
+            ("evil.example", .malformed, #line),
+            ("172.20.10.1.", .malformed, #line), // a trailing dot is a name, not the address
+            ("evil.example:80", .malformed, #line),
+            ("172.20.10.2", .malformed, #line),
+            ("[2607:fb91:88a2:e822::2]", .malformed, #line),
+            ("", .malformed, #line),
+        ]
+        for c in cases {
+            let head = download + (c.host.map { "Host: \($0)\r\n" } ?? "") + "\r\n"
+            XCTAssertEqual(request(head, hosts: hosts), c.request, c.host ?? "none", line: c.line)
+        }
+        XCTAssertEqual(request("GET / HTTP/1.1\r\nhOsT:  evil.example \r\n\r\n"), .malformed, "the name is case-insensitive")
+    }
+
+    /// Another site can make a browser on the hotspot fetch the download (an <img>, say), and each
+    /// download claims the ready device. Without the token from the page it gets the page (#158).
+    func testADownloadWithoutThePagesTokenGetsThePage() {
+        XCTAssertEqual(request("GET /Tether.conf HTTP/1.1\r\n\r\n"), .configWithoutToken)
+        XCTAssertEqual(request("GET /Tether.conf?t=wrong HTTP/1.1\r\n\r\n"), .configWithoutToken)
+        XCTAssertEqual(request("GET /Tether.conf?t=\(ConfigPage.token)x HTTP/1.1\r\n\r\n"), .configWithoutToken)
+        XCTAssertEqual(request("HEAD /Tether.conf HTTP/1.1\r\n\r\n"), .pageHead, "no config headers either")
+        // Everything a download needs is there, so only the missing token keeps the ready device unclaimed.
+        var setup = WireGuardSetup.new()
+        setup.prepareReady()
+        let handler = ConfigPageHandler()
+        let inputs = ConfigPageHandler.Inputs(letIn: true, onScreen: true, ready: setup.ready, host: "172.20.10.1",
+                                              config: "[Interface]\n", stale: [], hosts: ["172.20.10.1"], now: Date())
+        XCTAssertEqual(handler.answer(.configWithoutToken, from: "172.20.10.3", inputs),
+                       .answer(ConfigPage.page(.ready, status: .notFound)), "the page with a 404, not a download")
+        XCTAssertTrue(String(decoding: ConfigPage.page(.ready).body, as: UTF8.self).contains("href=\"\(ConfigPage.downloadPath)\""))
+        XCTAssertGreaterThanOrEqual(ConfigPage.token.count, 16)
+    }
+
+    /// On an IPv6-only carrier the page listens on a global address. Only the hotspot's own /64 and
+    /// link-local clients are answered, not the internet (#159). IPv4 on the hotspot is NATed.
+    func testOnlyClientsOnTheHotspotAreAnswered() {
+        let hosts = ["172.20.10.1", "2607:fb91:88a2:e822::1"]
+        XCTAssertTrue(ConfigPage.onHotspot("172.20.10.3", hosts: hosts))
+        XCTAssertTrue(ConfigPage.onHotspot("2607:fb91:88a2:e822:1c2d:3e4f:5a6b:7c8d", hosts: hosts))
+        XCTAssertTrue(ConfigPage.onHotspot("fe80::1c2d:3e4f:5a6b:7c8d%bridge100", hosts: hosts))
+        XCTAssertFalse(ConfigPage.onHotspot("2001:db8::7", hosts: hosts))
+        XCTAssertFalse(ConfigPage.onHotspot("2607:fb91:88a2:e823::5", hosts: hosts), "the next /64")
+        XCTAssertFalse(ConfigPage.onHotspot("2001:db8::7", hosts: ["172.20.10.1"]), "no IPv6 here at all")
+        XCTAssertFalse(ConfigPage.onHotspot("somewhere:80", hosts: hosts), "not an address: refused, not let through")
     }
 
     func testAHeadIsCompleteAtTheEmptyLine() {
@@ -108,7 +166,7 @@ final class ConfigPageTests: XCTestCase {
             return try XCTUnwrap(String(data: p.body, encoding: .utf8))
         }
         let ready = try html(.ready)
-        XCTAssertTrue(ready.contains("href=\"/Tether.conf\""))
+        XCTAssertTrue(ready.contains("href=\"\(ConfigPage.downloadPath)\""))
         XCTAssertTrue(ready.contains("Then import it in the WireGuard app."))
         // Compact: the button comes first, and the steps for each system wait behind a tap.
         let button = try XCTUnwrap(ready.range(of: "Download the config"))

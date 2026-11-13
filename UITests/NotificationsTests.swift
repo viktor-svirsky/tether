@@ -4,11 +4,6 @@ import XCTest
 /// Its Help section is in SettingsHelpTests.
 /// When to post is covered by the unit tests (NotifierTests), since a demo launch connects no device.
 final class NotificationsTests: TetherUITestCase {
-    override func tearDown() {
-        XCUIDevice.shared.appearance = .light
-        super.tearDown()
-    }
-
     private func toggle(_ kind: String) -> XCUIElement {
         app.switches["notices.\(kind)"].firstMatch
     }
@@ -74,7 +69,7 @@ final class NotificationsTests: TetherUITestCase {
         openSettings()
         XCTAssertTrue(element("notices.allow").waitForExistence(timeout: 5))
         reveal(element("notices.footer")) // below Devices
-        XCTAssertEqual(label(of: "notices.footer"), "Only while Tether is in the background. On screen, the screen shows it.")
+        XCTAssertEqual(label(of: "notices.footer"), "Only while Tether is in the background. While it's open, you see it on screen.")
         assertNowhere(element("notices.denied"))
     }
 
@@ -91,13 +86,43 @@ final class NotificationsTests: TetherUITestCase {
     func testAskedOnScreenThenLeavingTheScreenPostsANotice() {
         launch(.notifying)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let allow = springboard.buttons["Allow"]
-        if allow.waitForExistence(timeout: 5) { allow.tap() }
+        waitUntilNotificationsAreAllowed(springboard)
         XCUIDevice.shared.press(.home)
         let banner = springboard.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "iPad connected")).firstMatch
         // Usually a few seconds. Under the full suite, iOS can take 9 s to move Tether to the background,
         // then up to 10 s more in the notification's own steps (its Intelligence step times out at 10 s).
-        XCTAssertTrue(banner.waitForExistence(timeout: 60), "no notification. Notifications for Tether may be off in the simulator's Settings")
+        XCTAssertTrue(banner.waitForExistence(timeout: 60), "no notification")
+    }
+
+    /// Waits on the Settings sheet until iOS has told Tether it may notify, tapping Allow if the
+    /// simulator asks. Allow notifications shows there until iOS answers.
+    /// A simulator just cloned for parallel testing doesn't answer at first: in one failing run its
+    /// SpringBoard started the notification server 97 s after booting, and until then every call to
+    /// the notification center waited, the one Tether makes in the background too. Its notice posted
+    /// only after the test had given up (#116).
+    private func waitUntilNotificationsAreAllowed(_ springboard: XCUIApplication, timeout: TimeInterval = 180) {
+        // The question can come up at any moment after launch and cover the gear. A tap it blocks
+        // runs this first, so it's answered on the way to Settings too, not only in the loop below.
+        let monitor = addUIInterruptionMonitor(withDescription: "notification permission") { alert in
+            let allow = alert.buttons["Allow"]
+            guard allow.exists else { return false }
+            allow.tap()
+            return true
+        }
+        defer { removeUIInterruptionMonitor(monitor) }
+        openSettings()
+        // The first row, so the sheet has drawn its list before the button can count as gone.
+        XCTAssertTrue(app.buttons["sharing.idleStop"].waitForExistence(timeout: 5))
+        let allow = springboard.buttons["Allow"]
+        let deadline = Date().addingTimeInterval(timeout)
+        while element("notices.allow").exists {
+            if allow.exists { allow.tap() }
+            guard Date() < deadline else { return XCTFail("iOS didn't say whether Tether may notify in \(Int(timeout)) s") }
+            _ = allow.waitForExistence(timeout: 1)
+        }
+        XCTAssertFalse(element("notices.denied").exists, "Notifications for Tether are off in the simulator's Settings")
+        app.buttons["settings.done"].tap()
+        XCTAssertTrue(element("status.title").waitForExistence(timeout: 5), "back on the main screen")
     }
 
     // MARK: accessibility
@@ -148,5 +173,6 @@ final class NotificationsTests: TetherUITestCase {
         openSettings()
         let expires = reveal(element("settings.expires")).label
         XCTAssertNotNil(expires.range(of: #"^Stops opening.*\d"#, options: .regularExpression), expires)
+        XCTAssertEqual(reveal(element("settings.expiresFooter")).label, "With a free Apple ID, refresh Tether in SideStore or AltStore before then.")
     }
 }

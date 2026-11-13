@@ -23,6 +23,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 )
 
 // pattern is n bytes that only seed makes, so a byte lost, added or out of place changes them.
@@ -605,7 +606,7 @@ func deviceStack(c *client) *stack.Stack {
 // A device connects again from a port it used a moment ago, to the same host, and gets through.
 // Devices pick ports by chance, so many short connections to one host do this within minutes.
 func TestReusingAPortRightAfterTheHostClosedConnects(t *testing.T) {
-	_, c := setup(t)
+	s, c := setup(t)
 	target := netip.MustParseAddrPort(tcpServer(t, 10)) // it closes first, after its 10 bytes
 	from := tcpip.FullAddress{Addr: tcpip.AddrFrom4([4]byte{10, 7, 0, 2}), Port: 40000}
 	to := tcpip.FullAddress{Addr: tcpip.AddrFrom4(target.Addr().As4()), Port: target.Port()}
@@ -632,6 +633,19 @@ func TestReusingAPortRightAfterTheHostClosedConnects(t *testing.T) {
 	}
 	if err := connect(); err != nil {
 		t.Fatal(err)
+	}
+	// The server's side closed first, so it waits out TIME_WAIT, timeWaitTimeout rather than
+	// gVisor's 60 s. A SYN meanwhile is dropped and the device sends it again a second later. But
+	// one that is still queued when TIME_WAIT ends gets a reset: gVisor hands it only to a
+	// listening endpoint, and the forwarder isn't one (#101). So the device connects again once the
+	// server's side is gone, which must be soon.
+	id := stack.TransportEndpointID{LocalAddress: to.Addr, LocalPort: to.Port, RemoteAddress: from.Addr, RemotePort: from.Port}
+	deadline := time.Now().Add(scaled(5 * time.Second))
+	for s.stack.FindTransportEndpoint(header.IPv4ProtocolNumber, tcp.ProtocolNumber, id, 1) != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the server's side of the first connection is still there")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if err := connect(); err != nil {
 		t.Fatalf("again from the same port: %v", err)

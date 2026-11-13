@@ -29,8 +29,10 @@ struct ConfigPageHandler {
         case download(WireGuardSetup.Ready, host: String, config: String)
     }
 
-    /// How long the same client gets the same download.
-    static let repeatWithin: TimeInterval = 60
+    /// How long the same client gets the same download. A browser that fetches twice does it within a
+    /// second or two. Longer, and two computers behind one address (a travel router's) would get one
+    /// key (#160).
+    static let repeatWithin: TimeInterval = 5
 
     private var lastDownload: (client: String, at: Date, response: ConfigPage.Response)?
     /// Why the page last failed, so a page that fails every round is logged once.
@@ -44,7 +46,9 @@ struct ConfigPageHandler {
         let knocks = address.map(inputs.hosts.contains) == true ? [] : inputs.stale.filter { $0.shown(at: inputs.now) }
         let stale: ConfigPage.Stale? = knocks.contains { $0.kind == .device && address != nil && PeerStats.address($0.from) == address } ? .thisDevice
             : knocks.contains { $0.kind == .server } ? .oldKeys : nil
-        let repeated = lastDownload.flatMap {
+        // Only while a download could happen anyway: a closed window or Tether off screen hands out
+        // no key, a repeated one neither (#160).
+        let repeated = state != .ready ? nil : lastDownload.flatMap {
             $0.client == client && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil
         }
         switch request {
@@ -62,6 +66,7 @@ struct ConfigPageHandler {
                 return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
             }
             return .download(ready, host: host, config: config)
+        case .configWithoutToken: return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
         case .notFound: return .answer(ConfigPage.notFound)
         case .notGet: return .answer(ConfigPage.notGet)
         case .malformed: return .answer(ConfigPage.malformed)

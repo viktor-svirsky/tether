@@ -60,7 +60,7 @@ You need an iPhone with iOS 17 or later and a plan with Personal Hotspot. Tether
 SideStore and AltStore install apps on your iPhone signed with your own Apple ID. A free Apple ID is enough.
 
 1. Install SideStore or AltStore with their own guide: [SideStore](https://docs.sidestore.io), [AltStore](https://faq.altstore.io). It needs a computer for the setup.
-2. On iOS 16 or later, turn on Developer Mode: Settings > Privacy & Security > Developer Mode. The iPhone restarts and asks you to confirm. Apps signed with your own Apple ID don't open without it.
+2. Turn on Developer Mode: Settings > Privacy & Security > Developer Mode. The iPhone restarts and asks you to confirm. Apps signed with your own Apple ID don't open without it.
 3. Add Tether's source: on your iPhone, open [the add page](https://viktor-svirsky.github.io/tether/add/) and tap Add to SideStore or Add to AltStore. Or open Sources in SideStore or AltStore, tap + and paste this:
 
    ```
@@ -83,7 +83,7 @@ Download `Tether.ipa` from the [latest release](https://github.com/viktor-svirsk
 Each [release](https://github.com/viktor-svirsky/tether/releases) has an unsigned `Tether.ipa`, built by GitHub Actions from the release's commit. GitHub signs a record of that build, so with the [GitHub CLI](https://cli.github.com) this shows the file you downloaded is the one built here:
 
 ```sh
-gh attestation verify Tether.ipa -R viktor-svirsky/tether
+gh attestation verify Tether.ipa -R viktor-svirsky/tether --signer-workflow viktor-svirsky/tether/.github/workflows/release.yml
 ```
 
 The release notes also list its SHA-256.
@@ -164,6 +164,7 @@ scripts/build-wireguard.sh   builds WireGuard/ into TetherWG.xcframework (xcodeg
 scripts/build-ipa.sh         builds the unsigned Tether.ipa; make_source.py writes source.json for it
 scripts/next-version.sh      picks the next release version from the last tag
 scripts/which-release.sh     says whether main is at a release branch, which releases it by itself
+scripts/release-notes.sh     lists the issues a release fixes, for its notes
 Sources/HotspotSession.swift finds the hotspot, starts the server, samples traffic (tested on the Mac)
 Sources/Model.swift          runs the session on timers and feeds the screens
 Sources/MainView.swift       the main screen; AddDeviceSheet.swift has the steps and the QR code, DevicesView.swift the device screen
@@ -187,7 +188,7 @@ The file map at the top of Model.swift lists every source file.
 
 Run the unit tests with `swift test` (after `scripts/build-wireguard.sh` or `xcodegen generate`, since they link the WireGuard server), and the WireGuard server's own with `go -C WireGuard test ./...`. They start the real server on your Mac and talk to it over loopback, so you don't need a device. [TESTING.md](TESTING.md) covers the simulator UI tests and the checks by hand.
 
-Features go to a release branch for the next version (`release-1.6`), not to main. To release it, move main to that branch: once CI passes on main, the Release workflow publishes 1.6.0 by itself. `scripts/which-release.sh` checks that main is at a release branch whose version isn't out yet, so other changes on main (refactors, tests, CI) release nothing. For a patch, open Actions > Release > Run workflow on main and pick what goes up: patch, minor or major. `scripts/next-version.sh` works out the version from the last tag, `scripts/build-ipa.sh` builds `Tether.ipa`, `make_source.py` writes `source.json`, and the workflow publishes both as a GitHub release, which creates the tag. `python3 scripts/test_make_source.py`, `scripts/test-next-version.sh` and `scripts/test-which-release.sh` test the scripts.
+Features go to a release branch for the next version (`release-1.6`), not to main. To release it, move main to that branch: once CI passes on main, the Release workflow publishes 1.6.0 by itself. `scripts/which-release.sh` checks that main is at a release branch whose version isn't out yet, and that the release branch got there before main did, so other changes on main (refactors, tests, CI) release nothing. Take a fix from main into a release branch with a merge commit (`git merge --no-ff main`), never a fast-forward: a release branch fast-forwarded to main has nothing of its own and doesn't release. Push the release branch first, then main in a second push: one push of both leaves no way to tell which came first, so it releases nothing. For a patch, open Actions > Release > Run workflow on main and pick what goes up: patch, minor or major. `scripts/next-version.sh` works out the version from the last tag, `scripts/build-ipa.sh` builds `Tether.ipa`, `make_source.py` writes `source.json`, and the workflow publishes both as a GitHub release, which creates the tag. The notes come from `scripts/release-notes.sh`: each issue a commit since the last release fixes, by a line starting `Fixes #N`, if the issue is closed as completed and isn't labelled tests, ci, dependencies or documentation. Reverts don't count. So every change people can see needs a `Fixes #N` line, work taken out of a release reopens its issue, and work put back needs a new `Fixes #N` line. `python3 scripts/test_make_source.py`, `scripts/test-next-version.sh`, `scripts/test-which-release.sh` and `scripts/test-release-notes.sh` test the scripts.
 
 ## License
 

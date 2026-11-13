@@ -13,7 +13,7 @@ final class SettingsDNSTests: TetherUITestCase {
         let first = "Cloudflare (1.1.1.1, no filtering)"
         XCTAssertTrue(menu.label.contains(first) || value(of: menu) == first, "Cloudflare at first: \(menu.label)")
         XCTAssertEqual(label(of: "newDevices.footer"), Self.footer)
-        XCTAssertTrue(sectionHeader("Devices").exists)
+        XCTAssertTrue(sectionHeader("DNS for your devices").exists)
         try audit(only: "newDevices.")
         menu.tap()
         for choice in [first, "Cloudflare (1.1.1.2, blocks malware)", "Quad9 (9.9.9.9, blocks malware)",

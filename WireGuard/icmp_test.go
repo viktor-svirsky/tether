@@ -61,6 +61,74 @@ func TestPingGoesThroughTheTunnel(t *testing.T) {
 	}
 }
 
+// iOS closes a suspended app's sockets during a phone call (#106). The ping socket is opened again,
+// so pings through the tunnel work after the call, not only TCP and UDP (#151).
+func TestPingWorksAfterIOSClosedItsSocket(t *testing.T) {
+	s, c := setup(t)
+	if _, err := pingFrom(c, remote, 0, []byte("before"), 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	s.pings.conn.Load().Close()
+	var err error
+	for seq := 1; seq <= 5; seq++ { // the first one may go out on the closed socket
+		if _, err = pingFrom(c, remote, seq, []byte("after"), 2*time.Second); err == nil {
+			return
+		}
+	}
+	t.Fatal("no reply after the socket was closed:", err)
+}
+
+// replaced waits until the ping socket is no longer old, and returns the new one.
+func replaced(t *testing.T, s *Server, old *icmp.PacketConn) *icmp.PacketConn {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if c := s.pings.conn.Load(); c != old {
+			return c
+		}
+	}
+	t.Fatal("the ping socket wasn't opened again")
+	return nil
+}
+
+// A socket that keeps failing is opened again at most once a second, so it can't spin (#151).
+func TestThePingSocketIsOpenedAgainAtMostOnceASecond(t *testing.T) {
+	s, c := setup(t)
+	if _, err := pingFrom(c, remote, 0, []byte("start"), 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	first := s.pings.conn.Load()
+	first.Close()
+	second := replaced(t, s, first)
+	at := time.Now()
+	second.Close()
+	replaced(t, s, second)
+	if waited := time.Since(at); waited < 900*time.Millisecond {
+		t.Fatalf("opened again after %v, want about a second", waited)
+	}
+}
+
+// Close during the wait before the next try returns at once and opens nothing more (#151).
+func TestClosingDuringThePingRetryWaitEndsIt(t *testing.T) {
+	s, c := setup(t)
+	if _, err := pingFrom(c, remote, 0, []byte("start"), 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	first := s.pings.conn.Load()
+	first.Close()
+	second := replaced(t, s, first)
+	second.Close() // the next try waits a second
+	time.Sleep(100 * time.Millisecond)
+	at := time.Now()
+	s.Close()
+	if took := time.Since(at); took > 500*time.Millisecond {
+		t.Fatalf("Close took %v during the retry wait", took)
+	}
+	time.Sleep(1200 * time.Millisecond)
+	if s.pings.conn.Load() != second {
+		t.Fatal("a ping socket was opened after Close")
+	}
+}
+
 // A host that doesn't answer gets the device no reply, the same as from the iPhone.
 func TestAPingNobodyAnswersGetsNoReply(t *testing.T) {
 	_, c := setup(t)

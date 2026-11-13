@@ -3,11 +3,6 @@ import XCTest
 /// The Settings sheet's Help section: the log to share for a bug report, and the source link.
 /// What the log holds and leaves out is covered by the unit tests (DebugLogTests, LogRedactionTests).
 final class SettingsHelpTests: TetherUITestCase {
-    override func tearDown() {
-        XCUIDevice.shared.appearance = .light
-        super.tearDown()
-    }
-
     static let footer = "The log is a text file of what Tether did lately, for a bug report. Keys and full addresses are left out."
 
     func testHelpOffersTheLogAboveTheSourceLink() {

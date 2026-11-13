@@ -371,8 +371,16 @@ final class WireGuardSetupTests: XCTestCase {
     }
 
     func testTheConfigFileNameIsSafe() {
-        XCTAssertEqual(WireGuardSetup.fileName(for: "Viktor's iPad"), "Tether-Viktor-s-iPad.conf")
+        XCTAssertEqual(WireGuardSetup.fileName(for: "Viktor's iPad"), "Tether-Viktorsi.conf")
         XCTAssertEqual(WireGuardSetup.fileName(for: "///"), "Tether.conf")
+        XCTAssertEqual(WireGuardSetup.fileName(for: ""), "Tether.conf")
+        // At most 15 characters, the longest tunnel name wg-quick and WireGuard for Android take.
+        XCTAssertEqual(WireGuardSetup.fileName(for: "Device 9"), "Tether-Device-9.conf")
+        XCTAssertEqual(WireGuardSetup.fileName(for: "Device 10"), "Tether-Device10.conf")
+        XCTAssertEqual(WireGuardSetup.fileName(for: "Device 100"), "Tether-Devic100.conf")
+        XCTAssertEqual(WireGuardSetup.fileName(for: "Device 101"), "Tether-Devic101.conf")
+        XCTAssertEqual(WireGuardSetup.fileName(for: "Viktor's MacBook Pro"), "Tether-ViktorsM.conf")
+        XCTAssertEqual(WireGuardSetup.fileName(for: "Айпад 2"), "Tether-2.conf", "wg-quick takes ASCII only")
     }
 
     func testItSurvivesARoundTrip() throws {
@@ -646,12 +654,15 @@ final class FlakySecrets: SecretStore {
     var saves = 0
     var data: Data?
     struct Locked: Error {}
+    struct Full: Error {}
+    /// What a failing save throws.
+    var saveError: Error = Locked()
     func load() throws -> Data? {
         if failing { throw Locked() }
         return data
     }
     func save(_ data: Data) throws {
-        if savesFail { throw Locked() }
+        if savesFail { throw saveError }
         saves += 1
         self.data = data
     }

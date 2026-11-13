@@ -71,9 +71,12 @@ const (
 	// against hosts that drop SYNs fills it, and its device's next ones are refused.
 	maxDials = 256
 	// maxConns caps a device's TCP connections, open or being dialed. An idle one measured under
-	// 80 KB: copy buffers, three goroutines and gVisor's endpoint. So under 40 MB at the cap. A
-	// browser stays well below it, a torrent client with a thousand peers reaches it and is
-	// refused more.
+	// 80 KB: copy buffers, three goroutines and gVisor's endpoint. So under 40 MB at the cap. One
+	// whose device stopped taking data while the far end keeps sending holds its send buffer on
+	// top: about 100 KB when it stalled cold, about 50 MB more at the cap. One that ran fast first
+	// keeps the buffer it grew, which can reach the 2 MB send maximum (750 KB measured), since gVisor
+	// doesn't shrink it (#149). A browser
+	// stays well below it, a torrent client with a thousand peers reaches it and is refused more.
 	maxConns = 512
 	// maxInFlight caps the TCP connections being dialed for all devices together, like gVisor's
 	// own cap it replaces, see handleTCP.
@@ -237,9 +240,11 @@ type Server struct {
 	conns     map[netip.Addr]int
 	// The caps, see the constants. Tests lower them.
 	maxCones, maxDials, maxConns, maxPings, maxLookups int
-	// DNS on 10.7.0.1, see dns.go. Tests swap dohClient, lookupTimeout and plainTimeout.
-	upstream      atomic.Pointer[dnsUpstream]
-	dohClient     *http.Client
+	// DNS on 10.7.0.1, see dns.go. Tests swap dohClient, dohSpare, lookupTimeout and plainTimeout.
+	upstream  atomic.Pointer[dnsUpstream]
+	dohClient *http.Client
+	// dohSpare asks again next to a slow request, on a new connection each time, see doh.
+	dohSpare      *http.Client
 	lookupTimeout time.Duration
 	plainTimeout  time.Duration
 	dnsFailing    atomic.Bool        // see dnsResult
@@ -326,7 +331,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
-	s.dohClient, s.lookupTimeout = newDoHClient(dialer.DialContext), lookupTimeout
+	s.dohClient, s.dohSpare, s.lookupTimeout = newDoHClient(dialer.DialContext), newDoHSpare(dialer.DialContext), lookupTimeout
 	s.plainTimeout = plainTimeout
 	s.stack = stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
@@ -335,9 +340,10 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	sack := tcpip.TCPSACKEnabled(true)
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &sack)
 	// gVisor's defaults are 1 MB each way per connection. Smaller, auto-tuned buffers keep a page
-	// with dozens of connections well inside a background app's memory.
-	recv := tcpip.TCPReceiveBufferSizeRangeOption{Min: 4 << 10, Default: 256 << 10, Max: 2 << 20}
-	send := tcpip.TCPSendBufferSizeRangeOption{Min: 4 << 10, Default: 256 << 10, Max: 2 << 20}
+	// with dozens of connections well inside a background app's memory, and a device at maxConns
+	// whose connections stalled early too. A fast flow grows its own toward the max, see maxConns.
+	recv := tcpip.TCPReceiveBufferSizeRangeOption{Min: 4 << 10, Default: 64 << 10, Max: 2 << 20}
+	send := tcpip.TCPSendBufferSizeRangeOption{Min: 4 << 10, Default: 64 << 10, Max: 2 << 20}
 	moderate := tcpip.TCPModerateReceiveBufferOption(true)
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &recv)
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &send)
@@ -417,6 +423,7 @@ func (s *Server) close() {
 			s.conesRunning.Wait() // closing the socket ends them at once
 			s.looking.Wait()      // the cancelled context ends their requests
 			s.dohClient.CloseIdleConnections()
+			s.dohSpare.CloseIdleConnections()
 			return
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -428,6 +435,7 @@ func (s *Server) close() {
 // connections are closed, so a device that gets its tunnel address later can't receive them.
 // A paused device stays in wireguard-go, so its session and handshake go on, but its traffic is
 // refused (see ownerLocked) and its open connections are closed, the way a removed device's are.
+// A paused router gives up the role, so another router can take over meanwhile.
 func (s *Server) SetPeers(peers []Peer) error {
 	want := map[[32]byte]netip.Addr{}
 	paused := map[[32]byte]bool{}
@@ -439,11 +447,13 @@ func (s *Server) SetPeers(peers []Peer) error {
 	}
 	s.applying.Lock()
 	defer s.applying.Unlock()
-	// The router stays the router while its key keeps its address.
+	// The router stays the router while its key keeps its address and isn't paused. A paused router
+	// still handshakes, so it would look online to makeRouter and keep every other router out. Once
+	// resumed, its next packet for a client asks for the role back like any device's, see makeRouter.
 	s.mu.Lock()
 	router := s.router
 	for key, addr := range s.peers {
-		if addr == router && want[key] != router {
+		if addr == router && (want[key] != router || paused[key]) {
 			router = netip.Addr{}
 		}
 	}
@@ -618,6 +628,14 @@ func (s *Server) apply(want map[[32]byte]netip.Addr, router netip.Addr) error {
 	s.setPeersLocked(kept)
 	if router != wasRouter {
 		s.router, s.routed = netip.Addr{}, false
+		// A router made where there was none owns its clients' packets from now on, since
+		// wireguard-go lets them in before IpcSet returns, and a SYN refused meanwhile ends its
+		// client's connection with a reset (#117). No other device had the ranges to send from.
+		if _, ok := s.keys[router]; ok && !wasRouter.IsValid() {
+			s.router = router
+		}
+		// A device kept out for the old router may have the role on its next packet.
+		s.refused = netip.Addr{}
 	}
 	var closing []io.Closer
 	for key, addr := range have {
@@ -838,10 +856,9 @@ func (s *Server) ownerLocked(src netip.Addr) netip.Addr {
 }
 
 func (s *Server) unpausedOwnerLocked(src netip.Addr) netip.Addr {
-	for _, addr := range s.peers {
-		if addr == src {
-			return src
-		}
+	// One lookup: cone() asks for every outgoing UDP packet, with s.mu held (#155).
+	if _, ok := s.keys[src]; ok {
+		return src
 	}
 	if s.router.IsValid() && !tunnelNet.Contains(src) {
 		for _, n := range routedNets {

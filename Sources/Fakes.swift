@@ -105,6 +105,7 @@ final class FakePage: ConfigPageServing {
     var respond: @MainActor (ConfigPage.Request, String) -> ConfigPage.Response = { _, _ in ConfigPage.notFound }
     var onChange: @MainActor () -> Void = {}
     var onFailure: @MainActor (Error) -> Void = { _ in }
+    var onRefused: @MainActor (_ client: String) -> Void = { _ in }
     private(set) var running = false
     private(set) var readyHosts: [String] = []
     var listening: Bool { !readyHosts.isEmpty }

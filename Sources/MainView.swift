@@ -119,6 +119,20 @@ struct MainView: View {
     }
 }
 
+/// Waiting for the hotspot's network doesn't distinguish off from on with no device joined.
+struct HotspotWaitingHint: View {
+    let id: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Turn on Personal Hotspot, then join it from the other device. Tether starts when the first device joins.")
+                .accessibilityIdentifier("\(id).hotspotHint")
+            HotspotSettingsLink()
+                .accessibilityIdentifier("\(id).hotspotPath")
+        }
+    }
+}
+
 /// Where Personal Hotspot is turned on, as a link to Settings.
 struct HotspotSettingsLink: View {
     var body: some View {
@@ -190,7 +204,7 @@ struct StatusCard: View {
     private var blocked: Bool { model.localNetworkDenied }
     private var look: StatusOrb.Look { sharing ? .sharing : blocked || model.running ? .problem : .waiting }
     private var title: String {
-        blocked ? "Devices can't connect" : sharing ? "Sharing" : model.running ? "Tether can't share yet" : "Turn on Personal Hotspot"
+        blocked ? "Devices can't connect" : sharing ? "Sharing" : model.running ? "Tether can't share yet" : "Waiting for a device on the hotspot"
     }
 
     /// Opens Settings at its main screen, where Personal Hotspot is near the top. Nothing goes
@@ -254,8 +268,7 @@ struct StatusCard: View {
             } else if !model.running {
                 Divider()
                 hint {
-                    HotspotSettingsLink()
-                        .accessibilityIdentifier("status.hotspotPath")
+                    HotspotWaitingHint(id: "status")
                 }
             }
         }

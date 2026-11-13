@@ -49,6 +49,9 @@ func TestParseConfig(t *testing.T) {
 		"anything after an address": configJSON(1, [][]byte{key(1)}, []string{"10.7.0.2 router"}),
 		"a repeated key":            configJSON(1, [][]byte{key(1), key(1)}, []string{"10.7.0.2", "10.7.0.3"}),
 		"a repeated address":        configJSON(1, [][]byte{key(1), key(2)}, []string{"10.7.0.2", "10.7.0.2"}),
+		"the DNS address":           configJSON(1, [][]byte{key(1)}, []string{"10.7.0.1"}),
+		"outside the tunnel":        configJSON(1, [][]byte{key(1)}, []string{"10.8.0.2"}),
+		"an IPv6 address":           configJSON(1, [][]byte{key(1)}, []string{"fd00::2"}),
 	}
 	for what, js := range refused {
 		if _, _, err := parseConfig(js); err == nil {

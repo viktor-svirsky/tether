@@ -6,13 +6,13 @@ import XCTest
 final class NormalLaunchTests: TetherUITestCase {
     func testWaitsForPersonalHotspotOnTheSimulator() {
         launch(nil)
-        XCTAssertEqual(label(of: "status.title"), "Turn on Personal Hotspot")
+        XCTAssertEqual(label(of: "status.title"), "Waiting for a device on the hotspot")
         XCTAssertEqual(label(of: "status.hotspotPath"), "Settings > Personal Hotspot > Allow Others to Join")
         assertNowhere(element("status.headline"), element("traffic.speeds"))
     }
 
     func testUnrelatedArgumentsDoNotTurnDemoOn() {
         launch(nil, arguments: ["-SomethingElse", "sharing"])
-        XCTAssertEqual(label(of: "status.title"), "Turn on Personal Hotspot")
+        XCTAssertEqual(label(of: "status.title"), "Waiting for a device on the hotspot")
     }
 }

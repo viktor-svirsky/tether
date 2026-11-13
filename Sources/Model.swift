@@ -76,7 +76,7 @@ final class Model: ObservableObject {
     /// the 1 s sampler, so it appears on time even on a screen where nothing else changes.
     @Published private(set) var expiryWarning: String?
 
-    /// For the Settings sheet, which refreshes it, see `refreshNoticePermission`.
+    /// For the Settings sheet. Refreshed each time Tether comes on screen and when Settings opens, see `refreshNoticePermission`.
     @Published private(set) var noticePermission: NoticePermission = .notAsked
     /// Where Settings saves the notification switches and the idle stop. A demo launch has its own, emptied at launch.
     let settingsDefaults: UserDefaults
@@ -242,7 +242,7 @@ final class Model: ObservableObject {
         if notifier.wouldTell { askForNotices() }
         let alarm = closedAlarm.check(now: Date(), sharing: session.sharing, on: NoticeKind.closed.isOn(in: settingsDefaults))
         if alarm != .none { poster.queue(alarm) }
-        for notice in notices { Self.append("notice: \(notice.title)") }
+        for notice in notices { Self.append(notice.logLine) }
         guard alarm != .none || !notices.isEmpty else { return }
         // An idle stop has just stopped the sound, and iOS suspends Tether soon after. Background time
         // lets the notice and the alarm's change get out first: a "Tether stopped sharing" left waiting
@@ -422,6 +422,8 @@ final class Model: ObservableObject {
             model.session.cameOnScreen()
             model.localNetworkIntro.check() // afresh, for a change made in Settings
             model.startSampler() // samples at once, then every second again
+            // Before Settings opens, or it shows "Allow notifications" for a moment (#184).
+            Task { await model.refreshNoticePermission() }
         }
         observe(UIApplication.willResignActiveNotification) { model in
             model.session.leftScreen()
@@ -449,9 +451,10 @@ final class Model: ObservableObject {
         }
     }
 
-    /// Internal log, read in Console.app, and the log Settings shares.
+    /// Internal log, read in Console.app, and the log Settings shares. The system log gets the
+    /// redacted line too, or full addresses would end up in a sysdiagnose (#162).
     private static func append(_ s: String) {
-        logger.info("\(s, privacy: .public)")
+        logger.info("\(LogRedaction.redact(s), privacy: .public)")
         debugLog.append(s)
     }
 }
