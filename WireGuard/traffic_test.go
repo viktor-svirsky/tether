@@ -603,6 +603,38 @@ func deviceStack(c *client) *stack.Stack {
 	return reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem().Interface().(*stack.Stack)
 }
 
+// connectFrom connects from the device's port to a tcpServer that sends 10 bytes and closes first,
+// and reads them. It waits while the device's own side of the last connection on that port closes.
+func connectFrom(c *client, from, to tcpip.FullAddress) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
+		conn, err := gonet.DialTCPWithBind(ctx, deviceStack(c), from, to, netProto(to))
+		if err != nil && strings.Contains(err.Error(), "in use") && ctx.Err() == nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		conn.Write([]byte("hello"))
+		if b, err := io.ReadAll(conn); len(b) != 10 {
+			return fmt.Errorf("got %d of 10 bytes: %v", len(b), err)
+		}
+		return nil
+	}
+}
+
+// netProto is a's IP version, as gVisor numbers it.
+func netProto(a tcpip.FullAddress) tcpip.NetworkProtocolNumber {
+	if a.Addr.Len() == 16 {
+		return header.IPv6ProtocolNumber
+	}
+	return header.IPv4ProtocolNumber
+}
+
 // A device connects again from a port it used a moment ago, to the same host, and gets through.
 // Devices pick ports by chance, so many short connections to one host do this within minutes.
 func TestReusingAPortRightAfterTheHostClosedConnects(t *testing.T) {
@@ -610,35 +642,13 @@ func TestReusingAPortRightAfterTheHostClosedConnects(t *testing.T) {
 	target := netip.MustParseAddrPort(tcpServer(t, 10)) // it closes first, after its 10 bytes
 	from := tcpip.FullAddress{Addr: tcpip.AddrFrom4([4]byte{10, 7, 0, 2}), Port: 40000}
 	to := tcpip.FullAddress{Addr: tcpip.AddrFrom4(target.Addr().As4()), Port: target.Port()}
-	connect := func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		for {
-			conn, err := gonet.DialTCPWithBind(ctx, deviceStack(c), from, to, header.IPv4ProtocolNumber)
-			if err != nil && strings.Contains(err.Error(), "in use") && ctx.Err() == nil {
-				time.Sleep(20 * time.Millisecond) // the device's own side of the last one is closing
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			defer conn.Close()
-			conn.SetDeadline(time.Now().Add(5 * time.Second))
-			conn.Write([]byte("hello"))
-			if b, err := io.ReadAll(conn); len(b) != 10 {
-				return fmt.Errorf("got %d of 10 bytes: %v", len(b), err)
-			}
-			return nil
-		}
-	}
-	if err := connect(); err != nil {
+	if err := connectFrom(c, from, to); err != nil {
 		t.Fatal(err)
 	}
 	// The server's side closed first, so it waits out TIME_WAIT, timeWaitTimeout rather than
-	// gVisor's 60 s. A SYN meanwhile is dropped and the device sends it again a second later. But
-	// one that is still queued when TIME_WAIT ends gets a reset: gVisor hands it only to a
-	// listening endpoint, and the forwarder isn't one (#101). So the device connects again once the
-	// server's side is gone, which must be soon.
+	// gVisor's 60 s. A SYN meanwhile is dropped and the device sends it again a second later,
+	// see TestASYNWaitingAsTimeWaitEndsIsNotReset. So the device connects again once the server's
+	// side is gone, which must be soon.
 	id := stack.TransportEndpointID{LocalAddress: to.Addr, LocalPort: to.Port, RemoteAddress: from.Addr, RemotePort: from.Port}
 	deadline := time.Now().Add(scaled(5 * time.Second))
 	for s.stack.FindTransportEndpoint(header.IPv4ProtocolNumber, tcp.ProtocolNumber, id, 1) != nil {
@@ -647,7 +657,73 @@ func TestReusingAPortRightAfterTheHostClosedConnects(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if err := connect(); err != nil {
+	if err := connectFrom(c, from, to); err != nil {
 		t.Fatalf("again from the same port: %v", err)
+	}
+}
+
+// A device reuses a port while the server's side of its last connection on it is in TIME_WAIT,
+// and its SYN still waits in that endpoint's queue when TIME_WAIT ends. gVisor then hands it only
+// to a listening endpoint and resets it otherwise, and the forwarder isn't one (#127). It must be
+// dropped like any SYN in TIME_WAIT, so the device's next one gets through. IPv6 comes from a
+// router's clients only, so that device is one.
+func TestASYNWaitingAsTimeWaitEndsIsNotReset(t *testing.T) {
+	sPriv, sPub := keyPair(t)
+	cPriv, cPub := keyPair(t)
+	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	viaLoopback(s)
+	if err := s.SetPeers([]Peer{{PublicKey: cPub, Address: netip.MustParseAddr("10.7.0.2")}}); err != nil {
+		t.Fatal(err)
+	}
+	c := newClientAt(t, s, sPub, cPriv, netip.MustParseAddr("192.168.4.20"), netip.MustParseAddr("fd12::20"))
+	target := netip.MustParseAddrPort(tcpServer(t, 10))
+	// The first connection makes the device the router, which lets its IPv6 in.
+	if _, err := fetch(t, c, target.String()); err != nil {
+		t.Fatal(err)
+	}
+	for _, ends := range [][2]tcpip.Address{
+		{tcpip.AddrFrom4([4]byte{192, 168, 4, 20}), tcpip.AddrFrom4(target.Addr().As4())},
+		{tcpip.AddrFrom16(netip.MustParseAddr("fd12::20").As16()), tcpip.AddrFrom16(netip.MustParseAddr("2001:db8::7").As16())},
+	} {
+		from := tcpip.FullAddress{Addr: ends[0], Port: 40001}
+		to := tcpip.FullAddress{Addr: ends[1], Port: target.Port()}
+		if err := connectFrom(c, from, to); err != nil {
+			t.Fatalf("from %v: %v", from.Addr, err)
+		}
+		id := stack.TransportEndpointID{LocalAddress: to.Addr, LocalPort: to.Port, RemoteAddress: from.Addr, RemotePort: from.Port}
+		var ep *tcp.Endpoint
+		deadline := time.Now().Add(scaled(5 * time.Second))
+		for ep == nil {
+			e, ok := s.stack.FindTransportEndpoint(netProto(to), tcp.ProtocolNumber, id, 1).(*tcp.Endpoint)
+			if ok && tcp.EndpointState(e.State()) == tcp.StateTimeWait {
+				ep = e
+			} else if time.Now().After(deadline) {
+				t.Fatalf("from %v: the server's side of the first connection never reached TIME_WAIT", from.Addr)
+			}
+			time.Sleep(time.Millisecond)
+		}
+		// Pausing the stack stops gVisor's TCP workers, so nothing takes a SYN out of the endpoint's
+		// queue, while TIME_WAIT's timer still fires and ends it with the SYN still in there.
+		received := &ep.Stats().(*tcp.Stats).SegmentsReceived
+		before := received.Value()
+		s.stack.Pause()
+		done := make(chan error, 1)
+		go func() { done <- connectFrom(c, from, to) }()
+		// Unfixed, the SYN is in the queue within milliseconds. Fixed, it never gets there.
+		deadline = time.Now().Add(scaled(300 * time.Millisecond))
+		for received.Value() == before && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		for tcp.EndpointState(ep.State()) == tcp.StateTimeWait {
+			time.Sleep(time.Millisecond)
+		}
+		s.stack.Resume()
+		if err := <-done; err != nil {
+			t.Errorf("again from %v: %v", from.Addr, err)
+		}
 	}
 }

@@ -360,6 +360,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	s.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &timeWait)
 	s.tun = newStackTun()
 	s.tun.ping = s.queuePing
+	s.tun.timeWait = s.synInTimeWait
 	if err := s.stack.CreateNIC(1, s.tun.ep); err != nil {
 		s.cancel()
 		return nil, fmt.Errorf("create NIC: %v", err)
@@ -1011,6 +1012,40 @@ func (s *Server) handleTCP(id stack.TransportEndpointID, pkt *stack.PacketBuffer
 	return true
 }
 
+// synInTimeWait says p is a SYN from a device port whose last connection's server side is still in
+// TIME_WAIT. gVisor drops one too, but one still in the endpoint's queue when TIME_WAIT ends gets a
+// reset, since gVisor passes it on only to a listening endpoint and the forwarder isn't one (#127).
+// Dropped before it's queued, it never gets there. The device sends it again a second later, after
+// TIME_WAIT, see timeWaitTimeout.
+func (s *Server) synInTimeWait(p []byte) bool {
+	var id stack.TransportEndpointID
+	var proto tcpip.NetworkProtocolNumber
+	var h header.TCP
+	switch {
+	case len(p) >= header.IPv4MinimumSize && p[0]>>4 == 4:
+		ip := header.IPv4(p)
+		if !ip.IsValid(len(p)) || ip.TransportProtocol() != header.TCPProtocolNumber || ip.More() || ip.FragmentOffset() != 0 {
+			return false
+		}
+		proto, h, id.LocalAddress, id.RemoteAddress = header.IPv4ProtocolNumber, ip.Payload(), ip.DestinationAddress(), ip.SourceAddress()
+	case len(p) >= header.IPv6MinimumSize && p[0]>>4 == 6:
+		// One behind extension headers is let through, as before this check.
+		ip := header.IPv6(p)
+		if !ip.IsValid(len(p)) || ip.TransportProtocol() != header.TCPProtocolNumber {
+			return false
+		}
+		proto, h, id.LocalAddress, id.RemoteAddress = header.IPv6ProtocolNumber, ip.Payload(), ip.DestinationAddress(), ip.SourceAddress()
+	default:
+		return false
+	}
+	if len(h) < header.TCPMinimumSize || h.Flags()&(header.TCPFlagSyn|header.TCPFlagAck) != header.TCPFlagSyn {
+		return false
+	}
+	id.LocalPort, id.RemotePort = h.DestinationPort(), h.SourcePort()
+	ep, ok := s.stack.FindTransportEndpoint(proto, tcp.ProtocolNumber, id, 1).(*tcp.Endpoint)
+	return ok && tcp.EndpointState(ep.State()) == tcp.StateTimeWait
+}
+
 // dialed ends an arrival: its dial is over, and its connection is open when open is true, or gone.
 // Runs with s.mu held.
 func (s *Server) dialed(id stack.TransportEndpointID, a *arrival, open bool) {
@@ -1319,6 +1354,8 @@ type stackTun struct {
 	// ping takes the devices' echo requests, which gVisor would drop, see icmp.go. Nil in tests
 	// that make a stackTun of their own.
 	ping func([]byte)
+	// timeWait says a packet is a SYN to drop, see synInTimeWait. Nil like ping.
+	timeWait func([]byte) bool
 	// dropped counts the packets for devices that found incoming full: TCP's from WriteNotify and
 	// UDP replies from inject. Tests read it to tell this loss from any other.
 	dropped atomic.Uint64
@@ -1377,6 +1414,9 @@ func (t *stackTun) Write(bufs [][]byte, offset int) (int, error) {
 		}
 		if t.ping != nil && isEchoRequest(p) {
 			t.ping(p)
+			continue
+		}
+		if t.timeWait != nil && t.timeWait(p) {
 			continue
 		}
 		pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(p)})
