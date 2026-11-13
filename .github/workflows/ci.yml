@@ -20,9 +20,33 @@ defaults:
     shell: bash # named explicitly, so steps run with pipefail and a failed build can't hide behind tail
 
 jobs:
+  # A commit goes through its issue branch, a batch branch, the release branch and main. The same
+  # commit is the same tree, so once a push run passed on any branch, the macOS job isn't run again:
+  # that was about a third of the macOS minutes, and each rerun was another chance at a flake, which
+  # on main quietly cost a release (#144). The weekly run always runs, for govulncheck.
+  passed-before:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      passed: ${{ steps.look.outputs.passed }}
+    steps:
+      - id: look
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&status=success" --jq .total_count)
+          echo "Push runs that passed on $GITHUB_SHA: $count"
+          echo "passed=$([[ $count != 0 ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: passed-before
     # A branch of this repo already runs on push, so its pull request doesn't run it a second time.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    # always(), so a pull request or the weekly run, which skip passed-before, still get here.
+    if: >-
+      always() && needs.passed-before.outputs.passed != 'true' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: macos-26
     permissions:
       contents: read
