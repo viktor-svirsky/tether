@@ -63,6 +63,9 @@ type waitingPing struct {
 	at      time.Time
 }
 
+// maxEcho is the biggest echo request, header included, that goes out.
+const maxEcho = 8192
+
 type echoRequest struct {
 	src, dst netip.Addr
 	m        header.ICMPv4
@@ -81,7 +84,9 @@ func (s *Server) handlePing(id stack.TransportEndpointID, pkt *stack.PacketBuffe
 	if len(m) < header.ICMPv4MinimumSize || m.Type() != header.ICMPv4Echo {
 		return false
 	}
-	if m.Code() != 0 {
+	// The ping socket can't send more (Darwin's net.inet.raw.maxdgram), and the queue would hold
+	// up to 256 of up to 64 KB each.
+	if m.Code() != 0 || len(m) > maxEcho {
 		return true
 	}
 	s.pings.once.Do(s.startPinging)
