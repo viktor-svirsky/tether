@@ -160,7 +160,7 @@ final class DeviceViewTests: TetherUITestCase {
         let warning = staticText("device.oldAddress") // the warning icon carries the identifier too
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
         XCTAssertEqual(warning.label, "Its config points at an old address of this iPhone, so it can't connect. Remove it, then add it again.")
-        XCTAssertTrue(element("device.remove").exists)
+        XCTAssertTrue(reveal(element("device.remove")).exists) // below the screen on an iPhone SE
         goBack(to: "Tether")
         openDevice("iPad")
         assertNowhere(element("device.oldAddress"))

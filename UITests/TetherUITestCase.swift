@@ -255,13 +255,24 @@ class TetherUITestCase: XCTestCase {
     /// `only`, when set, judges just the elements whose identifier starts with it, for a screen that is
     /// scrolled so that other texts are cut off at the edges.
     /// iOS 26 fades whatever scrolls under the navigation bar, so the audit reads a text right below it
-    /// (the first section header) as fainter than it is. Only content that reaches below the bar
-    /// counts: the bar's own title and buttons are audited as usual.
+    /// (the first section header), or one that has scrolled behind the bar, as fainter than it is. The bar's
+    /// own title and buttons are audited as usual: they are its descendants, the content is not.
     private func underBar(_ element: XCUIElement) -> Bool {
         let bar = app.navigationBars.firstMatch
         guard bar.exists else { return false }
         let frame = element.frame
-        return frame.maxY > bar.frame.maxY && frame.minY < bar.frame.maxY + 24
+        if frame.maxY > bar.frame.maxY { return frame.minY < bar.frame.maxY + 24 }
+        guard frame.intersects(bar.frame) else { return false }
+        let mine = element.identifier.isEmpty
+            ? bar.descendants(matching: .any).matching(NSPredicate(format: "label == %@", element.label))
+            : bar.descendants(matching: .any).matching(identifier: element.identifier)
+        return mine.count == 0
+    }
+
+    /// The keyboard covers the bottom of the screen, so the audit reads whatever is behind it.
+    private func underKeyboard(_ element: XCUIElement) -> Bool {
+        let keyboard = app.keyboards.firstMatch
+        return keyboard.exists && element.frame.intersects(keyboard.frame)
     }
 
     func audit(types: XCUIAccessibilityAuditType = XCUIAccessibilityAuditType.all.subtracting([.dynamicType, .textClipped]),
@@ -277,10 +288,15 @@ class TetherUITestCase: XCTestCase {
                     || Self.filledButtons.contains(element?.identifier ?? "")
                     || (element?.elementType == .button && Self.systemButtons.contains(element?.label ?? ""))
                 let offScreen = issue.auditType == .contrast
-                    && element.map { !self.app.windows.firstMatch.frame.contains($0.frame) || self.underBar($0) } ?? false
+                    && element.map { !self.app.windows.firstMatch.frame.contains($0.frame) || self.underBar($0) || self.underKeyboard($0) } ?? false
+                // Before iOS 26 the bar turns see-through grey once content scrolls under it, and its system
+                // Done or Cancel in the system tint misses the audit there. It's Apple's button on Apple's bar.
+                let systemBarButton = issue.auditType == .contrast && element?.elementType == .button
+                    && Self.systemButtons.contains(element?.label ?? "")
+                    && self.app.navigationBars.firstMatch.frame.contains(element?.frame ?? .null)
                 let known = (issue.compactDescription == "Contrast nearly passed" && (systemText || systemStyled))
                     || (underSheet && issue.compactDescription == "Potentially inaccessible text" && element == nil)
-                    || offScreen
+                    || offScreen || systemBarButton
                 if known {
                     allowed.append("\(issue.compactDescription): \(element?.label ?? "(no element)")")
                 } else {
