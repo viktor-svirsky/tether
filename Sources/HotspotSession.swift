@@ -384,6 +384,7 @@ final class HotspotSession {
     /// Opening Tether starts the wait again, so there's time to turn on Personal Hotspot in Settings.
     func cameOnScreen() {
         sceneActive = true
+        log("Tether on screen") // so a shared log shows whether a recovery waited for this (#231)
         // The background's last read, not the list from before the app left, until the sampler reads.
         if wireGuardConnected != watchedConnected { wireGuardConnected = watchedConnected }
         wake()
@@ -391,6 +392,7 @@ final class HotspotSession {
 
     func leftScreen() {
         sceneActive = false
+        log("Tether left the screen")
         addWindow.leftScreen(now: now())
         sampler.reset() // or the first speed back on screen averages the whole time away
         watchedConnected = wireGuardConnected // not a list from an earlier time away, until the next round reads
