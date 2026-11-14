@@ -72,6 +72,17 @@ final class FakeServer: WireGuardServing {
         page = hosts
     }
 
+    /// The addresses of each listen, comma-separated, see `listen(on:)`.
+    private(set) var listens: [String] = []
+    /// Thrown by every listen while set.
+    var listenError: Error?
+
+    func listen(on hosts: [String]) throws {
+        guard running else { return }
+        listens.append(hosts.joined(separator: ","))
+        if let listenError { throw listenError }
+    }
+
     func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream) throws {
         guard running else { return }
         if let refusedAddress, setup.serverPeers.contains(where: { $0.address == refusedAddress }) { throw Refused() }
@@ -151,6 +162,14 @@ final class FakeSound: KeepAliveSound {
     /// Started, but iOS gives it no sound.
     var silent = false
     var sounding: Bool { playing && !silent }
+    /// A call holds the audio now.
+    var interrupted = false
+    /// A call came and went since the last round asked.
+    var interruptedSinceTaken = false
+    func takeInterruption() -> Bool {
+        defer { interruptedSinceTaken = false }
+        return interrupted || interruptedSinceTaken
+    }
     func start() { playing = true }
     func stop() { playing = false }
 }

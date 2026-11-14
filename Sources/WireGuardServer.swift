@@ -73,6 +73,14 @@ final class WireGuardServer {
         if let message = take(error) { throw Failure(message: message) }
     }
 
+    /// Listens on `hosts` instead, on the same port, keeping every device's session. On an error it
+    /// keeps listening where it did, and Go retries that by itself if it couldn't.
+    func listen(on hosts: [String]) throws {
+        guard running else { return }
+        let error = hosts.joined(separator: ",").withCString { TetherWGListenOn(UnsafeMutablePointer(mutating: $0)) }
+        if let message = take(error) { throw Failure(message: message) }
+    }
+
     /// Opens the config page to the devices on exactly `hosts`, where its listener is ready now (#27).
     /// Stopped, there's nothing to tell: a start opens it nowhere. Go refuses only an address that
     /// isn't one, which is logged, and then opens it nowhere.

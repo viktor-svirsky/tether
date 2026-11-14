@@ -3,10 +3,19 @@ import XCTest
 
 final class FormatTests: XCTestCase {
     func testSpeedUsesTheUnitOfASpeedTest() {
-        XCTAssertEqual(Format.speed(0), "0 bit/s")
-        XCTAssertEqual(Format.speed(999), "999 bit/s")
-        XCTAssertEqual(Format.speed(400_000), "400 kbit/s")
-        XCTAssertEqual(Format.speed(3_200_000), "3.2 Mbit/s")
+        let us = Locale(identifier: "en_US")
+        XCTAssertEqual(Format.speed(0, locale: us), "0 bit/s")
+        XCTAssertEqual(Format.speed(999, locale: us), "999 bit/s")
+        XCTAssertEqual(Format.speed(400_000, locale: us), "400 kbit/s")
+        XCTAssertEqual(Format.speed(3_200_000, locale: us), "3.2 Mbit/s")
+    }
+
+    /// The region decides the decimal separator, as it does for sizes, so "3,12 GB" and "3.2 Mbit/s"
+    /// don't sit on one screen (#177).
+    func testSpeedUsesTheRegionsNumberFormat() {
+        let germany = Locale(identifier: "de_DE")
+        XCTAssertEqual(Format.speed(3_200_000, locale: germany), "3,2 Mbit/s")
+        XCTAssertEqual(Format.speed(400_000, locale: germany), "400 kbit/s")
     }
 
     func testBytesAreReadable() {

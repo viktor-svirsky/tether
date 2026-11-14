@@ -85,6 +85,31 @@ func TetherWGStop() {
 	s.Close()
 }
 
+// TetherWGListenOn listens on hosts, a comma-separated list, instead, on the same port, and keeps
+// every device's session (#219). Returns nil, or an error message.
+//
+//export TetherWGListenOn
+func TetherWGListenOn(hosts *C.char) (result *C.char) {
+	defer survive(&result)
+	mu.Lock()
+	defer mu.Unlock()
+	if hosts == nil {
+		return C.CString("no address")
+	}
+	if server == nil {
+		return C.CString("not running")
+	}
+	var addrs []netip.Addr
+	for _, h := range strings.Split(C.GoString(hosts), ",") {
+		addr, err := netip.ParseAddr(h)
+		if err != nil {
+			return cerr(err)
+		}
+		addrs = append(addrs, addr)
+	}
+	return cerr(server.ListenOn(addrs))
+}
+
 // TetherWGConfigure lets in exactly the devices in a JSON configMessage. Returns nil, or an error
 // message.
 //

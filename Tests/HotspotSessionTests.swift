@@ -184,6 +184,49 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(server.starts, ["\(hotspot),\(v6)", hotspot])
     }
 
+    /// On an IPv6-only carrier the hotspot comes back with 172.20.10.1 before its IPv6 address. Tether
+    /// listens on the IPv6 address too once it shows up, with no restart, so the devices keep their
+    /// sessions (#219). Everything a device is given then points at the IPv6 address.
+    func testAnIPv6AddressThatShowsUpLaterIsListenedOnWithoutARestart() {
+        makeSession()
+        let v6 = "2607:fb91:88a2:e822::a"
+        address = hotspot
+        session.syncWithHotspot()
+        var changes = 0
+        session.willChange = { changes += 1 }
+        address = v6
+        session.syncWithHotspot()
+        XCTAssertGreaterThan(changes, 0, "the screen shows the new addresses")
+        XCTAssertEqual(server.starts, [hotspot], "no restart")
+        XCTAssertEqual(server.listens, ["\(hotspot),\(v6)"])
+        XCTAssertTrue(server.running)
+        XCTAssertEqual(page.starts.last, "\(hotspot),\(v6):80")
+        XCTAssertEqual(session.pageHosts, [hotspot, v6])
+        XCTAssertEqual(session.deviceHost, v6)
+        session.syncWithHotspot()
+        XCTAssertEqual(server.listens.count, 1, "once")
+    }
+
+    /// An IPv6 address the server can't listen on yet doesn't restart it, which would fail on that
+    /// address too and drop every device. It keeps 172.20.10.1 and tries again each round.
+    func testAnIPv6AddressThatCantBeListenedOnYetIsTriedAgainWithoutARestart() {
+        makeSession()
+        let v6 = "2607:fb91:88a2:e822::a"
+        address = hotspot
+        session.syncWithHotspot()
+        server.listenError = FakeServer.Failure()
+        address = v6
+        session.syncWithHotspot()
+        session.syncWithHotspot()
+        XCTAssertEqual(server.starts, [hotspot], "no restart")
+        XCTAssertEqual(server.listens.count, 2, "tried each round")
+        XCTAssertEqual(session.pageHosts, [hotspot])
+        server.listenError = nil
+        session.syncWithHotspot()
+        XCTAssertEqual(server.starts, [hotspot])
+        XCTAssertEqual(session.pageHosts, [hotspot, v6])
+    }
+
     /// A config for 172.20.10.1 keeps working through a new IPv6 address, and back on a usual carrier.
     /// One for the old IPv6 address doesn't.
     func testAConfigFor172_20_10_1NeverNeedsANewOne() throws {
@@ -1316,6 +1359,10 @@ final class HotspotSessionTests: XCTestCase {
         var onScreen: Bool
         var hotspot = false
         var wake = false
+        /// A call, Siri or an alarm holds the audio.
+        var call = false
+        /// One came and went since the last round, with no round in between.
+        var callEnded = false
         var plays: Bool
         var line: UInt = #line
     }
@@ -1326,6 +1373,8 @@ final class HotspotSessionTests: XCTestCase {
             now = minutes(round.minute)
             address = round.hotspot ? hotspot : nil
             session.sceneActive = round.onScreen
+            sound.interrupted = round.call
+            sound.interruptedSinceTaken = round.callEnded
             if round.wake { session.wake() } else { session.syncWithHotspot() }
             XCTAssertEqual(sound.playing, round.plays, line: round.line)
         }
@@ -1360,6 +1409,32 @@ final class HotspotSessionTests: XCTestCase {
             SoundRound(minute: 70.9, onScreen: false, plays: true),
             SoundRound(minute: 71, onScreen: false, plays: false),
             SoundRound(minute: 80, onScreen: false, hotspot: true, plays: true), // the hotspot back, a device joined
+        ])
+    }
+
+    /// A call can take the hotspot away for as long as it lasts. The 10 minutes run from the call's
+    /// end, so a long call doesn't leave Tether suspended, with its devices cut off until someone
+    /// opens it (#191).
+    func testTheTenMinutesRunFromTheEndOfACall() {
+        run([
+            SoundRound(minute: 0, onScreen: false, hotspot: true, plays: true),
+            SoundRound(minute: 1, onScreen: false, call: true, plays: true), // the call takes the hotspot
+            SoundRound(minute: 20, onScreen: false, call: true, plays: true),
+            SoundRound(minute: 21, onScreen: false, plays: true), // the call is over, no device back yet
+            SoundRound(minute: 29.9, onScreen: false, plays: true), // 10 minutes from the last round in the call
+            SoundRound(minute: 30, onScreen: false, plays: false),
+        ])
+    }
+
+    /// A call that started and ended with no watcher round in between, while iOS held Tether back
+    /// say, still counts: the 10 minutes run from the first round after it.
+    func testACallBetweenTwoRoundsStillCounts() {
+        run([
+            SoundRound(minute: 0, onScreen: false, hotspot: true, plays: true),
+            SoundRound(minute: 1, onScreen: false, plays: true), // the hotspot goes
+            SoundRound(minute: 30, onScreen: false, callEnded: true, plays: true),
+            SoundRound(minute: 39.9, onScreen: false, plays: true),
+            SoundRound(minute: 40, onScreen: false, plays: false),
         ])
     }
 
