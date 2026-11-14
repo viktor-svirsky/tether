@@ -688,6 +688,15 @@ final class HotspotSessionTests: XCTestCase {
         ])
     }
 
+    /// A shared log shows whether a recovery happened in the background or after Tether was opened (#231).
+    func testComingOnScreenAndLeavingItAreLogged() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        session.leftScreen()
+        session.cameOnScreen()
+        XCTAssertEqual(logged.filter { $0.hasPrefix("Tether ") }, ["Tether left the screen", "Tether on screen"])
+    }
+
     func testAProblemIsLoggedOnceNotEveryRound() {
         var logged: [String] = []
         makeSession(log: { logged.append($0) })
