@@ -192,7 +192,7 @@ jobs:
         run: |
           out=$RUNNER_TEMP/out
           {
-              echo "Unsigned. Sign it with SideStore, AltStore, Feather or your own certificate, see the [README](https://github.com/$GITHUB_REPOSITORY#install-tether-on-your-iphone)."
+              echo "Unsigned. Sign it with SideStore, AltStore, Feather or your own certificate, see the [install guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/GUIDE.md#install)."
               echo
               echo "Using SideStore or AltStore? [Add the source in one tap](https://$GITHUB_REPOSITORY_OWNER.github.io/${GITHUB_REPOSITORY#*/}/add/) and get every update there."
               echo
