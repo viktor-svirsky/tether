@@ -89,6 +89,60 @@ final class AddDeviceProgressTests: XCTestCase {
         XCTAssertEqual(DeviceName.toSave(typed: "ipad", current: "iPad"), "ipad")
     }
 
+    /// Saving cuts a name to 40 characters, so the name is compared as it would be saved. Text
+    /// added past 40 changes nothing, and a save then could only report a failure.
+    func testANameIsComparedAsItWouldBeSaved() {
+        let forty = String(repeating: "x", count: 40)
+        XCTAssertNil(DeviceName.toSave(typed: forty + " more", current: forty))
+        XCTAssertEqual(DeviceName.toSave(typed: String(repeating: "y", count: 50), current: "iPad"), String(repeating: "y", count: 40))
+        XCTAssertEqual(DeviceName.saved("  Kitchen iPad "), "Kitchen iPad")
+    }
+
+    // MARK: the naming step, which stays with its device
+
+    private func connected(_ peers: [WireGuardSetup.Peer] = []) -> AddDeviceProgress {
+        progress(peers: peers.isEmpty ? [laptop] : peers, connected: [laptop.address], hotspotOn: true)
+    }
+
+    func testTheNamingStepStartsWhenTheDeviceConnectsWithItsName() {
+        var naming = AddDeviceNaming()
+        naming.follow(progress(peers: [laptop], hotspotOn: true))
+        XCTAssertNil(naming.device, "not before it connects")
+        naming.follow(connected())
+        XCTAssertEqual(naming.device, laptop.id)
+        XCTAssertEqual(naming.draft, "Device")
+    }
+
+    /// Its tunnel dropping and coming back neither ends the step nor resets what was typed.
+    func testADisconnectKeepsTheStepAndTheDraft() {
+        var naming = AddDeviceNaming()
+        naming.follow(connected())
+        naming.draft = "Living room"
+        naming.follow(progress(peers: [laptop], hotspotOn: true))
+        XCTAssertEqual(naming.device, laptop.id, "still naming it while its tunnel is down")
+        naming.follow(connected())
+        XCTAssertEqual(naming.draft, "Living room", "not reset when it connects again")
+    }
+
+    /// A close while its tunnel is down still saves the name.
+    func testTheDraftSavesWhileTheTunnelIsDown() throws {
+        var naming = AddDeviceNaming()
+        naming.follow(connected())
+        naming.draft = " Living room "
+        let change = try XCTUnwrap(naming.change(in: [ipad, laptop]))
+        XCTAssertEqual(change.id, laptop.id)
+        XCTAssertEqual(change.name, "Living room")
+    }
+
+    func testNothingToSaveWithoutAChangeOrADevice() {
+        var naming = AddDeviceNaming()
+        XCTAssertNil(naming.change(in: [laptop]), "no step yet")
+        naming.follow(connected())
+        XCTAssertNil(naming.change(in: [laptop]), "the name it has")
+        naming.draft = "Living room"
+        XCTAssertNil(naming.change(in: [ipad]), "removed meanwhile")
+    }
+
     // MARK: what VoiceOver hears (#175)
 
     /// The steps tick off by themselves, so VoiceOver says so without the person moving focus.

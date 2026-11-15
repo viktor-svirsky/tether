@@ -16,9 +16,9 @@ struct AddDeviceSheet: View {
     /// Which way the device gets its config: a phone or tablet scans, a computer or a travel router
     /// gets the file (#171).
     @State private var kind = Kind.phone
-    /// The name typed for the device once it connects, saved when the sheet closes.
-    @State private var name = ""
-    @FocusState private var naming: Bool
+    /// The device's name, typed once it connects and saved when the sheet closes.
+    @State private var naming = AddDeviceNaming()
+    @FocusState private var nameFocused: Bool
     /// Selects the name when the field starts editing, once, see `SelectsAllOnEdit`.
     @State private var selectsName = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -92,7 +92,7 @@ struct AddDeviceSheet: View {
                     .padding(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 18))
                     .background(Self.card)
 
-                    if progress.finished {
+                    if naming.device != nil {
                         connected
                     }
                 }
@@ -107,7 +107,7 @@ struct AddDeviceSheet: View {
             // room under the scrolling content (#173).
             .safeAreaPadding(.bottom, Self.nameBoxRoom)
             .safeAreaInset(edge: .bottom) {
-                if progress.finished {
+                if naming.device != nil {
                     Button(action: finish) {
                         Text("Done").font(.headline).frame(maxWidth: .infinity)
                     }
@@ -148,19 +148,22 @@ struct AddDeviceSheet: View {
                 if let text = new.announcement(after: old) { AccessibilityNotification.Announcement(text).post() }
             }
             .onChange(of: progress.keepsScreenAwake) { _, awake in UIApplication.shared.isIdleTimerDisabled = awake }
-            // The keyboard comes up with the name it got, selected, so typing replaces it.
-            .onChange(of: progress.finished, initial: true) { _, finished in
-                guard finished, let device = self.progress.device else { return }
-                name = device.name
-                selectsName = true
-                naming = true
+            // The first time it connects, the keyboard comes up with the name it got, selected, so
+            // typing replaces it. Its tunnel dropping after that leaves the step as it is.
+            .onChange(of: progress, initial: true) { _, progress in
+                guard naming.device == nil else { return }
+                naming.follow(progress)
+                if naming.device != nil {
+                    selectsName = true
+                    nameFocused = true
+                }
             }
             .modifier(SelectsAllOnEdit(pending: $selectsName))
             // Claimed: its file now holds a key that works.
             .onChange(of: progress.device != nil) { _, claimed in if claimed { ReadyCode.forget() } }
             .onDisappear {
                 // Closed another way than Done keeps what was typed too.
-                saveName()
+                _ = saveName()
                 ReadyCode.forget()
                 model.closeAddWindow()
                 UIApplication.shared.isIdleTimerDisabled = false
@@ -185,16 +188,23 @@ struct AddDeviceSheet: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+            // Above the field, so the keyboard doesn't cover it. The draft stays to try again.
+            if let problem = nameProblem {
+                WarningLabel(problem)
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("add.nameProblem")
+            }
             VStack(alignment: .leading, spacing: 6) {
                 // The field says Name to VoiceOver itself.
                 Text("Name")
                     .font(.subheadline.weight(.semibold))
                     .accessibilityHidden(true)
-                TextField("Name", text: $name)
+                TextField("Name", text: $naming.draft)
                     .textInputAutocapitalization(.words)
                     .autocorrectionDisabled()
                     .submitLabel(.done)
-                    .focused($naming)
+                    .focused($nameFocused)
                     .onSubmit(finish)
                     // The prompt alone isn't the label once the field holds a name.
                     .accessibilityLabel("Name")
@@ -213,17 +223,24 @@ struct AddDeviceSheet: View {
     /// The name box's padding under the text, and the space between the box and Done.
     private static let nameBoxRoom: CGFloat = 12 + 16
 
-    /// Done: saves the name and closes.
+    /// Done: saves the name and closes, or stays with the draft when it couldn't be saved.
     private func finish() {
-        saveName()
-        dismiss()
+        if saveName() { dismiss() }
     }
 
-    /// Only a change is saved, see `DeviceName.toSave`.
-    private func saveName() {
-        guard progress.finished, let device = progress.device,
-              let new = DeviceName.toSave(typed: name, current: device.name) else { return }
-        model.renameWireGuardDevice(device.id, to: new)
+    /// True when the name saved or there was nothing to save, see `AddDeviceNaming.change`. A failed
+    /// save keeps the old name and says why, on the device's screen too.
+    private func saveName() -> Bool {
+        guard let change = naming.change(in: model.wireGuardPeers) else { return true }
+        model.renameWireGuardDevice(change.id, to: change.name)
+        guard let problem = model.wireGuardDeviceProblem, problem.device == change.id else { return true }
+        AccessibilityNotification.Announcement(problem.text).post()
+        return false
+    }
+
+    /// Why the device's name couldn't be saved.
+    private var nameProblem: String? {
+        model.wireGuardDeviceProblem.flatMap { $0.device == naming.device ? $0.text : nil }
     }
 
     private static var card: some View {

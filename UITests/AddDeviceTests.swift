@@ -247,6 +247,27 @@ final class AddDeviceTests: TetherUITestCase {
         assertNowhere(element("device.iPad"))
     }
 
+    /// A name that can't be saved says so in the sheet, which stays open with what was typed, to try
+    /// again. Closing it keeps the old name, and the device's screen says why.
+    func testANameThatCantBeSavedSaysSoAndKeepsTheSheetOpen() {
+        launch(.addDeviceDoneUnsaved)
+        let field = app.textFields["add.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        waitUntilStill(field)
+        field.typeText("Living room")
+        element("add.done").tap()
+        let problem = staticText("add.nameProblem") // the warning icon carries the identifier too
+        XCTAssertTrue(problem.waitForExistence(timeout: 5))
+        XCTAssertEqual(problem.label, "The new name couldn't be saved.")
+        XCTAssertTrue(element("add.step1").exists, "the sheet stays open")
+        XCTAssertEqual(field.value as? String, "Living room", "what was typed stays")
+        element("add.close").tap()
+        waitUntilGone(element("add.step1"))
+        openDevice("iPad")
+        XCTAssertEqual(staticText("device.problem").label, "The new name couldn't be saved.")
+    }
+
     /// The keyboard's Done saves and closes too.
     func testTheKeyboardsDoneSavesTheName() {
         launch(.addDeviceDone)

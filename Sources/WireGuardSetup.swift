@@ -208,9 +208,9 @@ struct WireGuardSetup: Codable, Equatable {
         return "\(base) \(number)"
     }
 
-    /// A blank name leaves the old one. A long one is cut to 40 characters, which still fits a list row.
+    /// A blank name leaves the old one. A long one is cut, see `DeviceName.saved`.
     mutating func renamePeer(_ id: Peer.ID, to name: String) {
-        let trimmed = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        let trimmed = DeviceName.saved(name)
         guard !trimmed.isEmpty, let i = peers.firstIndex(where: { $0.id == id }) else { return }
         peers[i].name = trimmed
     }
