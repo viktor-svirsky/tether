@@ -791,6 +791,37 @@ func TestAHalfClosedConnectionEndsWhenItsDeviceLeaves(t *testing.T) {
 	drained(t, s, netip.MustParseAddr("10.7.0.2"), "the device left after half-closing")
 }
 
+// A device that leaves in the middle of a download, like a laptop that closes its lid while a
+// torrent runs. Keepalive never fires while data waits for the device's ack, so gVisor kept
+// resending and held the connection's buffers for minutes. Once its session is over, the
+// connections close (#149).
+func TestAStalledDownloadEndsWhenItsDevicesSessionEnds(t *testing.T) {
+	s, c := setup(t)
+	target := farEnd(t, func(conn *net.TCPConn) {
+		chunk := make([]byte, 32<<10)
+		for {
+			if _, err := conn.Write(chunk); err != nil {
+				return
+			}
+		}
+	})
+	conn := connect(t, c, target)
+	if _, err := io.ReadFull(conn, make([]byte, 64<<10)); err != nil {
+		t.Fatal("the download never started:", err)
+	}
+	c.dev.Down()
+	s.readHandshakes()
+	if s.leftOver(netip.MustParseAddr("10.7.0.2")) == "" {
+		t.Fatal("the connection closed while the session was still on")
+	}
+	later := time.Now().Add(onlineWithin + time.Second)
+	s.mu.Lock()
+	s.now = func() time.Time { return later }
+	s.mu.Unlock()
+	s.readHandshakes()
+	drained(t, s, netip.MustParseAddr("10.7.0.2"), "the device's session ended in the middle of a download")
+}
+
 // rawSYN is a device's SYN from src to dst, as wireguard-go hands it to the stack.
 func rawSYN(src, dst netip.AddrPort) []byte {
 	b := make([]byte, header.IPv4MinimumSize+header.TCPMinimumSize)

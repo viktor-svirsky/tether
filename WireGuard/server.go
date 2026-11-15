@@ -756,7 +756,6 @@ func (s *Server) readHandshakes() {
 		}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	shaken := map[netip.Addr]time.Time{}
 	where := map[netip.Addr]string{}
 	for key, addr := range s.peers {
@@ -769,6 +768,22 @@ func (s *Server) readHandshakes() {
 	}
 	s.shaken = shaken
 	s.endpoints = where
+	// A device whose session ended can't take or send anything more, so its connections only hold
+	// memory. Keepalive finds an idle one, but it waits while data waits for the device's ack, so a
+	// device gone mid-download kept its connections and their full send buffers while gVisor resent
+	// for minutes (#149). A live device that stopped reading still handshakes, so it keeps them.
+	var closing []io.Closer
+	for addr, set := range s.flows {
+		if at, ok := shaken[addr]; ok && s.now().Sub(at) > onlineWithin {
+			for c := range set {
+				closing = append(closing, c)
+			}
+		}
+	}
+	s.mu.Unlock()
+	for _, c := range closing {
+		c.Close()
+	}
 }
 
 // forwardable says whether a device may reach dst through the iPhone, by the address alone. The
