@@ -791,6 +791,64 @@ func TestAHalfClosedConnectionEndsWhenItsDeviceLeaves(t *testing.T) {
 	drained(t, s, netip.MustParseAddr("10.7.0.2"), "the device left after half-closing")
 }
 
+// A device that leaves in the middle of a download, like a laptop that closes its lid while a
+// torrent runs. Keepalive never fires while data waits for the device's ack, so gVisor kept
+// resending and held the connection's buffers for minutes. Once its session is over, the
+// connections close (#149).
+func TestAStalledDownloadEndsWhenItsDevicesSessionEnds(t *testing.T) {
+	s, c := setup(t)
+	target := farEnd(t, func(conn *net.TCPConn) {
+		chunk := make([]byte, 32<<10)
+		for {
+			if _, err := conn.Write(chunk); err != nil {
+				return
+			}
+		}
+	})
+	conn := connect(t, c, target)
+	if _, err := io.ReadFull(conn, make([]byte, 64<<10)); err != nil {
+		t.Fatal("the download never started:", err)
+	}
+	c.dev.Down()
+	at := time.Now()
+	setNow := func(d time.Duration) {
+		s.mu.Lock()
+		s.now = func() time.Time { return at.Add(d) }
+		s.mu.Unlock()
+	}
+	// Read every handshakeEvery, the way the refresher does, until the session is over.
+	for d := time.Duration(0); d < sessionOver+handshakeEvery; d += handshakeEvery {
+		setNow(d)
+		s.readHandshakes()
+		if d < sessionOver-handshakeEvery && s.leftOver(netip.MustParseAddr("10.7.0.2")) == "" {
+			t.Fatalf("the connection closed %v after the device left, while its session could still be on", d)
+		}
+	}
+	drained(t, s, netip.MustParseAddr("10.7.0.2"), "the device's session ended in the middle of a download")
+}
+
+// After Tether was suspended, a phone call say, every handshake is older than a session, and the
+// devices haven't had a chance to make a new one. Their connections stay (#149).
+func TestASuspensionDoesntCloseTheDevicesConnections(t *testing.T) {
+	s, c := setup(t)
+	target := farEnd(t, func(conn *net.TCPConn) { io.Copy(conn, conn) })
+	conn := connect(t, c, target)
+	s.readHandshakes()
+	later := time.Now().Add(sessionOver + time.Minute)
+	s.mu.Lock()
+	s.now = func() time.Time { return later }
+	s.mu.Unlock()
+	s.readHandshakes()
+	time.Sleep(200 * time.Millisecond) // a close would have reset it by now
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Write([]byte("still here")); err != nil {
+		t.Fatal("the first read after a suspension closed a live device's connection:", err)
+	}
+	if _, err := io.ReadFull(conn, make([]byte, 10)); err != nil {
+		t.Fatal("the first read after a suspension closed a live device's connection:", err)
+	}
+}
+
 // rawSYN is a device's SYN from src to dst, as wireguard-go hands it to the stack.
 func rawSYN(src, dst netip.AddrPort) []byte {
 	b := make([]byte, header.IPv4MinimumSize+header.TCPMinimumSize)

@@ -100,6 +100,9 @@ const (
 	// WireGuard makes a new one every 2 minutes while packets flow, and the client config's
 	// PersistentKeepalive keeps them flowing on an idle tunnel.
 	onlineWithin = 3 * time.Minute
+	// sessionOver is how long without a handshake the server watched before it closes a device's
+	// connections: WireGuard's sessions last 3 minutes, plus room for a late rekey (#149).
+	sessionOver = onlineWithin + 30*time.Second
 	// localEvery is how often the iPhone's own addresses are read again, see refreshLocal. So a VPN
 	// that comes up, or a new cellular address, is out of the devices' reach within it.
 	localEvery = 5 * time.Second
@@ -223,16 +226,19 @@ type Server struct {
 	candidate netip.Addr
 	// refused is the last device kept from the router's role because the router was online, and
 	// when. It isn't looked at again for handshakeEvery, so its dropped packets cost no status reads.
-	refused      netip.Addr
-	refusedAt    time.Time
-	shaken       map[netip.Addr]time.Time              // tunnel address -> when its last handshake was
-	endpoints    map[netip.Addr]string                 // tunnel address -> where it last connected from, ip:port
-	knocks       knocks                                // handshakes from configs that no longer work, see stale.go
-	traffic      map[netip.Addr]*traffic               // each device's bytes, see trafficOfLocked
-	flows        map[netip.Addr]map[io.Closer]struct{} // open connections, to close a removed device's
-	cones        map[netip.AddrPort]*cone              // UDP, by device port, see udp.go
-	conesOf      map[netip.Addr]int                    // how many cones each device has
-	conesRunning sync.WaitGroup
+	refused   netip.Addr
+	refusedAt time.Time
+	shaken    map[netip.Addr]time.Time // tunnel address -> when its last handshake was
+	// readAt is when readHandshakes last ran, and watchingSince when its reads started coming every
+	// handshakeEvery again, after a suspension or a clock jump. See sessionOver.
+	readAt, watchingSince time.Time
+	endpoints             map[netip.Addr]string                 // tunnel address -> where it last connected from, ip:port
+	knocks                knocks                                // handshakes from configs that no longer work, see stale.go
+	traffic               map[netip.Addr]*traffic               // each device's bytes, see trafficOfLocked
+	flows                 map[netip.Addr]map[io.Closer]struct{} // open connections, to close a removed, paused or gone device's
+	cones                 map[netip.AddrPort]*cone              // UDP, by device port, see udp.go
+	conesOf               map[netip.Addr]int                    // how many cones each device has
+	conesRunning          sync.WaitGroup
 	// arriving holds the TCP connections between their SYN and the end of their dial, see
 	// handleTCP. dials and conns count each device's, see maxDials and maxConns.
 	forwarder *tcp.Forwarder
@@ -757,7 +763,6 @@ func (s *Server) readHandshakes() {
 		}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	shaken := map[netip.Addr]time.Time{}
 	where := map[netip.Addr]string{}
 	for key, addr := range s.peers {
@@ -770,6 +775,40 @@ func (s *Server) readHandshakes() {
 	}
 	s.shaken = shaken
 	s.endpoints = where
+	// A device whose session ended can't take or send anything more, so its connections only hold
+	// memory. Keepalive finds an idle one, but it waits while data waits for the device's ack, so a
+	// device gone mid-download kept its connections and their full send buffers while gVisor resent
+	// for minutes (#149). A live device that stopped reading still handshakes, so it keeps them.
+	// Only time the server watched counts: after Tether was suspended, or the clock jumped, every
+	// handshake looks old until the devices had a chance to make a new one. Handshake times are wall
+	// clock only, so the gap is too: a monotonic reading would miss the wall clock jumping ahead, and
+	// on Darwin it doesn't count the time the iPhone slept.
+	now := s.now().Round(0)
+	if now.Sub(s.readAt) > 2*handshakeEvery || now.Before(s.readAt) {
+		s.watchingSince = now
+	}
+	s.readAt = now
+	var closing []io.Closer
+	var gone []string
+	for addr, set := range s.flows {
+		at, ok := shaken[addr]
+		if at.Before(s.watchingSince) {
+			at = s.watchingSince
+		}
+		if ok && now.Sub(at) > sessionOver && len(set) > 0 {
+			gone = append(gone, fmt.Sprintf("%v (%d)", addr, len(set)))
+			for c := range set {
+				closing = append(closing, c)
+			}
+		}
+	}
+	s.mu.Unlock()
+	for _, c := range closing {
+		c.Close()
+	}
+	if len(gone) > 0 {
+		s.notice("closed the connections of %s: no handshake for %v", strings.Join(gone, ", "), sessionOver)
+	}
 }
 
 // forwardable says whether a device may reach dst through the iPhone, by the address alone. The
@@ -880,7 +919,7 @@ func (s *Server) unpausedOwnerLocked(src netip.Addr) netip.Addr {
 	return netip.Addr{}
 }
 
-// track keeps a connection's sockets so SetPeers and Close can close them. The returned func
+// track keeps a connection's sockets so SetPeers, Close and readHandshakes can close them. The returned func
 // forgets them. ok is false when the server is closing, or src no longer belongs to device under
 // the key that asked for the connection: SetPeers changed the devices while it was being made,
 // after it closed the ones it knew about. The key matters when an address changes hands, since the
