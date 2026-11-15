@@ -218,14 +218,23 @@ private struct NoticeSwitch: View {
 }
 
 /// The system's notification center, for `NoticePoster`. Each notice shows at once. While Tether is
-/// on screen iOS shows none, since nothing here asks it to.
+/// on screen it shows none: the screen says the same.
 @MainActor
-final class SystemNoticeCenter: NoticeCenter {
+final class SystemNoticeCenter: NSObject, NoticeCenter, UNUserNotificationCenterDelegate {
     private let center = UNUserNotificationCenter.current()
     private let log: @MainActor (String) -> Void
 
     init(log: @escaping @MainActor (String) -> Void) {
         self.log = log
+        super.init()
+        center.delegate = self
+    }
+
+    /// iOS asks this when it thinks Tether is in front. Right after Tether leaves the screen it still
+    /// does, and with no answer it dropped a notice posted then (#235). Only an active app keeps it quiet.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        await UIApplication.shared.applicationState == .active ? [] : [.banner, .list, .sound]
     }
 
     func permission() async -> NoticePermission {
