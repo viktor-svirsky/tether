@@ -127,17 +127,69 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertTrue(text(containing: "Windows PC has it").exists)
         XCTAssertEqual(label(of: "add.step3.mark"), "Waiting")
         XCTAssertTrue(text(containing: "Waiting for Windows PC to connect").exists)
-        assertNowhere(element("add.qr"), element("add.kind"), element("add.done"), element("add.result"))
+        assertNowhere(element("add.qr"), element("add.kind"), element("add.done"), element("add.result"), element("add.name"))
     }
 
-    func testOnceItConnectsDoneClosesTheSheet() {
+    /// Once it connects, the sheet asks for its name, with the keyboard up and the name it got
+    /// selected (#173). Done without typing keeps that name.
+    func testOnceItConnectsDoneClosesTheSheet() throws {
         launch(.addDeviceDone)
         XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
         XCTAssertEqual(label(of: "add.step3.mark"), "Done")
-        XCTAssertEqual(label(of: "add.result"), "iPad is connected")
+        XCTAssertEqual(label(of: "add.result"), "Connected")
+        let field = app.textFields["add.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.label, "Name")
+        XCTAssertEqual(field.value as? String, "iPad")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "the keyboard is up for the name")
+        assertNowhere(text(containing: "rename it"), message: "it's named here now")
+        try audit(only: "add.")
         element("add.done").tap()
         waitUntilGone(element("add.step1"))
         XCTAssertTrue(reveal(element("device.iPad")).exists)
+    }
+
+    /// What's typed replaces the name, since it's selected, and Done saves it.
+    func testANameTypedOnceItConnectsIsSaved() {
+        launch(.addDeviceDone)
+        let field = app.textFields["add.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        waitUntilStill(field)
+        field.typeText("Living room")
+        XCTAssertEqual(field.value as? String, "Living room", "the name it had was selected and replaced")
+        element("add.done").tap()
+        waitUntilGone(element("add.step1"))
+        XCTAssertTrue(reveal(element("device.Living room")).exists)
+        assertNowhere(element("device.iPad"))
+    }
+
+    /// The keyboard's Done saves and closes too.
+    func testTheKeyboardsDoneSavesTheName() {
+        launch(.addDeviceDone)
+        let field = app.textFields["add.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        waitUntilStill(field)
+        field.typeText("Kitchen\n")
+        waitUntilGone(element("add.step1"))
+        XCTAssertTrue(reveal(element("device.Kitchen")).exists)
+    }
+
+    /// At the largest text size the name field and Done stay reachable over the keyboard.
+    func testTheNameFieldWorksAtTheLargestTextSize() throws {
+        launch(.addDeviceDone, arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
+        let field = app.textFields["add.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        waitUntilStill(field)
+        XCTAssertTrue(field.isHittable, "the field scrolls above the keyboard")
+        XCTAssertTrue(element("add.done").isHittable)
+        try audit(types: [.textClipped], only: "add.")
+        field.typeText("Den")
+        element("add.done").tap()
+        waitUntilGone(element("add.step1"))
+        XCTAssertTrue(reveal(element("device.Den"), maxSwipes: 30).exists)
     }
 
     /// The devices it has still connect, so it's sharing. Only the next device has to wait.

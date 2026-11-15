@@ -6,7 +6,8 @@ import SwiftUI
 /// was ready when it opened, see `AddDeviceProgress`. The page and the connected list keep up only
 /// while Tether is on screen, so in the background the steps wait, and they catch up when it's back.
 /// The code works only while the sheet is on screen and for 10 minutes after, see
-/// `AddWindow`, so opening it after that shows a new code.
+/// `AddWindow`, so opening it after that shows a new code. Once the device connects, it asks for
+/// its name, filled with the one it got ("Device 2") and selected, so typing replaces it (#173).
 struct AddDeviceSheet: View {
     @ObservedObject var model: Model
     @Environment(\.dismiss) private var dismiss
@@ -15,6 +16,11 @@ struct AddDeviceSheet: View {
     /// Which way the device gets its config: a phone or tablet scans, a computer or a travel router
     /// gets the file (#171).
     @State private var kind = Kind.phone
+    /// The name typed for the device once it connects, saved when the sheet closes.
+    @State private var name = ""
+    @FocusState private var naming: Bool
+    /// Selects the name when the field starts editing, once, see `SelectsAllOnEdit`.
+    @State private var selectsName = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     enum Kind: Hashable { case phone, computer }
@@ -82,20 +88,8 @@ struct AddDeviceSheet: View {
                     .padding(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 18))
                     .background(Self.card)
 
-                    if progress.finished, let device = progress.device {
-                        VStack(spacing: 14) {
-                            StatusOrb(look: .sharing)
-                            Text("\(device.name) is connected")
-                                .font(.system(.title, design: .rounded, weight: .heavy))
-                                .multilineTextAlignment(.center)
-                                .accessibilityIdentifier("add.result")
-                            Text("It uses this iPhone's data now. Tap it in your devices to rename it.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding(.top, 12)
-                        .padding(.horizontal, 24)
+                    if progress.finished {
+                        connected
                     }
                 }
                 .padding(.horizontal, 16)
@@ -104,7 +98,7 @@ struct AddDeviceSheet: View {
             .background(Color(.systemGroupedBackground))
             .safeAreaInset(edge: .bottom) {
                 if progress.finished {
-                    Button { dismiss() } label: {
+                    Button(action: finish) {
                         Text("Done").font(.headline).frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -141,14 +135,76 @@ struct AddDeviceSheet: View {
                 UIApplication.shared.isIdleTimerDisabled = self.progress.keepsScreenAwake
             }
             .onChange(of: progress.keepsScreenAwake) { _, awake in UIApplication.shared.isIdleTimerDisabled = awake }
+            // The keyboard comes up with the name it got, selected, so typing replaces it.
+            .onChange(of: progress.finished, initial: true) { _, finished in
+                guard finished, let device = self.progress.device else { return }
+                name = device.name
+                selectsName = true
+                naming = true
+            }
+            .modifier(SelectsAllOnEdit(pending: $selectsName))
             // Claimed: its file now holds a key that works.
             .onChange(of: progress.device != nil) { _, claimed in if claimed { ReadyCode.forget() } }
             .onDisappear {
+                // Closed another way than Done keeps what was typed too.
+                saveName()
                 ReadyCode.forget()
                 model.closeAddWindow()
                 UIApplication.shared.isIdleTimerDisabled = false
             }
         }
+    }
+
+    /// Once it connects: that it did, and its name to type.
+    private var connected: some View {
+        VStack(spacing: 14) {
+            StatusOrb(look: .sharing)
+            // The tick is the step marks' own, and VoiceOver reads the word.
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(LinearGradient(colors: StepMark.doneColors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .accessibilityHidden(true)
+                Text("Connected")
+                    .accessibilityIdentifier("add.result")
+            }
+            .font(.system(.title, design: .rounded, weight: .heavy))
+            Text("It uses this iPhone's data now.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            VStack(alignment: .leading, spacing: 6) {
+                // The field says Name to VoiceOver itself.
+                Text("Name")
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityHidden(true)
+                TextField("Name", text: $name)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .focused($naming)
+                    .onSubmit(finish)
+                    // The prompt alone isn't the label once the field holds a name.
+                    .accessibilityLabel("Name")
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityIdentifier("add.name")
+            }
+        }
+        .padding(.top, 12)
+    }
+
+    /// Done: saves the name and closes.
+    private func finish() {
+        saveName()
+        dismiss()
+    }
+
+    /// Only a change is saved, see `DeviceName.toSave`.
+    private func saveName() {
+        guard progress.finished, let device = progress.device,
+              let new = DeviceName.toSave(typed: name, current: device.name) else { return }
+        model.renameWireGuardDevice(device.id, to: new)
     }
 
     private static var card: some View {
@@ -382,6 +438,22 @@ private struct StepRow<Content: View>: View {
         }
         // Sized to the content, so the line grows to the next step.
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Selects a text field's whole text when it starts editing, while `pending` is on, and turns it
+/// off, so a name is replaced by typing and a later tap can place the cursor. iOS starts editing
+/// with the cursor at the end, and SwiftUI has no selection before iOS 18.
+struct SelectsAllOnEdit: ViewModifier {
+    @Binding var pending: Bool
+
+    func body(content: Content) -> some View {
+        content.onReceive(NotificationCenter.default.publisher(for: UITextField.textDidBeginEditingNotification)) { note in
+            guard pending, let field = note.object as? UITextField else { return }
+            pending = false
+            // Selecting while editing begins doesn't hold.
+            DispatchQueue.main.async { field.selectAll(nil) }
+        }
     }
 }
 

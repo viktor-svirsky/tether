@@ -32,3 +32,14 @@ struct AddDeviceProgress: Equatable {
         tunnel = isConnected ? .done : device == nil ? .toDo : .waiting
     }
 }
+
+/// A name typed for a device, on Add a device once it connects or through Rename on its screen.
+enum DeviceName {
+    /// What to save, or nil when there's nothing to: a blank field, or the name it has. Done without
+    /// a change saves nothing, so a store that can't save doesn't say a rename failed. Saving cuts
+    /// a long name, see `WireGuardSetup.renamePeer`.
+    static func toSave(typed: String, current: String) -> String? {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed == current ? nil : trimmed
+    }
+}

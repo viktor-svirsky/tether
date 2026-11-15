@@ -67,4 +67,25 @@ final class AddDeviceProgressTests: XCTestCase {
     func testARemovedDeviceGoesBackToTheStart() {
         XCTAssertEqual(progress(peers: [ipad], hotspotOn: true).config, .toDo)
     }
+
+    // MARK: the name typed once it connects
+
+    func testATypedNameIsSavedWithoutTheSpacesAround() {
+        XCTAssertEqual(DeviceName.toSave(typed: "  Living room TV ", current: "Device 2"), "Living room TV")
+    }
+
+    /// Done without a change saves nothing, so a store that can't save doesn't say a rename failed.
+    func testTheNameItHasIsntSavedAgain() {
+        XCTAssertNil(DeviceName.toSave(typed: "Device 2", current: "Device 2"))
+        XCTAssertNil(DeviceName.toSave(typed: " Device 2  ", current: "Device 2"))
+    }
+
+    func testABlankFieldKeepsTheName() {
+        XCTAssertNil(DeviceName.toSave(typed: "", current: "Device 2"))
+        XCTAssertNil(DeviceName.toSave(typed: "   \n", current: "Device 2"))
+    }
+
+    func testOnlyACaseChangeIsStillAChange() {
+        XCTAssertEqual(DeviceName.toSave(typed: "ipad", current: "iPad"), "ipad")
+    }
 }

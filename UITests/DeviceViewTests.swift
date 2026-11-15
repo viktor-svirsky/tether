@@ -124,6 +124,41 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(element("device.Windows PC"))
     }
 
+    /// A Rename row above Pause and Remove, since the title's menu is easy to miss (#173). The name
+    /// is selected, so typing replaces it.
+    func testTheRenameRowRenamesTheDevice() {
+        launch(.sharing)
+        openDevice("Windows PC")
+        let row = reveal(element("device.rename"))
+        XCTAssertEqual(row.label, "Rename")
+        XCTAssertLessThan(row.frame.maxY, reveal(element("device.pause")).frame.minY, "above Pause")
+        row.tap()
+        let alert = app.alerts["Rename"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        let field = alert.textFields.firstMatch
+        XCTAssertEqual(field.value as? String, "Windows PC")
+        waitUntilStill(field)
+        field.typeText("Work PC")
+        alert.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Work PC"].waitForExistence(timeout: 5))
+        assertNowhere(element("device.problem"))
+        goBack(to: "Tether")
+        XCTAssertTrue(reveal(element("device.Work PC")).exists)
+        assertNowhere(element("device.Windows PC"))
+    }
+
+    func testCancellingRenameKeepsTheName() {
+        launch(.sharing)
+        openDevice("iPad")
+        reveal(element("device.rename")).tap()
+        let alert = app.alerts["Rename"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.textFields.firstMatch.typeText("Other")
+        alert.buttons["Cancel"].tap()
+        waitUntilGone(alert)
+        XCTAssertTrue(app.navigationBars["iPad"].exists)
+    }
+
     func testCancellingTheRemoveDialogKeepsTheDevice() {
         launch(.sharing)
         openDevice("iPad")
