@@ -73,6 +73,19 @@ final class AccessibilityTests: TetherUITestCase {
         }
     }
 
+    /// At the largest text size the two speeds stack, so each stays on one line (#176). Side by side
+    /// they broke over three lines each, which made the row at least three lines tall.
+    func testTheSpeedsStackAtTheLargestTextSize() throws {
+        launch(.sharing, arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
+        let speeds = reveal(element("traffic.speeds"))
+        let line = UIFont.preferredFont(forTextStyle: .headline,
+                                        compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge)).lineHeight
+        XCTAssertGreaterThan(speeds.frame.height, 1.5 * line, "two lines, one for each speed: \(speeds.frame), line \(line)")
+        XCTAssertLessThan(speeds.frame.height, 2.5 * line, "no speed breaks over lines: \(speeds.frame), line \(line)")
+        XCTAssertLessThanOrEqual(speeds.frame.maxX, app.windows.firstMatch.frame.maxX)
+        try audit(types: [.textClipped], only: "traffic.")
+    }
+
     // MARK: devices and the QR code
 
     /// The button and the sheet's steps and Share file button get the full audit, in both appearances.
@@ -180,7 +193,7 @@ final class AccessibilityTests: TetherUITestCase {
         XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
         XCTAssertTrue(reveal(element("add.qr"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("add.step3"), maxSwipes: 30).exists)
-        reveal(app.segmentedControls.buttons["Computer or router"], maxSwipes: 30).tap()
+        reveal(element("add.kind.computer"), maxSwipes: 30).tap()
         XCTAssertTrue(reveal(element("add.address"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("add.share"), maxSwipes: 30).isHittable)
     }
