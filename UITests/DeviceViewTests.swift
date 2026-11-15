@@ -12,7 +12,8 @@ final class DeviceViewTests: TetherUITestCase {
         launch(.sharing)
         openDevice("iPad")
         XCTAssertEqual(staticText("device.status").label, "Connected")
-        XCTAssertTrue(element("device.remove").exists)
+        // Below the screen on an iPhone SE.
+        XCTAssertTrue(reveal(element("device.remove")).exists)
         assertNowhere(element("wireguard.qr"), text(containing: "10.7.0.2"), message: "no per-device code or address any more")
         assertNowhere(element("device.lastConnected"), message: "connected says it")
         // Where its handshake comes from, without the port (#73).
@@ -162,7 +163,7 @@ final class DeviceViewTests: TetherUITestCase {
     func testCancellingTheRemoveDialogKeepsTheDevice() {
         launch(.sharing)
         openDevice("iPad")
-        element("device.remove").tap()
+        reveal(element("device.remove")).tap()
         XCTAssertTrue(app.buttons["Remove"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Remove iPad?"].exists)
         cancelDialog()
@@ -176,7 +177,7 @@ final class DeviceViewTests: TetherUITestCase {
     func testRemovingADeviceTakesItOffTheListAndKeepsTheOther() {
         launch(.sharing)
         openDevice("Windows PC")
-        element("device.remove").tap()
+        reveal(element("device.remove")).tap()
         app.buttons["Remove"].firstMatch.tap()
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5), "back on the main screen")
         waitUntilGone(element("device.Windows PC"))
@@ -231,7 +232,7 @@ final class DeviceViewTests: TetherUITestCase {
     func testARemovalThatCantBeSavedStaysOnTheDeviceAndSaysSo() {
         launch(.qrCodeUnsaved)
         openDevice("Windows PC")
-        element("device.remove").tap()
+        reveal(element("device.remove")).tap()
         app.buttons["Remove"].firstMatch.tap()
         let problem = staticText("device.problem")
         XCTAssertTrue(problem.waitForExistence(timeout: 5))

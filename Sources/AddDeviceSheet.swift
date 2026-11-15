@@ -43,73 +43,69 @@ struct AddDeviceSheet: View {
         let progress = progress
         let current = Self.current(progress)
         NavigationStack {
-            ScrollViewReader { scroll in
-                ScrollView {
-                    VStack(spacing: 24) {
-                        // Above the steps: a device scanned first would only learn after that it can't work.
-                        if model.localNetworkDenied && !progress.finished {
-                            localNetworkWarning
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(16)
-                                .background(Self.card)
-                        }
-                        if progress.device == nil {
-                            // Every step after this assumes WireGuard is on the other device (#169).
-                            Text("Install the free WireGuard app on the other device: App Store, Google Play, or wireguard.com/install.")
-                                .font(.subheadline)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .accessibilityIdentifier("add.install")
-                        }
-                        VStack(spacing: 0) {
-                            StepRow(number: 1, mark: mark(progress.joined, step: 1, current: current), lineDone: progress.joined == .done,
-                                    title: "Join this iPhone's hotspot", id: "add.step1") {
-                                if progress.joined == .done {
-                                    note("The hotspot is on. Join it on the new device too.")
-                                } else {
-                                    HotspotWaitingHint(id: "add")
-                                        .font(.subheadline)
-                                }
-                            }
-                            StepRow(number: 2, mark: mark(progress.config, step: 2, current: current), lineDone: progress.config == .done,
-                                    title: "Give it the config", id: "add.step2") {
-                                config(progress)
-                            }
-                            StepRow(number: 3, mark: mark(progress.tunnel, step: 3, current: current), lineDone: nil,
-                                    title: "Turn its tunnel on", id: "add.step3") {
-                                switch (progress.tunnel, progress.device) {
-                                case (.done, _): note("Connected")
-                                // It won't tick off by itself: the warning above says why.
-                                case _ where model.localNetworkDenied: note("Waiting for Local Network to be on")
-                                case _ where model.staleConfigShown:
-                                    Text("A device is trying to connect with a config that no longer works. If it's this one, delete its tunnel in WireGuard and give it the config again.")
-                                        .font(.subheadline)
-                                        .foregroundStyle(LocalNetworkWarning.text)
-                                        .accessibilityIdentifier("add.stale")
-                                case (.waiting, let device?): note("Waiting for \(device.name) to connect")
-                                default: note("This ticks off by itself when it connects.")
-                                }
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Above the steps: a device scanned first would only learn after that it can't work.
+                    if model.localNetworkDenied && !progress.finished {
+                        localNetworkWarning
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                            .background(Self.card)
+                    }
+                    if progress.device == nil {
+                        // Every step after this assumes WireGuard is on the other device (#169).
+                        Text("Install the free WireGuard app on the other device: App Store, Google Play, or wireguard.com/install.")
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("add.install")
+                    }
+                    VStack(spacing: 0) {
+                        StepRow(number: 1, mark: mark(progress.joined, step: 1, current: current), lineDone: progress.joined == .done,
+                                title: "Join this iPhone's hotspot", id: "add.step1") {
+                            if progress.joined == .done {
+                                note("The hotspot is on. Join it on the new device too.")
+                            } else {
+                                HotspotWaitingHint(id: "add")
+                                    .font(.subheadline)
                             }
                         }
-                        .padding(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 18))
-                        .background(Self.card)
-
-                        if progress.finished {
-                            connected
+                        StepRow(number: 2, mark: mark(progress.config, step: 2, current: current), lineDone: progress.config == .done,
+                                title: "Give it the config", id: "add.step2") {
+                            config(progress)
+                        }
+                        StepRow(number: 3, mark: mark(progress.tunnel, step: 3, current: current), lineDone: nil,
+                                title: "Turn its tunnel on", id: "add.step3") {
+                            switch (progress.tunnel, progress.device) {
+                            case (.done, _): note("Connected")
+                            // It won't tick off by itself: the warning above says why.
+                            case _ where model.localNetworkDenied: note("Waiting for Local Network to be on")
+                            case _ where model.staleConfigShown:
+                                Text("A device is trying to connect with a config that no longer works. If it's this one, delete its tunnel in WireGuard and give it the config again.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(LocalNetworkWarning.text)
+                                    .accessibilityIdentifier("add.stale")
+                            case (.waiting, let device?): note("Waiting for \(device.name) to connect")
+                            default: note("This ticks off by itself when it connects.")
+                            }
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 24)
+                    .padding(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 18))
+                    .background(Self.card)
+
+                    if progress.finished {
+                        connected
+                    }
                 }
-                .background(Color(.systemGroupedBackground))
-                // Lowering the keyboard needs a way other than its Done, which saves and closes.
-                .scrollDismissesKeyboard(.immediately)
-                // iOS scrolls only the text itself above the keyboard, which left the bottom of the
-                // field's box under Done. Once the keyboard is up, the whole box goes above it.
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
-                    guard naming else { return }
-                    withAnimation { scroll.scrollTo(Self.nameBox, anchor: .bottom) }
-                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
             }
+            .background(Color(.systemGroupedBackground))
+            // Lowering the keyboard needs a way other than its Done, which saves and closes.
+            .scrollDismissesKeyboard(.immediately)
+            // iOS scrolls only the text of a focused field above the keyboard, not the box around
+            // it, which then ran under Done. The box's padding and the space above Done, as
+            // room under the scrolling content (#173).
+            .safeAreaPadding(.bottom, Self.nameBoxRoom)
             .safeAreaInset(edge: .bottom) {
                 if progress.finished {
                     Button(action: finish) {
@@ -210,14 +206,12 @@ struct AddDeviceSheet: View {
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("add.nameBox")
             }
-            // The space between the box and Done when it's scrolled above the keyboard.
-            .padding(.bottom, 16)
-            .id(Self.nameBox)
         }
         .padding(.top, 12)
     }
 
-    private static let nameBox = "nameBox"
+    /// The name box's padding under the text, and the space between the box and Done.
+    private static let nameBoxRoom: CGFloat = 12 + 16
 
     /// Done: saves the name and closes.
     private func finish() {
