@@ -143,10 +143,47 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(field.value as? String, "iPad")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "the keyboard is up for the name")
         assertNowhere(text(containing: "rename it"), message: "it's named here now")
+        assertNameBoxAboveDone()
         try audit(only: "add.")
         element("add.done").tap()
         waitUntilGone(element("add.step1"))
         XCTAssertTrue(reveal(element("device.iPad")).exists)
+    }
+
+    /// With the keyboard down too, scrolled to the end, the box stays above Done, at the usual and
+    /// the largest text size.
+    func testTheNameBoxClearsDoneWithTheKeyboardDown() {
+        for arguments in [[], ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]] {
+            launch(.addDeviceDone, arguments: arguments)
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            waitUntilStill(element("add.nameBox"))
+            lowerTheKeyboardAndCheckTheBox()
+            app.terminate()
+        }
+    }
+
+    /// A drag lowers the keyboard, then the sheet is scrolled to its end, where the box sits on Done.
+    private func lowerTheKeyboardAndCheckTheBox(file: StaticString = #filePath, line: UInt = #line) {
+        // In the sheet's upper part, on its scrolling content at every text size. Not on the
+        // screen behind it, which has scroll views too.
+        let window = app.windows.firstMatch
+        func drag(from: CGFloat, to: CGFloat) {
+            window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: from))
+                .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: to)))
+        }
+        drag(from: 0.3, to: 0.5)
+        waitUntilGone(app.keyboards.firstMatch)
+        for _ in 0..<4 { drag(from: 0.6, to: 0.2) }
+        waitUntilStill(element("add.nameBox"))
+        assertNameBoxAboveDone(file: file, line: line)
+    }
+
+    /// The whole box around the name shows, with space above Done: its bottom was under it (#173).
+    private func assertNameBoxAboveDone(file: StaticString = #filePath, line: UInt = #line) {
+        let box = element("add.nameBox"), done = element("add.done")
+        waitUntilStill(box)
+        XCTAssertTrue(box.exists, file: file, line: line)
+        XCTAssertLessThanOrEqual(box.frame.maxY, done.frame.minY, "the name's box \(box.frame) runs under Done \(done.frame)", file: file, line: line)
     }
 
     /// What's typed replaces the name, since it's selected, and Done saves it.
@@ -185,6 +222,7 @@ final class AddDeviceTests: TetherUITestCase {
         waitUntilStill(field)
         XCTAssertTrue(field.isHittable, "the field scrolls above the keyboard")
         XCTAssertTrue(element("add.done").isHittable)
+        assertNameBoxAboveDone()
         try audit(types: [.textClipped], only: "add.")
         field.typeText("Den")
         element("add.done").tap()
