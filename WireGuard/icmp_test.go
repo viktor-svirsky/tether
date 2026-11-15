@@ -61,6 +61,30 @@ func TestPingGoesThroughTheTunnel(t *testing.T) {
 	}
 }
 
+// The server answers a ping to its own tunnel address, which routers ping to check the tunnel is
+// up (#132). A paused device gets no answer, like any other traffic of its. Nothing leaves the
+// iPhone, so nothing counts as data.
+func TestTheServerAnswersAPingToItsOwnAddress(t *testing.T) {
+	s, c := setup(t)
+	for seq := range 3 {
+		data := []byte(fmt.Sprintf("ping %d", seq))
+		echo, err := pingFrom(c, "10.7.0.1", seq, data, 5*time.Second)
+		if err != nil {
+			t.Fatalf("ping %d: %v", seq, err)
+		}
+		if echo.Seq != seq || !bytes.Equal(echo.Data, data) {
+			t.Fatalf("ping %d came back as seq %d %q", seq, echo.Seq, echo.Data)
+		}
+	}
+	if st := s.Stats(); st.Up != 0 || st.Down != 0 {
+		t.Fatalf("counted up %d down %d, want nothing", st.Up, st.Down)
+	}
+	pause(t, s, true)
+	if echo, err := pingFrom(c, "10.7.0.1", 3, []byte("x"), 500*time.Millisecond); err == nil {
+		t.Fatalf("a paused device got a reply %v", echo)
+	}
+}
+
 // iOS closes a suspended app's sockets during a phone call (#106). The ping socket is opened again,
 // so pings through the tunnel work after the call, not only TCP and UDP (#151).
 func TestPingWorksAfterIOSClosedItsSocket(t *testing.T) {
@@ -137,10 +161,10 @@ func TestAPingNobodyAnswersGetsNoReply(t *testing.T) {
 	}
 }
 
-// A ping to the tunnel's own addresses or a multicast one stays inside, like UDP.
+// A ping to another device's tunnel address or a multicast one stays inside, like UDP.
 func TestAPingToTheTunnelStaysInside(t *testing.T) {
 	_, c := setup(t)
-	for _, dst := range []string{"10.7.0.1", "10.7.0.3", "224.0.0.1"} {
+	for _, dst := range []string{"10.7.0.3", "224.0.0.1"} {
 		if echo, err := pingFrom(c, dst, 0, []byte("x"), 500*time.Millisecond); err == nil {
 			t.Fatalf("%s answered %v", dst, echo)
 		}
