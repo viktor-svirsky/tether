@@ -121,7 +121,7 @@ struct DeviceView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         DeviceStatusLabel(status: status, text: status.title)
                             .accessibilityIdentifier("device.status")
-                        if let detail = status.detail(resets: model.nextResetDay) {
+                        if let detail = status.detail(resets: model.nextResetDay, period: model.usagePeriod) {
                             // The label colour, like the status: grey text on the card fails the contrast audit.
                             Text(detail)
                                 .font(.subheadline)
@@ -189,11 +189,11 @@ extension DeviceView {
     private var usageSection: some View {
         let usage = model.usage(of: peer.id)
         let used = usage.thisMonth.total
-        let resets = model.nextResetDay
+        let resets = model.nextResetDay, period = model.usagePeriod
         return Section {
             if let limit = current.limit {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("\(Format.bytes(used)) of \(Format.bytes(limit)) this month")
+                    Text("\(Format.bytes(used)) of \(Format.bytes(limit)) \(period)")
                         .font(.headline)
                     if used > 0 { downAndUp(usage.thisMonth) }
                     LimitMeter(fraction: limit == 0 ? 1 : min(1, Double(used) / Double(limit)), over: used >= limit)
@@ -210,13 +210,13 @@ extension DeviceView {
                         .accessibilityIdentifier("device.overLimit")
                 }
             } else if used == 0 {
-                Text(Format.notUsedThisMonth)
+                Text(Format.used(0, period))
                     .font(.headline)
                     .accessibilityIdentifier("device.thisMonth")
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     // One text, so it wraps with large text instead of squeezing the number.
-                    Text("\(Text(Format.bytes(used)).font(.title.bold())) this month")
+                    Text("\(Text(Format.bytes(used)).font(.title.bold())) \(period)")
                         .font(.headline)
                     downAndUp(usage.thisMonth)
                 }

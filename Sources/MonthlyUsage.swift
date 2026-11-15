@@ -171,7 +171,15 @@ struct MonthlyUsage: Codable, Equatable {
 
     /// When the period `date` is in ends, and the counts and the limits start over.
     func nextReset(at date: Date, calendar: Calendar) -> Date {
-        period(of: date, calendar: calendar).end.start(in: calendar) ?? date
+        period(at: date, calendar: calendar).end
+    }
+
+    /// From when to when the period `date` is in runs, for the screens' "since Nov 15", see
+    /// `Format.period`.
+    func period(at date: Date, calendar: Calendar) -> DateInterval {
+        let period = period(of: date, calendar: calendar)
+        let end = period.end.start(in: calendar) ?? date
+        return DateInterval(start: min(period.start.start(in: calendar) ?? end, end), end: end)
     }
 
     /// The reset day changed in Settings at `date`. The running period ends on the new day's next

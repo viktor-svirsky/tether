@@ -11,6 +11,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     /// Read by `HotspotSession` each watcher round, see `IdleStop`.
     @AppStorage private var idleStopAfter: IdleStop.After
+    /// The day the counts and limits start over, 31 for the last day, see `ResetDay`.
+    @AppStorage private var resetDay: Int
     /// Read by `HotspotSession` for each config it makes, see `DNSChoice`.
     @AppStorage private var dns: DNSChoice
     @AppStorage private var dnsOther: String
@@ -19,6 +21,7 @@ struct SettingsView: View {
     init(model: Model) {
         self.model = model
         _idleStopAfter = AppStorage(wrappedValue: .default, IdleStop.After.key, store: model.settingsDefaults)
+        _resetDay = AppStorage(wrappedValue: ResetDay.default.day, ResetDay.key, store: model.settingsDefaults)
         _dns = AppStorage(wrappedValue: .default, DNSChoice.key, store: model.settingsDefaults)
         _dnsOther = AppStorage(wrappedValue: "", DNSChoice.otherKey, store: model.settingsDefaults)
         _dnsControlD = AppStorage(wrappedValue: "", DNSChoice.controlDKey, store: model.settingsDefaults)
@@ -96,10 +99,17 @@ struct SettingsView: View {
             }
             .pickerStyle(.menu)
             .accessibilityIdentifier("sharing.idleStop")
+            Picker("Data counts start on", selection: $resetDay) {
+                ForEach(ResetDay.choices, id: \.self) { Text($0.label).tag($0.day) }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("sharing.resetDay")
+            // The screens show the new dates as soon as Settings closes (#187).
+            .onChange(of: resetDay) { model.resetDayChanged() }
         } header: {
             Text("Sharing")
         } footer: {
-            Text("Idle means no device is connected. Stopping saves battery. Open Tether to share again.")
+            Text("Idle means no device is connected. Stopping saves battery. Open Tether to share again. Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier.")
                 .accessibilityIdentifier("sharing.footer")
         }
     }

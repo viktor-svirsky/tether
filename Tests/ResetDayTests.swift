@@ -18,6 +18,19 @@ final class ResetDayTests: XCTestCase {
         }
     }
 
+    /// Settings' menu: the 1st to the 28th, then Last day, saved as 31.
+    func testTheMenuIsTheFirstTo28thThenLastDay() {
+        XCTAssertEqual(ResetDay.choices.count, 29)
+        XCTAssertEqual(ResetDay.choices.first, .first)
+        XCTAssertEqual(ResetDay.choices.dropLast().last?.day, 28)
+        XCTAssertEqual(ResetDay.choices.last, .lastDay)
+        XCTAssertEqual(ResetDay.lastDay.day, 31)
+        XCTAssertEqual(ResetDay.choices.map(\.label).prefix(4), ["1st", "2nd", "3rd", "4th"])
+        XCTAssertEqual([11, 12, 13, 21, 22, 23, 28].compactMap(ResetDay.init).map(\.label),
+                       ["11th", "12th", "13th", "21st", "22nd", "23rd", "28th"])
+        XCTAssertEqual(ResetDay.lastDay.label, "Last day")
+    }
+
     func testOnlyDaysOfAMonth() {
         XCTAssertNil(ResetDay(0))
         XCTAssertNil(ResetDay(32))

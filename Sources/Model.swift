@@ -370,6 +370,12 @@ final class Model: ObservableObject {
     /// "1 December": see `HotspotSession.nextReset`.
     var nextResetDay: String { LimitAlert.day(session.nextReset, calendar: .current) }
 
+    /// "this month", or "since Nov 15" with another reset day: see `Format.period`.
+    var usagePeriod: String { Format.period(session.period, calendar: .current) }
+
+    /// Settings > Sharing changed the reset day, see `HotspotSession.resetDayChanged`.
+    func resetDayChanged() { session.resetDayChanged() }
+
     /// See `HotspotSession.needsNewConfig`.
     func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {
         session.needsNewConfig(peer)

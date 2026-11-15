@@ -23,13 +23,26 @@ enum Format {
         }
     }
 
-    /// What a device that used nothing this month says, on its row and its screen (#73), rather
-    /// than "0 bytes this month".
-    static let notUsedThisMonth = "Not used this month"
+    /// How every screen and notice names the running count of a device's data (#187): "this month"
+    /// when it runs from a 1st to the next, else "since Nov 15", the day it started, short, as the
+    /// region writes it. A period after a changed reset day isn't a month, even on the 1st.
+    static func period(_ period: DateInterval, calendar: Calendar, locale: Locale = .current) -> String {
+        // By days, not times: where a clock change skips midnight, the 1st starts at 1 AM.
+        let start = period.start
+        let from = calendar.dateComponents([.year, .month, .day], from: start)
+        let to = calendar.dateComponents([.year, .month, .day], from: period.end)
+        if from.day == 1, to.day == 1, let next = calendar.date(byAdding: .month, value: 1, to: start),
+           calendar.dateComponents([.year, .month], from: next) == calendar.dateComponents([.year, .month], from: period.end) {
+            return "this month"
+        }
+        let style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+        return "since \(start.formatted(style.month(.abbreviated).day()))"
+    }
 
-    /// A device's row (#73): "3.12 GB this month", or `notUsedThisMonth`.
-    static func thisMonth(_ used: UInt64) -> String {
-        used == 0 ? notUsedThisMonth : "\(bytes(used)) this month"
+    /// A device's row and its screen (#73): "3.12 GB this month", or "Not used this month" rather
+    /// than "0 bytes this month". `period` is from `period(_:calendar:locale:)`.
+    static func used(_ used: UInt64, _ period: String) -> String {
+        used == 0 ? "Not used \(period)" : "\(bytes(used)) \(period)"
     }
 
     /// When a device last connected (#73): "Today at 4:00 PM", "Yesterday at ...", "October 3 at

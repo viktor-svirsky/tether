@@ -90,7 +90,7 @@ struct MainView: View {
                                             .font(.subheadline)
                                     }
                                     // The label colour: grey text on the card fails the contrast audit.
-                                    Text(Format.thisMonth(model.usage(of: peer.id).thisMonth.total))
+                                    Text(Format.used(model.usage(of: peer.id).thisMonth.total, model.usagePeriod))
                                         .font(.subheadline)
                                     if model.needsNewConfig(peer) { OldAddressLabel().font(.footnote) }
                                 }

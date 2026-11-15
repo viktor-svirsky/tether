@@ -545,6 +545,20 @@ final class HotspotSession {
         return monthlyUsage.nextReset(at: now(), calendar: calendar)
     }
 
+    /// The running count, from its start to `nextReset`, for the screens' "since Nov 15", see
+    /// `Format.period`.
+    var period: DateInterval {
+        followResetDay()
+        return monthlyUsage.period(at: now(), calendar: calendar)
+    }
+
+    /// Settings changed the reset day: followed now, so the screens show the new dates when Settings
+    /// closes, not at the next read.
+    func resetDayChanged() {
+        followResetDay()
+        willChange()
+    }
+
     /// A new reset day counts from now, see `MonthlyUsage.setResetDay`. Saved at once, so a relaunch
     /// doesn't move the change to its own time.
     private func followResetDay() {
@@ -900,7 +914,7 @@ final class HotspotSession {
     }
 
     private func alert(_ peer: WireGuardSetup.Peer, _ kind: LimitAlert.Kind, used: UInt64, limit: UInt64, now: Date) {
-        let alert = LimitAlert(device: peer.id, name: peer.name, kind: kind, used: used, limit: limit, resets: nextReset)
+        let alert = LimitAlert(device: peer.id, name: peer.name, kind: kind, used: used, limit: limit, period: period)
         limitAlerts = Array((limitAlerts + [alert]).suffix(20))
     }
 

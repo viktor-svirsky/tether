@@ -26,6 +26,22 @@ struct ResetDay: Hashable, Codable {
         ResetDay(defaults.integer(forKey: key)) ?? .default
     }
 
+    /// Settings' menu: the 1st to the 28th, which every month has, then the last day.
+    static let choices = (1...28).compactMap(ResetDay.init) + [lastDay]
+
+    /// The menu's words: "1st", "2nd", "3rd", "4th", "11th", "21st", or "Last day" for 31.
+    var label: String {
+        if self == .lastDay { return "Last day" }
+        let suffix = switch (day % 10, day % 100) {
+        case (_, 11...13): "th"
+        case (1, _): "st"
+        case (2, _): "nd"
+        case (3, _): "rd"
+        default: "th"
+        }
+        return "\(day)\(suffix)"
+    }
+
     /// Saved as the plain number, like the setting.
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
