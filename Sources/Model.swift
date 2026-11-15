@@ -373,6 +373,9 @@ final class Model: ObservableObject {
     /// "this month", or "since Nov 15" with another reset day: see `Format.period`.
     var usagePeriod: String { Format.period(session.period, calendar: .current) }
 
+    /// "Last month", or "Oct 15 to Nov 14" with another reset day: see `Format.lastPeriod`.
+    var lastPeriodLabel: String { Format.lastPeriod(session.lastPeriod, calendar: .current) }
+
     /// Settings > Sharing changed the reset day, see `HotspotSession.resetDayChanged`.
     func resetDayChanged() { session.resetDayChanged() }
 

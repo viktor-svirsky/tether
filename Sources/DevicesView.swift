@@ -224,7 +224,7 @@ extension DeviceView {
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("device.thisMonth")
             }
-            LabeledContent("Last month", value: Format.bytes(usage.lastMonth.total))
+            LabeledContent(model.lastPeriodLabel, value: Format.bytes(usage.lastMonth.total))
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("device.lastMonth")
             Picker("Limit", selection: Binding(get: { LimitPick.preset(current.limit) }, set: { pick in

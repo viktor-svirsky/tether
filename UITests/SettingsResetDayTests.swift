@@ -65,18 +65,20 @@ final class SettingsResetDayTests: TetherUITestCase {
         launch(.sharing, arguments: onThe15th)
         let ipad = reveal(element("device.iPad"))
         XCTAssertTrue(ipad.label.contains("3.12 GB since Oct 15"), ipad.label)
-        XCTAssertTrue(reveal(element("device.Windows PC")).label.contains("Not used since Oct 15"))
+        XCTAssertTrue(reveal(element("device.Windows PC")).label.contains("Nothing used since Oct 15"))
         openDevice("iPad")
         let meter = reveal(element("device.thisMonth")).label
         XCTAssertTrue(meter.contains("3.12 GB of 10 GB since Oct 15") && meter.contains("Resets on November 15"), meter)
         XCTAssertFalse(meter.contains("this month"), meter)
+        let lastPeriod = reveal(element("device.lastMonth")).label
+        XCTAssertTrue(lastPeriod.contains("Sep 15 to Oct 14") && !lastPeriod.contains("Last month"), lastPeriod)
         add(screenshot("device-day-15"))
         let footer = reveal(element("device.limitFooter")).label
         XCTAssertTrue(footer.contains("until the count resets on November 15"), footer)
         try audit(only: "device.")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         openDevice("Windows PC")
-        XCTAssertEqual(reveal(element("device.thisMonth")).label, "Not used since Oct 15")
+        XCTAssertEqual(reveal(element("device.thisMonth")).label, "Nothing used since Oct 15")
     }
 
     /// The same at an accessibility text size: the words wrap and stay whole.
@@ -86,6 +88,8 @@ final class SettingsResetDayTests: TetherUITestCase {
         XCTAssertTrue(app.navigationBars["iPad"].waitForExistence(timeout: 5))
         let meter = reveal(element("device.thisMonth"), maxSwipes: 30).label
         XCTAssertTrue(meter.contains("since Oct 15") && meter.contains("Resets on November 15"), meter)
+        XCTAssertTrue(reveal(element("device.lastMonth"), maxSwipes: 30).label.contains("Sep 15 to Oct 14"))
+        reveal(element("device.thisMonth"), maxSwipes: 30)
         add(screenshot("device-day-15-large-text"))
         app.navigationBars.buttons.element(boundBy: 0).tap()
         // At this size the gear's row scrolls away with the list.

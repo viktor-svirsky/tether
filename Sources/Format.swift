@@ -27,22 +27,39 @@ enum Format {
     /// when it runs from a 1st to the next, else "since Nov 15", the day it started, short, as the
     /// region writes it. A period after a changed reset day isn't a month, even on the 1st.
     static func period(_ period: DateInterval, calendar: Calendar, locale: Locale = .current) -> String {
-        // By days, not times: where a clock change skips midnight, the 1st starts at 1 AM.
-        let start = period.start
-        let from = calendar.dateComponents([.year, .month, .day], from: start)
-        let to = calendar.dateComponents([.year, .month, .day], from: period.end)
-        if from.day == 1, to.day == 1, let next = calendar.date(byAdding: .month, value: 1, to: start),
-           calendar.dateComponents([.year, .month], from: next) == calendar.dateComponents([.year, .month], from: period.end) {
-            return "this month"
-        }
-        let style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
-        return "since \(start.formatted(style.month(.abbreviated).day()))"
+        isMonth(period, calendar: calendar) ? thisMonth : "since \(short(period.start, calendar: calendar, locale: locale))"
     }
 
+    /// The device screen's row for the period before the running one (#187): "Last month", or its
+    /// first and last days, like "Oct 15 to Nov 14".
+    static func lastPeriod(_ period: DateInterval, calendar: Calendar, locale: Locale = .current) -> String {
+        if isMonth(period, calendar: calendar) { return "Last month" }
+        let lastDay = calendar.date(byAdding: .day, value: -1, to: period.end) ?? period.end
+        return "\(short(period.start, calendar: calendar, locale: locale)) to \(short(lastDay, calendar: calendar, locale: locale))"
+    }
+
+    /// What `period` says for a calendar month.
+    static let thisMonth = "this month"
+
     /// A device's row and its screen (#73): "3.12 GB this month", or "Not used this month" rather
-    /// than "0 bytes this month". `period` is from `period(_:calendar:locale:)`.
+    /// than "0 bytes this month", and "Nothing used since Nov 15". `period` is from `period(_:calendar:locale:)`.
     static func used(_ used: UInt64, _ period: String) -> String {
-        used == 0 ? "Not used \(period)" : "\(bytes(used)) \(period)"
+        if used > 0 { return "\(bytes(used)) \(period)" }
+        return period == thisMonth ? "Not used this month" : "Nothing used \(period)"
+    }
+
+    /// From a 1st to the next. By days, not times: where a clock change skips midnight, the 1st
+    /// starts at 1 AM.
+    private static func isMonth(_ period: DateInterval, calendar: Calendar) -> Bool {
+        let from = calendar.dateComponents([.year, .month, .day], from: period.start)
+        let to = calendar.dateComponents([.year, .month, .day], from: period.end)
+        guard from.day == 1, to.day == 1, let next = calendar.date(byAdding: .month, value: 1, to: period.start) else { return false }
+        return calendar.dateComponents([.year, .month], from: next) == calendar.dateComponents([.year, .month], from: period.end)
+    }
+
+    /// "Nov 15" in the US, "15 Nov" in the UK.
+    private static func short(_ date: Date, calendar: Calendar, locale: Locale) -> String {
+        date.formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).month(.abbreviated).day())
     }
 
     /// When a device last connected (#73): "Today at 4:00 PM", "Yesterday at ...", "October 3 at

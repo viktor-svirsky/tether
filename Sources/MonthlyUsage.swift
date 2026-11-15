@@ -182,6 +182,15 @@ struct MonthlyUsage: Codable, Equatable {
         return DateInterval(start: min(period.start.start(in: calendar) ?? end, end), end: end)
     }
 
+    /// The period before the one `date` is in, for the device screen's "Oct 15 to Nov 14", see
+    /// `Format.lastPeriod`.
+    func lastPeriod(at date: Date, calendar: Calendar) -> DateInterval {
+        let current = period(of: date, calendar: calendar).start
+        let end = current.start(in: calendar) ?? date
+        let start = start(before: current, calendar: calendar).start(in: calendar) ?? end
+        return DateInterval(start: min(start, end), end: end)
+    }
+
     /// The reset day changed in Settings at `date`. The running period ends on the new day's next
     /// date, with all it counted: from the 1st to the 15th on November 20, the period from November
     /// 1 runs to December 15, and a device paused at its limit stays paused until then. Ending it on

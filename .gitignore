@@ -8,5 +8,6 @@ Package.resolved
 .claude/
 __pycache__/
 .build-sim/
+.build-ui-*/
 .build-sim.log
 WireGuard/build/

@@ -27,7 +27,7 @@ final class FormatTests: XCTestCase {
     func testUsedSaysNotUsedRatherThanZero() {
         XCTAssertEqual(Format.used(0, "this month"), "Not used this month")
         XCTAssertEqual(Format.used(3_120_000_000, "this month"), "3.12 GB this month")
-        XCTAssertEqual(Format.used(0, "since Nov 15"), "Not used since Nov 15")
+        XCTAssertEqual(Format.used(0, "since Nov 15"), "Nothing used since Nov 15")
         XCTAssertEqual(Format.used(3_120_000_000, "since Nov 15"), "3.12 GB since Nov 15")
     }
 
@@ -57,6 +57,32 @@ final class FormatTests: XCTestCase {
         XCTAssertEqual(said(.lastDay, at: day(2026, 12, 31)), "since Dec 31")
         XCTAssertEqual(said(ResetDay(15)!, at: day(2026, 11, 20), locale: Locale(identifier: "en_GB")), "since 15 Nov", "as the region writes it")
         XCTAssertEqual(said(.first, at: day(2026, 11, 20), locale: Locale(identifier: "en_GB")), "this month")
+    }
+
+    /// The device screen's row for the period before (#187): "Last month" when it ran from a 1st to
+    /// the next, else its first and last days, short, as the region writes them.
+    func testThePeriodBeforeIsLastMonthOnlyFromThe1st() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let us = Locale(identifier: "en_US")
+        func day(_ year: Int, _ month: Int, _ day: Int) -> Date {
+            calendar.date(from: DateComponents(year: year, month: month, day: day))!
+        }
+        func said(_ usage: MonthlyUsage, at date: Date, locale: Locale = us) -> String {
+            Format.lastPeriod(usage.lastPeriod(at: date, calendar: calendar), calendar: calendar, locale: locale)
+        }
+        XCTAssertEqual(said(MonthlyUsage(resetDay: .first), at: day(2026, 11, 20)), "Last month")
+        XCTAssertEqual(said(MonthlyUsage(resetDay: .first), at: day(2026, 3, 10)), "Last month", "after a short month")
+        XCTAssertEqual(said(MonthlyUsage(resetDay: ResetDay(15)!), at: day(2026, 11, 20)), "Oct 15 to Nov 14")
+        XCTAssertEqual(said(MonthlyUsage(resetDay: ResetDay(15)!), at: day(2026, 11, 14)), "Sep 15 to Oct 14")
+        XCTAssertEqual(said(MonthlyUsage(resetDay: ResetDay(15)!), at: day(2027, 1, 20)), "Dec 15 to Jan 14", "across the year")
+        XCTAssertEqual(said(MonthlyUsage(resetDay: .lastDay), at: day(2027, 3, 10)), "Jan 31 to Feb 27", "a month shorter than the day")
+        XCTAssertEqual(said(MonthlyUsage(resetDay: ResetDay(15)!), at: day(2026, 11, 20), locale: Locale(identifier: "en_GB")),
+                       "15 Oct to 14 Nov", "as the region writes it")
+        var changed = MonthlyUsage(resetDay: .first)
+        changed.setResetDay(ResetDay(15)!, at: day(2026, 11, 20), calendar: calendar)
+        XCTAssertEqual(said(changed, at: day(2026, 11, 20)), "Last month", "October, before the change")
+        XCTAssertEqual(said(changed, at: day(2026, 12, 20)), "Nov 1 to Dec 14", "the changed period")
     }
 
     /// A day changed mid-period runs the period to the new day's next date, so it isn't a month any

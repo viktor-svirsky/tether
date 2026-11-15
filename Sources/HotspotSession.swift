@@ -552,6 +552,12 @@ final class HotspotSession {
         return monthlyUsage.period(at: now(), calendar: calendar)
     }
 
+    /// The period before `period`, for the device screen's row, see `Format.lastPeriod`.
+    var lastPeriod: DateInterval {
+        followResetDay()
+        return monthlyUsage.lastPeriod(at: now(), calendar: calendar)
+    }
+
     /// Settings changed the reset day: followed now, so the screens show the new dates when Settings
     /// closes, not at the next read.
     func resetDayChanged() {
