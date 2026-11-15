@@ -26,6 +26,8 @@ or router (WireGuard)
 
 Your device still joins the hotspot, but its WireGuard client hands the traffic to Tether, and Tether sends it out from the iPhone. Calls, games, streaming and SSH all work. There's no account and nothing in the cloud.
 
+<a name="install-tether-on-your-iphone"></a>
+
 ## Install
 
 You need an iPhone with iOS 17 or later. Tether isn't in the App Store, so you install it with SideStore or AltStore. A free Apple ID works.
