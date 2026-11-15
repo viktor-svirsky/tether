@@ -804,7 +804,9 @@ func TestASlowNAT64PrefixDoesntAskTheBackup(t *testing.T) {
 // under the cap is free again.
 func TestAQueryThatCantBeReadIsAFormatError(t *testing.T) {
 	s, c := setup(t)
-	s.maxLookups = 1
+	s.mu.Lock()
+	s.maxLookups = 1 // lookup reads it under s.mu, and a packet can come in already
+	s.mu.Unlock()
 	p := newPlain(t, 1)
 	p.silent.Store(true)
 	viaPlain(s, p)
@@ -1379,7 +1381,9 @@ func TestLookupsStopAtTheCap(t *testing.T) {
 	d := newDoH(t, 1)
 	d.holding(t)
 	viaDoH(s, d)
-	s.maxLookups = 1
+	s.mu.Lock()
+	s.maxLookups = 1 // lookup reads it under s.mu, and a packet can come in already
+	s.mu.Unlock()
 	for i := range 2 {
 		conn, err := c.net.Dial("udp", tetherDNS)
 		if err != nil {
