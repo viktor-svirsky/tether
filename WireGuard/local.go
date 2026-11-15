@@ -9,15 +9,15 @@ import (
 
 // localNets are the networks Block keeps the devices out of, besides the ones the iPhone is on
 // (#230): the private ranges a home or office Wi-Fi and most VPNs use, the carrier-grade NAT range
-// Tailscale uses, the range proxy apps like Clash give out as fake addresses, and IPv6 unique local
-// addresses, which a travel router's IPv6 clients can reach over TCP (see routedNets). A public
+// Tailscale uses, and IPv6 unique local addresses, which a travel router's IPv6 clients can reach over TCP (see routedNets). A public
 // network that only a VPN on the iPhone routes can't be told apart by its address, so it stays open.
+// So does 198.18.0.0/15: a proxy app like Clash on the iPhone can answer Tether's own DNS with
+// fake addresses there, and blocking them would cut the devices off the internet.
 var localNets = []netip.Prefix{
 	netip.MustParsePrefix("10.0.0.0/8"),
 	netip.MustParsePrefix("172.16.0.0/12"),
 	netip.MustParsePrefix("192.168.0.0/16"),
 	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("198.18.0.0/15"),
 	netip.MustParsePrefix("fc00::/7"),
 }
 
@@ -39,10 +39,7 @@ func onLinkOf(addrs []net.Addr) []netip.Prefix {
 			continue
 		}
 		addr = addr.Unmap()
-		ones, bits := n.Mask.Size()
-		if bits == 128 && addr.Is4() {
-			ones -= 96 // an IPv4 address with a 16-byte mask
-		}
+		ones, _ := n.Mask.Size()
 		widest := widestOnLink4
 		if addr.Is6() {
 			widest = widestOnLink6

@@ -20,13 +20,13 @@ func onLinkRemote(s *Server) {
 	s.refreshLocal()
 }
 
-// Block refuses the private ranges, the carrier-grade NAT range Tailscale uses, the proxy apps'
-// fake-IP range and IPv6 unique local addresses. The internet stays open, and so does everything
-// with Allow.
+// Block refuses the private ranges, the carrier-grade NAT range Tailscale uses and IPv6 unique
+// local addresses. The internet stays open, 198.18.0.0/15 included, and so does everything with
+// Allow.
 func TestBlockingLocalNetworksRefusesTheirRanges(t *testing.T) {
 	s := startAlone(t)
-	local := []string{"10.1.2.3", "172.16.5.5", "172.31.255.254", "192.168.1.50", "100.64.1.1", "100.127.255.254", "198.18.0.5", "198.19.255.1", "fd12::1", "fc00::1", "::ffff:192.168.1.50"}
-	internet := []string{"1.1.1.1", "172.32.0.1", "100.128.0.1", "198.20.0.1", "2606:4700::1111", "11.0.0.1"}
+	local := []string{"10.1.2.3", "172.16.5.5", "172.31.255.254", "192.168.1.50", "100.64.1.1", "100.127.255.254", "fd12::1", "fc00::1", "::ffff:192.168.1.50"}
+	internet := []string{"1.1.1.1", "172.32.0.1", "100.128.0.1", "198.18.0.5", "2606:4700::1111", "11.0.0.1"}
 	for _, a := range append(local, internet...) {
 		if !s.leaves(netip.MustParseAddr(a)) {
 			t.Errorf("%s stayed inside with Allow", a)
@@ -215,12 +215,55 @@ func TestAPingToALocalAddressFollowsTheSetting(t *testing.T) {
 	}
 }
 
-// Tether's own services stay open with Block: its DNS at 10.7.0.1 and a ping to it.
+// Tether's own services stay open with Block: its DNS at 10.7.0.1, over UDP and TCP, and a ping
+// to it.
 func TestBlockingLeavesTethersOwnAddressOpen(t *testing.T) {
 	s, c := setup(t)
+	p := newPlain(t, 1)
+	viaPlain(s, p)
 	blockLocal(s, true)
+	if a, err := lookupUDP(c, lookupFor(t, 81, "a.example.", 0), answerWait); err != nil {
+		t.Fatal("a lookup over UDP with Block:", err)
+	} else if h, n := read(t, a); h.ID != 81 || n != 1 {
+		t.Fatalf("over UDP: %+v with %d records", h, n)
+	}
+	answers, err := lookupsTCP(c, answerWait, lookupFor(t, 82, "b.example.", 0))
+	if err != nil {
+		t.Fatal("a lookup over TCP with Block:", err)
+	}
+	if h, n := read(t, answers[0]); h.ID != 82 || n != 1 {
+		t.Fatalf("over TCP: %+v with %d records", h, n)
+	}
 	if _, err := pingFrom(c, dnsAddr.Addr().String(), 1, []byte("tether"), 5*time.Second); err != nil {
 		t.Fatal("a ping to 10.7.0.1 with Block:", err)
+	}
+}
+
+// Block turning on while a connection to a local address is being dialed refuses it, though
+// leaves let it through before the dial.
+func TestBlockTurningOnMidDialRefusesTheConnection(t *testing.T) {
+	s, c := setup(t)
+	_, port, _ := net.SplitHostPort(farEnd(t, func(conn *net.TCPConn) { io.Copy(conn, conn) }))
+	s.mu.Lock()
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		go s.SetBlockLocal(true)
+		for !s.blockLocal.Load() {
+			time.Sleep(time.Millisecond)
+		}
+		return toLoopback(ctx, network, address)
+	}
+	s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout())
+	defer cancel()
+	conn, err := c.net.DialContext(ctx, "tcp", net.JoinHostPort("192.168.1.50", port))
+	if err != nil {
+		return // refused, as it should be
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	conn.Write([]byte("hi"))
+	if _, err := io.ReadFull(conn, make([]byte, 2)); err == nil {
+		t.Fatal("a connection dialed while Block turned on still echoes")
 	}
 }
 
@@ -255,7 +298,5 @@ func TestTheConfigPageStaysOpenWithBlock(t *testing.T) {
 	if _, err := io.ReadFull(conn, make([]byte, 2)); err != nil {
 		t.Fatal("Block closed a connection to the config page:", err)
 	}
-	if again := connect(t, c, page.String()); again == nil {
-		t.Fatal("the config page refused a new connection with Block")
-	}
+	connect(t, c, page.String()) // fails the test if the page refuses a new connection with Block
 }
