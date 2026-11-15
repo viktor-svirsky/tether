@@ -28,14 +28,14 @@ func key(b byte) []byte {
 }
 
 func TestParseConfig(t *testing.T) {
-	peers, _, err := parseConfig(configJSON(1, [][]byte{key(1), key(7)}, []string{"10.7.0.2", "10.7.0.3"}))
+	peers, _, _, err := parseConfig(configJSON(1, [][]byte{key(1), key(7)}, []string{"10.7.0.2", "10.7.0.3"}))
 	if err != nil || len(peers) != 2 || peers[1].PublicKey[0] != 7 || peers[1].Address.String() != "10.7.0.3" {
 		t.Fatalf("%+v %v", peers, err)
 	}
-	if peers, _, err := parseConfig(`{"v":1,"peers":[]}`); err != nil || len(peers) != 0 {
+	if peers, _, _, err := parseConfig(`{"v":1,"peers":[]}`); err != nil || len(peers) != 0 {
 		t.Fatalf("no devices is fine: %v %v", peers, err)
 	}
-	if _, _, err := parseConfig(`{"v":1,"peers":[],"paused":[]}`); err != nil {
+	if _, _, _, err := parseConfig(`{"v":1,"peers":[],"paused":[]}`); err != nil {
 		t.Fatalf("a key this version doesn't know is skipped, so one can be added without a new version: %v", err)
 	}
 	refused := map[string]string{
@@ -54,7 +54,7 @@ func TestParseConfig(t *testing.T) {
 		"an IPv6 address":           configJSON(1, [][]byte{key(1)}, []string{"fd00::2"}),
 	}
 	for what, js := range refused {
-		if _, _, err := parseConfig(js); err == nil {
+		if _, _, _, err := parseConfig(js); err == nil {
 			t.Errorf("%s should be refused: %s", what, js)
 		}
 	}
@@ -64,7 +64,7 @@ func TestParseConfig(t *testing.T) {
 func TestParseConfigReadsPaused(t *testing.T) {
 	js := fmt.Sprintf(`{"v":1,"peers":[{"key":%q,"address":"10.7.0.2","paused":true},{"key":%q,"address":"10.7.0.3"}]}`,
 		base64.StdEncoding.EncodeToString(key(1)), base64.StdEncoding.EncodeToString(key(2)))
-	peers, _, err := parseConfig(js)
+	peers, _, _, err := parseConfig(js)
 	if err != nil || len(peers) != 2 || !peers[0].Paused || peers[1].Paused {
 		t.Fatalf("%+v %v", peers, err)
 	}

@@ -162,7 +162,7 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 	if device.Addr() != owner {
 		s.routed = true // a client's flow through the router
 	}
-	untrack := s.trackLocked(owner, c)
+	untrack := s.trackLocked(owner, false, c)
 	s.conesRunning.Add(2) // under s.mu, so it comes before Close's Wait or not at all
 	s.mu.Unlock()
 	go func() { defer s.conesRunning.Done(); s.send(c) }()
@@ -189,6 +189,9 @@ func (s *Server) send(c *cone) {
 		case o = <-c.out:
 		case <-c.done:
 			return
+		}
+		if s.blocks(o.dst.Addr()) {
+			continue // queued before Block turned on
 		}
 		s.count(c.traffic, true, len(o.payload))
 		err := s.sendTo(c.conn, o.payload, s.toNet(o.dst))
@@ -262,7 +265,7 @@ func (s *Server) reply(c *cone, conn *net.UDPConn, buf []byte) error {
 		return err
 	}
 	src := s.fromNAT64(s.fromNet(netip.AddrPortFrom(from.Addr().Unmap(), from.Port())))
-	if !src.Addr().Is4() {
+	if !src.Addr().Is4() || s.blocks(src.Addr()) { // the cone takes replies from anyone, see SetBlockLocal
 		return nil
 	}
 	s.count(c.traffic, false, n)
