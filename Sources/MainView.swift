@@ -148,13 +148,21 @@ struct HotspotSettingsLink: View {
     }
 }
 
-/// How fast data moves right now, down and up.
+/// How fast data moves right now, down and up. At the accessibility text sizes the two don't fit
+/// side by side, and each would break over three lines, so they stack (#176).
 struct SpeedRow: View {
     let down: Double
     let up: Double
+    @Environment(\.dynamicTypeSize) private var textSize
+
+    private var layout: AnyLayout {
+        textSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 16))
+    }
 
     var body: some View {
-        HStack(spacing: 16) {
+        layout {
             Text("\(Image(systemName: "arrow.down")) \(Format.speed(down))")
                 .foregroundStyle(Direction.download)
             Text("\(Image(systemName: "arrow.up")) \(Format.speed(up))")

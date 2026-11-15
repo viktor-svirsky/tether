@@ -322,6 +322,12 @@ class TetherUITestCase: XCTestCase {
         } catch let error as NSError where error.domain == "com.apple.xcode.xctest.accessibilityAudit" && error.code == -56 {
             print("Audit timed out, trying once more: \(error.localizedDescription)")
             try attempt()
+        } catch let error as NSError where error.domain == "com.apple.accessibilityAudit" && error.code == -902 {
+            // "Invalid target app": iOS 18's audit sometimes loses the app it was given, on a tall screen
+            // at the largest text size. Bringing it to the front again and one more try gets it.
+            print("Audit lost the app, trying once more: \(error.localizedDescription)")
+            app.activate()
+            try attempt()
         }
     }
 
