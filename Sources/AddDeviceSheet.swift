@@ -12,7 +12,8 @@ struct AddDeviceSheet: View {
     @Environment(\.dismiss) private var dismiss
     /// The device behind the code. Until it's claimed, a new code (after starting over, say) takes its place.
     @State private var readyID: WireGuardSetup.Peer.ID?
-    /// Which way the device gets its config: a phone or tablet scans, a computer downloads.
+    /// Which way the device gets its config: a phone or tablet scans, a computer or a travel router
+    /// gets the file (#171).
     @State private var kind = Kind.phone
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -192,8 +193,8 @@ struct AddDeviceSheet: View {
             let code = ReadyCode.for(config)
             VStack(alignment: .leading, spacing: 14) {
                 Picker("Kind of device", selection: $kind) {
-                    Text("iPhone or iPad").tag(Kind.phone)
-                    Text("Computer").tag(Kind.computer)
+                    Text("Phone or tablet").tag(Kind.phone)
+                    Text("Computer or router").tag(Kind.computer)
                 }
                 .pickerStyle(.segmented)
                 .accessibilityIdentifier("add.kind")
@@ -226,7 +227,8 @@ struct AddDeviceSheet: View {
                 .accessibilityLabel("QR code for the next device")
                 .accessibilityIdentifier("add.qr")
         }
-        Text("In WireGuard, tap + and Create from QR code.")
+        // WireGuard for Android says Scan from QR code (#171).
+        Text("In WireGuard, tap + and Create from QR code. On Android, tap + and Scan from QR code.")
             .font(.subheadline)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
@@ -271,6 +273,12 @@ struct AddDeviceSheet: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("add.airdrop")
+            Text("On a travel router, import the file in its VPN settings, under WireGuard.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("add.router")
             windowNote(id: "add.fileWindow")
         }
     }

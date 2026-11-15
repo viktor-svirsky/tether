@@ -31,20 +31,22 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(label(of: "add.step3"), "Turn its tunnel on")
         XCTAssertEqual(label(of: "add.step3.mark"), "Step 3 of 3")
         XCTAssertEqual(label(of: "add.hotspotPath"), "Settings > Personal Hotspot > Allow Others to Join")
-        XCTAssertTrue(app.segmentedControls.buttons["iPhone or iPad"].isSelected, "a phone or tablet first")
+        XCTAssertTrue(app.segmentedControls.buttons["Phone or tablet"].isSelected, "a phone or tablet first")
+        XCTAssertTrue(app.segmentedControls.buttons["Computer or router"].exists)
         XCTAssertEqual(element("add.qr").label, "QR code for the next device")
-        XCTAssertEqual(reveal(element("add.scan")).label, "In WireGuard, tap + and Create from QR code.")
+        // The iOS app's wording and the Android app's (#171).
+        XCTAssertEqual(reveal(element("add.scan")).label, "In WireGuard, tap + and Create from QR code. On Android, tap + and Scan from QR code.")
         // It stops working later (#29), and nothing else would say so (#91).
         XCTAssertEqual(reveal(element("add.codeWindow")).label, Self.windowNote)
         assertNowhere(element("add.address"), element("add.share"), element("add.result"), element("add.done"), element("add.joinFirst"))
     }
 
     /// A computer gets the page's address as text, a button that copies it, and the file to share. Not a
-    /// link: a tap would open the page on this iPhone (#184).
-    func testAComputerGetsTheAddressAndTheFile() {
+    /// link: a tap would open the page on this iPhone (#184). A travel router imports the file (#171).
+    func testAComputerOrRouterGetsTheAddressAndTheFile() {
         launch(.waiting)
         openAddDevice()
-        app.segmentedControls.buttons["Computer"].tap()
+        app.segmentedControls.buttons["Computer or router"].tap()
         XCTAssertEqual(reveal(element("add.laptop")).label, "Open this in the computer's browser while Tether is on screen:")
         let address = reveal(element("add.address"))
         XCTAssertEqual(address.label, "Page address")
@@ -53,6 +55,7 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(element("add.copy").label, "Copy the address")
         XCTAssertTrue(reveal(element("add.share")).label.contains("Share the file"))
         XCTAssertEqual(reveal(element("add.airdrop")).label, "AirDrop it to a Mac, then open it in WireGuard.")
+        XCTAssertEqual(reveal(element("add.router")).label, "On a travel router, import the file in its VPN settings, under WireGuard.")
         // The file stops working like the code. A download from the page is listed at once, so it doesn't.
         XCTAssertEqual(reveal(element("add.fileWindow")).label, Self.windowNote)
         assertNowhere(element("add.qr"), element("add.codeWindow"), element("add.macLabel"), element("add.addressMac"), element("add.ipv6"),

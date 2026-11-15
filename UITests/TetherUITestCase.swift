@@ -369,7 +369,7 @@ class TetherUITestCase: XCTestCase {
     /// Their tests read the real contrast from the pixels instead, see `textContrast`.
     static let filledButtons: Set<String> = ["intro.continue"]
     /// Tether's elements that use only `.secondary` text, the plain button tint or the system's red for a destructive button.
-    static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.hint", "add.airdrop", "notices.footer", "sharing.footer", "settings.logFooter"]
+    static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.hint", "add.airdrop", "add.router", "notices.footer", "sharing.footer", "settings.logFooter"]
 
     /// The audit without contrast, for a screen that is scrolled (see `audit`).
     var structuralAudit: XCUIAccessibilityAuditType {
