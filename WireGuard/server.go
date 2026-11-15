@@ -786,12 +786,14 @@ func (s *Server) readHandshakes() {
 	}
 	s.readAt = now
 	var closing []io.Closer
+	var gone []string
 	for addr, set := range s.flows {
 		at, ok := shaken[addr]
 		if at.Before(s.watchingSince) {
 			at = s.watchingSince
 		}
-		if ok && now.Sub(at) > sessionOver {
+		if ok && now.Sub(at) > sessionOver && len(set) > 0 {
+			gone = append(gone, fmt.Sprintf("%v (%d)", addr, len(set)))
 			for c := range set {
 				closing = append(closing, c)
 			}
@@ -800,6 +802,9 @@ func (s *Server) readHandshakes() {
 	s.mu.Unlock()
 	for _, c := range closing {
 		c.Close()
+	}
+	if len(gone) > 0 {
+		s.notice("closed the connections of %s: no handshake for %v", strings.Join(gone, ", "), sessionOver)
 	}
 }
 
