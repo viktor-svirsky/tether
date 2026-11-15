@@ -779,8 +779,10 @@ func (s *Server) readHandshakes() {
 	// device gone mid-download kept its connections and their full send buffers while gVisor resent
 	// for minutes (#149). A live device that stopped reading still handshakes, so it keeps them.
 	// Only time the server watched counts: after Tether was suspended, or the clock jumped, every
-	// handshake looks old until the devices had a chance to make a new one.
-	now := s.now()
+	// handshake looks old until the devices had a chance to make a new one. Handshake times are wall
+	// clock only, so the gap is too: a monotonic reading would miss the wall clock jumping ahead, and
+	// on Darwin it doesn't count the time the iPhone slept.
+	now := s.now().Round(0)
 	if now.Sub(s.readAt) > 2*handshakeEvery || now.Before(s.readAt) {
 		s.watchingSince = now
 	}
