@@ -206,11 +206,12 @@ enum ConfigPage {
             """
             <p><a class="button" href="\(downloadPath)">Download the config</a></p>
             <p>Then import it in the WireGuard app.</p>
-            <details>
+            <p>Turn the tunnel on. Tether on the iPhone then shows this device as connected.</p>
+            <details open>
             <summary>How, on Mac, Windows, Linux or a phone</summary>
             <ul>
-            <li>Mac: get WireGuard from the App Store, then Import Tunnel(s) from File.</li>
-            <li>Windows: get WireGuard from wireguard.com/install, then Import tunnel(s) from file.</li>
+            <li>Mac: get WireGuard from <a href="https://apps.apple.com/app/wireguard/id1451685025">the Mac App Store</a>, then Import Tunnel(s) from File.</li>
+            <li>Windows: get WireGuard from <a href="https://www.wireguard.com/install/">wireguard.com/install</a>, then Import tunnel(s) from file.</li>
             <li>iPhone, iPad or Android: in the WireGuard app, tap + and import the file.</li>
             <li>Linux: <code>sudo wg-quick up</code> and the file's path.</li>
             <li>Each config is for one device. For another device, open this page on it.</li>
@@ -219,17 +220,20 @@ enum ConfigPage {
             """
         case .openTether:
             """
-            <p>Open Tether on the iPhone and keep it on screen, then reload this page.</p>
+            <p>Open Tether on the iPhone and keep it on screen. This page reloads by itself.</p>
             """
         case .openAddDevice:
             """
-            <p>In Tether on the iPhone, open Add a device, then reload this page.</p>
+            <p>In Tether on the iPhone, open Add a device. This page reloads by itself.</p>
             """
         case .noConfig:
             """
             <p>Tether can't make a config for a new device right now. Tether's screen on the iPhone says why.</p>
             """
         }
+        // A waiting page reloads until the iPhone is ready. It goes to the page, not to the URL it was
+        // served at: that can be the download link, and each download claims the ready device.
+        let refresh = state == .ready ? "" : "<meta http-equiv=\"refresh\" content=\"5; url=/\">\n"
         let notice = stale.map { "<p class=\"stale\">\($0.line)</p>\n" } ?? ""
         return """
         <!doctype html>
@@ -237,15 +241,16 @@ enum ConfigPage {
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Tether</title>
+        \(refresh)<title>Tether</title>
         <style>
-        :root { color-scheme: light dark; --bg: #f2f2f7; --card: #fff; --text: #1c1c1e; --muted: #6c6c70; --accent: #0073c7; --on-accent: #fff; }
-        @media (prefers-color-scheme: dark) { :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --muted: #98989f; --accent: #4db3ff; --on-accent: #0b1a26; } }
+        :root { color-scheme: light dark; --bg: #f2f2f7; --text: #1c1c1e; --muted: #6c6c70; --accent: #0073c7; --on-accent: #fff; }
+        @media (prefers-color-scheme: dark) { :root { --bg: #000; --text: #f2f2f7; --muted: #98989f; --accent: #4db3ff; --on-accent: #0b1a26; } }
         body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
         main { max-width: 520px; margin: 0 auto; padding: 24px 16px; }
         h1 { font-size: 28px; margin: 0 0 16px; }
-        p, li, summary { color: var(--muted); }
+        li, summary { color: var(--muted); }
         summary { cursor: pointer; }
+        a { color: var(--accent); }
         ul { padding-left: 20px; margin: 8px 0 0; }
         code { font: 15px ui-monospace, Menlo, Consolas, monospace; }
         .stale { color: var(--text); font-weight: 600; }

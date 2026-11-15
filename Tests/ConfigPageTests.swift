@@ -168,11 +168,11 @@ final class ConfigPageTests: XCTestCase {
         let ready = try html(.ready)
         XCTAssertTrue(ready.contains("href=\"\(ConfigPage.downloadPath)\""))
         XCTAssertTrue(ready.contains("Then import it in the WireGuard app."))
-        // Compact: the button comes first, and the steps for each system wait behind a tap.
+        // The button comes first, then the steps, then the steps for each system.
         let button = try XCTUnwrap(ready.range(of: "Download the config"))
-        let steps = try XCTUnwrap(ready.range(of: "<details>"))
+        let steps = try XCTUnwrap(ready.range(of: "<details"))
         XCTAssertLessThan(button.lowerBound, steps.lowerBound)
-        XCTAssertEqual(ready.components(separatedBy: "<p>").count - 1, 2, "the button and one line")
+        XCTAssertEqual(ready.components(separatedBy: "<p>").count - 1, 3, "the button and two lines")
         let open = try html(.openTether)
         XCTAssertFalse(open.contains("Tether.conf"))
         XCTAssertTrue(open.contains("Open Tether on the iPhone"))
@@ -182,6 +182,48 @@ final class ConfigPageTests: XCTestCase {
         let none = try html(.noConfig)
         XCTAssertFalse(none.contains("Tether.conf"))
         XCTAssertTrue(none.contains("can't make a config"))
+    }
+
+    private func html(_ state: ConfigPage.State) throws -> String {
+        try XCTUnwrap(String(data: parts(ConfigPage.page(state)).body, encoding: .utf8))
+    }
+
+    /// The page ends at a working tunnel, not at the import (#179).
+    func testTheReadyPageEndsWithTurningTheTunnelOn() throws {
+        let ready = try html(.ready)
+        let importLine = try XCTUnwrap(ready.range(of: "Then import it in the WireGuard app."))
+        let last = try XCTUnwrap(ready.range(of: "<p>Turn the tunnel on. Tether on the iPhone then shows this device as connected.</p>"))
+        XCTAssertLessThan(importLine.lowerBound, last.lowerBound)
+        XCTAssertLessThan(last.lowerBound, try XCTUnwrap(ready.range(of: "<details")).lowerBound)
+    }
+
+    /// The computer often has internet through the hotspot by now, so the install hints are links,
+    /// and shown without a tap (#179).
+    func testTheInstallHintsAreOpenLinks() throws {
+        let ready = try html(.ready)
+        XCTAssertTrue(ready.contains("<details open>"))
+        XCTAssertTrue(ready.contains("<a href=\"https://www.wireguard.com/install/\">wireguard.com/install</a>"))
+        XCTAssertTrue(ready.contains("<a href=\"https://apps.apple.com/app/wireguard/id1451685025\">the Mac App Store</a>"))
+    }
+
+    /// A waiting page moves on by itself once the iPhone is ready (#179). It goes back to the page,
+    /// not to the URL it was served at: that can be a download link, and a download claims the device.
+    func testOnlyTheWaitingPagesReloadThemselves() throws {
+        let refresh = "<meta http-equiv=\"refresh\" content=\"5; url=/\">"
+        XCTAssertFalse(try html(.ready).contains("http-equiv=\"refresh\""))
+        for state in [ConfigPage.State.openTether, .openAddDevice, .noConfig] {
+            let page = try html(state)
+            XCTAssertTrue(page.contains(refresh), "\(state)")
+            XCTAssertFalse(page.contains("reload this page"), "\(state)")
+        }
+    }
+
+    /// The instruction reads in the text colour, only the hints are grey (#179).
+    func testOnlyTheHintsAreGrey() throws {
+        let ready = try html(.ready)
+        XCTAssertTrue(ready.contains("li, summary { color: var(--muted); }"))
+        XCTAssertFalse(ready.contains("p, li, summary"))
+        XCTAssertFalse(ready.contains("--card"), "defined and never used")
     }
 
     /// A config that no longer works is why the device can't connect, so the page says it first.
