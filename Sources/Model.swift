@@ -204,6 +204,7 @@ final class Model: ObservableObject {
                        carrierIPv6Only: Interfaces.carrierIPv6Only,
                        idleStopAfter: { IdleStop.After.saved(in: settings) },
                        dns: { DNSChoice.upstream(in: settings) }, usageDefaults: settings,
+                       resetDay: { ResetDay.saved(in: settings) },
                        log: Self.append)
     }
 

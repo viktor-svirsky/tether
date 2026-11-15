@@ -48,7 +48,7 @@ struct LimitAlert: Equatable {
     /// Both ways this month, and the limit, in bytes.
     let used: UInt64
     let limit: UInt64
-    /// The 1st of next month, when the count starts over.
+    /// When the count starts over, see `HotspotSession.nextReset`.
     let resets: Date
 
     var id: String { "\(kind.rawValue)-\(device)-\(Int(resets.timeIntervalSince1970))-\(limit)" }

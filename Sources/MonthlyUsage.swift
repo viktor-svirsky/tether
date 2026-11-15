@@ -1,6 +1,7 @@
 import Foundation
 
-/// Each device's data through Tether per calendar month, this month and last (#75). Counted from
+/// Each device's data through Tether per period, this one and the last (#75). A period runs from one
+/// reset day to the next, the 1st unless the plan's billing day is set (#187), see `ResetDay`. Counted from
 /// the server's per-device counters, the same bytes as the main screen's total, by device id, since
 /// a tunnel address goes to the next device after a removal. Foundation only, so `swift test` covers it.
 ///
@@ -12,51 +13,82 @@ import Foundation
 /// It also keeps when each device last connected (#73), saved the same way, since the server
 /// forgets its handshakes when it stops.
 struct MonthlyUsage: Codable, Equatable {
-    /// A calendar month, in the time zone of the read.
-    struct Month: Codable, Hashable, Comparable {
+    /// A day on the calendar, in the time zone of the read. A period starts at the start of one and
+    /// is known by it.
+    struct Day: Codable, Hashable, Comparable {
         let year: Int
         let month: Int
+        let day: Int
 
         init(_ date: Date, calendar: Calendar) {
-            let c = calendar.dateComponents([.year, .month], from: date)
+            let c = calendar.dateComponents([.year, .month, .day], from: date)
             year = c.year ?? 0
             month = c.month ?? 0
+            day = c.day ?? 0
         }
 
-        private init(year: Int, month: Int) {
+        init(year: Int, month: Int, day: Int) {
             self.year = year
             self.month = month
+            self.day = day
         }
 
-        var previous: Month { month == 1 ? Month(year: year - 1, month: 12) : Month(year: year, month: month - 1) }
+        /// Saved before #187 it was a calendar month, with no day: that period started on the 1st.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            year = try container.decode(Int.self, forKey: .year)
+            month = try container.decode(Int.self, forKey: .month)
+            day = try container.decodeIfPresent(Int.self, forKey: .day) ?? 1
+        }
 
-        static func < (a: Month, b: Month) -> Bool { (a.year, a.month) < (b.year, b.month) }
+        /// When it starts, nil for a day the calendar doesn't have.
+        func start(in calendar: Calendar) -> Date? {
+            calendar.date(from: DateComponents(year: year, month: month, day: day))
+        }
+
+        static func < (a: Day, b: Day) -> Bool { (a.year, a.month, a.day) < (b.year, b.month, b.day) }
     }
 
-    /// What a device used, as a screen shows it.
+    /// From the start of one day to the start of another.
+    struct Period: Codable, Equatable {
+        let start: Day
+        let end: Day
+    }
+
+    /// What a device used this period and the last, as a screen shows it.
     struct Usage: Equatable {
         var thisMonth = TrafficTotals()
         var lastMonth = TrafficTotals()
     }
 
     private struct Device: Codable, Equatable {
-        /// The month `thisMonth` is for, the latest any read was in.
-        var month: Month
+        /// The start of the period `thisMonth` is for, the latest any read was in. Saved as `month`,
+        /// from when it was the calendar month.
+        var period: Day
         var thisMonth: TrafficTotals
         var lastMonth: TrafficTotals
+
+        private enum CodingKeys: String, CodingKey { case period = "month", thisMonth, lastMonth }
     }
 
-    /// What a device's limit has done this month, see `HotspotSession.checkLimits`. Each is the month
-    /// it holds for, so a new month forgets it.
+    /// What a device's limit has done this period, see `HotspotSession.checkLimits`. Each is the start
+    /// of the period it holds for, so a new period forgets it.
     private struct Marks: Codable, Equatable {
-        /// Resumed by hand at its limit: it goes over until the 1st.
-        var resumedOver: Month?
+        /// Resumed by hand at its limit: it goes over until the count resets.
+        var resumedOver: Day?
         /// Told it's near its limit.
-        var nearTold: Month?
+        var nearTold: Day?
     }
 
     static let key = "usage.monthly"
 
+    /// The day the periods start on, as last followed, see `setResetDay`.
+    private(set) var resetDay: ResetDay
+    /// The period that was running when the reset day last changed, which ends on the new day's next
+    /// date, see `setResetDay`. Nil before any change.
+    private var changed: Period?
+    /// The start of the period before `changed`, found with the day it followed, which is gone now.
+    private var beforeChanged: Day?
     private var devices: [UUID: Device] = [:]
     private var marks: [UUID: Marks] = [:]
     /// Each device's last handshake while it wasn't paused (#73), see `record`. Kept here, since the
@@ -68,19 +100,25 @@ struct MonthlyUsage: Codable, Equatable {
     /// it when it stops.
     private var pausedHandshakes: [UUID: Date] = [:]
 
-    private enum CodingKeys: String, CodingKey { case devices, marks, lastHandshakes }
+    private enum CodingKeys: String, CodingKey { case resetDay, changed, beforeChanged, devices, marks, lastHandshakes }
 
-    init() {}
+    init(resetDay: ResetDay = .default) {
+        self.resetDay = resetDay
+    }
 
-    /// Usage saved before there were marks or handshakes has none.
+    /// Usage saved before there were marks, handshakes or a reset day has none, so its periods start
+    /// on the 1st.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        resetDay = try container.decodeIfPresent(ResetDay.self, forKey: .resetDay) ?? .default
+        changed = try container.decodeIfPresent(Period.self, forKey: .changed)
+        beforeChanged = try container.decodeIfPresent(Day.self, forKey: .beforeChanged)
         devices = try container.decode([UUID: Device].self, forKey: .devices)
         marks = try container.decodeIfPresent([UUID: Marks].self, forKey: .marks) ?? [:]
         lastHandshakes = try container.decodeIfPresent([UUID: Date].self, forKey: .lastHandshakes) ?? [:]
     }
 
-    /// Adds what each device's counters grew by since the last read to the month of `date`, and
+    /// Adds what each device's counters grew by since the last read to the period of `date`, and
     /// keeps each device's last handshake. A device with none in this read, as from a stopped
     /// server, keeps the one it had. One in the read always replaces it, even an earlier one: the
     /// server's only moves forward, so an earlier one means the clock was set back, and keeping the
@@ -99,33 +137,71 @@ struct MonthlyUsage: Codable, Equatable {
                 lastHandshakes[id] = handshake
             }
         }
-        let month = Month(date, calendar: calendar)
+        let current = period(of: date, calendar: calendar).start
         for (id, now) in counts {
             let before = seen[id] ?? TrafficTotals()
             seen[id] = now
             let startedOver = now.bytesUp < before.bytesUp || now.bytesDown < before.bytesDown
             let added = startedOver ? now : TrafficTotals(bytesUp: now.bytesUp - before.bytesUp, bytesDown: now.bytesDown - before.bytesDown)
             guard added != TrafficTotals() else { continue }
-            var device = devices[id] ?? Device(month: month, thisMonth: TrafficTotals(), lastMonth: TrafficTotals())
-            if month == device.month {
+            var device = devices[id] ?? Device(period: current, thisMonth: TrafficTotals(), lastMonth: TrafficTotals())
+            if current == device.period {
                 device.thisMonth += added
-            } else if month > device.month {
-                device.lastMonth = month.previous == device.month ? device.thisMonth : TrafficTotals()
+            } else if current > device.period {
+                device.lastMonth = device.period >= start(before: current, calendar: calendar) ? device.thisMonth : TrafficTotals()
                 device.thisMonth = added
-                device.month = month
-            } else if month == device.month.previous {
-                device.lastMonth += added // the clock went back across the 1st: never roll back
+                device.period = current
+            } else if current >= start(before: device.period, calendar: calendar) {
+                device.lastMonth += added // the clock went back across a reset: never roll back
             }
             devices[id] = device
         }
     }
 
-    /// This month and last as of `date`, so a month that turned over with no read since shows right.
+    /// This period and the last as of `date`, so a period that ended with no read since shows right.
     func of(_ id: UUID, at date: Date, calendar: Calendar) -> Usage {
         guard let device = devices[id] else { return Usage() }
-        let month = Month(date, calendar: calendar)
-        if month <= device.month { return Usage(thisMonth: device.thisMonth, lastMonth: device.lastMonth) }
-        return Usage(thisMonth: TrafficTotals(), lastMonth: month.previous == device.month ? device.thisMonth : TrafficTotals())
+        let current = period(of: date, calendar: calendar).start
+        if current <= device.period { return Usage(thisMonth: device.thisMonth, lastMonth: device.lastMonth) }
+        let last = device.period >= start(before: current, calendar: calendar)
+        return Usage(thisMonth: TrafficTotals(), lastMonth: last ? device.thisMonth : TrafficTotals())
+    }
+
+    // MARK: Periods
+
+    /// When the period `date` is in ends, and the counts and the limits start over.
+    func nextReset(at date: Date, calendar: Calendar) -> Date {
+        period(of: date, calendar: calendar).end.start(in: calendar) ?? date
+    }
+
+    /// The reset day changed in Settings at `date`. The running period ends on the new day's next
+    /// date, with all it counted: from the 1st to the 15th on November 20, the period from November
+    /// 1 runs to December 15, and a device paused at its limit stays paused until then. Ending it on
+    /// the old date instead would start the count over twice within one of the carrier's periods,
+    /// and let a device use its limit twice.
+    mutating func setResetDay(_ day: ResetDay, at date: Date, calendar: Calendar) {
+        guard day != resetDay else { return }
+        let running = period(of: date, calendar: calendar)
+        beforeChanged = start(before: running.start, calendar: calendar)
+        resetDay = day
+        changed = Period(start: running.start, end: day.next(after: Day(date, calendar: calendar), calendar: calendar))
+    }
+
+    /// The period `date` is in: the changed one, or one from a reset day to the next. Before the
+    /// change, as with a clock set back, there's only the new day to go by.
+    private func period(of date: Date, calendar: Calendar) -> Period {
+        let today = Day(date, calendar: calendar)
+        if let changed, changed.start <= today, today < changed.end { return changed }
+        var end = resetDay.next(after: today, calendar: calendar)
+        if let changed, today < changed.start { end = min(end, changed.start) }
+        return Period(start: resetDay.last(onOrBefore: today, calendar: calendar), end: end)
+    }
+
+    /// The start of the period before the one that starts on `start`.
+    private func start(before start: Day, calendar: Calendar) -> Day {
+        if let changed, start == changed.end { return changed.start }
+        if let changed, start == changed.start, let beforeChanged { return beforeChanged }
+        return resetDay.last(before: start, calendar: calendar)
     }
 
     /// When the device last connected, nil for never.
@@ -143,19 +219,19 @@ struct MonthlyUsage: Codable, Equatable {
     // MARK: The limit's marks
 
     func resumedOver(_ id: UUID, at date: Date, calendar: Calendar) -> Bool {
-        marks[id]?.resumedOver == Month(date, calendar: calendar)
+        marks[id]?.resumedOver == period(of: date, calendar: calendar).start
     }
 
     mutating func markResumedOver(_ id: UUID, at date: Date, calendar: Calendar) {
-        marks[id, default: Marks()].resumedOver = Month(date, calendar: calendar)
+        marks[id, default: Marks()].resumedOver = period(of: date, calendar: calendar).start
     }
 
     func nearTold(_ id: UUID, at date: Date, calendar: Calendar) -> Bool {
-        marks[id]?.nearTold == Month(date, calendar: calendar)
+        marks[id]?.nearTold == period(of: date, calendar: calendar).start
     }
 
     mutating func markNearTold(_ id: UUID, at date: Date, calendar: Calendar) {
-        marks[id, default: Marks()].nearTold = Month(date, calendar: calendar)
+        marks[id, default: Marks()].nearTold = period(of: date, calendar: calendar).start
     }
 
     /// A new limit starts over: a resume or a notice for the old one doesn't hold for it.
@@ -163,8 +239,9 @@ struct MonthlyUsage: Codable, Equatable {
         marks[id] = nil
     }
 
-    static func load(from defaults: UserDefaults) -> MonthlyUsage {
-        defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(MonthlyUsage.self, from: $0) } ?? MonthlyUsage()
+    /// Nothing saved, or nothing readable, starts over on `resetDay`: there's no period to change.
+    static func load(from defaults: UserDefaults, resetDay: ResetDay = .default) -> MonthlyUsage {
+        defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(MonthlyUsage.self, from: $0) } ?? MonthlyUsage(resetDay: resetDay)
     }
 
     func save(to defaults: UserDefaults) {
@@ -172,6 +249,8 @@ struct MonthlyUsage: Codable, Equatable {
     }
 
     static func == (a: MonthlyUsage, b: MonthlyUsage) -> Bool {
-        a.devices == b.devices && a.marks == b.marks && a.lastHandshakes == b.lastHandshakes
+        a.resetDay == b.resetDay && a.changed == b.changed && a.beforeChanged == b.beforeChanged
+            && a.devices == b.devices && a.marks == b.marks
+            && a.lastHandshakes == b.lastHandshakes
     }
 }
