@@ -47,12 +47,15 @@ jobs:
       - name: UI tests
         run: |
           xcodegen generate --quiet
+          # Every test's line, with its time, so a slow or stuck run shows where. A test that hangs
+          # fails after 10 minutes instead of using up the job's time.
           xcodebuild test -project Tether.xcodeproj -scheme Tether -destination "id=$SIM" \
             -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/UITests.xcresult" \
-            | grep -E "Test Case .* failed|Executed [0-9]+ tests|error:|TEST (SUCCEEDED|FAILED)"
+            -test-timeouts-enabled YES -maximum-test-execution-time-allowance 600 \
+            | grep -E "Test Case .* (passed|failed)|Executed [0-9]+ tests|error:|TEST (SUCCEEDED|FAILED)"
       # The result bundle has a screenshot of every failure. Open it in Xcode.
       - name: Keep the results of a failed run
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: UITests-iOS-${{ matrix.ios }}.xcresult
