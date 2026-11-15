@@ -70,7 +70,7 @@ struct WireGuardSetup: Codable, Equatable {
         /// Paused on its screen, until it's resumed there.
         case byYou
         /// It used its data limit for the month, see `Peer.limit`. It connects again when the count
-        /// starts over on the 1st, or when it's resumed. An older release reads it as paused by you.
+        /// starts over, or when it's resumed. An older release reads it as paused by you.
         case atLimit
 
         private enum CodingKeys: String, CodingKey { case why }

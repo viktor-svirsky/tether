@@ -31,7 +31,7 @@ final class NotificationsTests: TetherUITestCase {
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
         XCTAssertTrue(menu.label.contains("Stop sharing when idle"), menu.label)
         XCTAssertTrue(menu.label.contains("Never") || value(of: menu) == "Never", "Never at first: \(menu.label)")
-        XCTAssertEqual(label(of: "sharing.footer"), "Idle means no device is connected. Stopping saves battery. Open Tether to share again.")
+        XCTAssertEqual(label(of: "sharing.footer"), SettingsResetDayTests.footer)
         try audit()
         menu.tap()
         for choice in ["Never", "After 10 min", "After 30 min", "After 1 hour"] {

@@ -206,7 +206,8 @@ struct DemoState {
                                      page: FakePage(), sceneActive: true, hotspotAddress: { address },
                                      dns: { DNSChoice.upstream(in: UserDefaults(suiteName: Self.settingsSuite)!) },
                                      blockLocal: { !LocalNetworks.allowed(in: UserDefaults(suiteName: Self.settingsSuite)!) },
-                                     now: { clock.now }, log: log)
+                                     now: { clock.now }, resetDay: { ResetDay.saved(in: UserDefaults(suiteName: Self.settingsSuite)!) },
+                                     log: log)
         session.syncWithHotspot()
         server.connected = connected
         // What the iPad used this month, for its screen. The Windows PC used nothing.

@@ -215,6 +215,7 @@ final class Model: ObservableObject {
                            settleLocalNetworks(settings, secrets: secrets) // once the Keychain can be read
                            return !LocalNetworks.allowed(in: settings)
                        }, usageDefaults: settings,
+                       resetDay: { ResetDay.saved(in: settings) },
                        log: Self.append)
     }
 
@@ -381,6 +382,15 @@ final class Model: ObservableObject {
 
     /// "1 December": see `HotspotSession.nextReset`.
     var nextResetDay: String { LimitAlert.day(session.nextReset, calendar: .current) }
+
+    /// "this month", or "since Nov 15" with another reset day: see `Format.period`.
+    var usagePeriod: String { Format.period(session.period, calendar: .current) }
+
+    /// "Last month", or "Oct 15 to Nov 14" with another reset day: see `Format.lastPeriod`.
+    var lastPeriodLabel: String { Format.lastPeriod(session.lastPeriod, calendar: .current) }
+
+    /// Settings > Sharing changed the reset day, see `HotspotSession.resetDayChanged`.
+    func resetDayChanged() { session.resetDayChanged() }
 
     /// See `HotspotSession.needsNewConfig`.
     func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {

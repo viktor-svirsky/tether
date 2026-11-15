@@ -122,6 +122,9 @@ final class HotspotSession {
     private let blockLocal: () -> Bool
     /// Where each device's data per month is saved, see `MonthlyUsage`. Nil keeps it in memory only.
     private let usageDefaults: UserDefaults?
+    /// The day the counts and the limits start over (#187), read each time they're used, so a change
+    /// in Settings counts at once.
+    private let resetDay: () -> ResetDay
     /// Follows a time zone change while Tether runs for days on the silent sound: `.current` is a
     /// snapshot from launch (#163).
     private let calendar: Calendar
@@ -168,6 +171,7 @@ final class HotspotSession {
          idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> DNSChoice.Upstream = { DNSChoice.defaultUpstream },
          blockLocal: @escaping () -> Bool = { false },
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
+         resetDay: @escaping () -> ResetDay = { .default },
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -181,7 +185,8 @@ final class HotspotSession {
         self.dns = dns
         self.usageDefaults = usageDefaults
         self.calendar = calendar
-        monthlyUsage = usageDefaults.map(MonthlyUsage.load(from:)) ?? MonthlyUsage()
+        self.resetDay = resetDay
+        monthlyUsage = usageDefaults.map { MonthlyUsage.load(from: $0, resetDay: resetDay()) } ?? MonthlyUsage(resetDay: resetDay())
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
         self.log = log
@@ -205,7 +210,7 @@ final class HotspotSession {
         syncWithHotspot()
         // On screen the sampler does this every second.
         if !sceneActive { readInBackground() }
-        // Also with the hotspot off, so a device paused at its limit connects again on the 1st.
+        // Also with the hotspot off, so a device paused at its limit connects again when the count resets.
         checkLimits()
         stopWhenIdle()
     }
@@ -494,14 +499,15 @@ final class HotspotSession {
     /// Paused, a device stays on the server, so its tunnel stays up, but nothing gets through until
     /// it's resumed. A pause that couldn't be saved changes nothing, and its screen says so.
     /// A device already paused stays paused for its reason: one paused at its limit just now, before
-    /// the screen showed it, still connects again on the 1st.
+    /// the screen showed it, still connects again when the count resets.
     func pauseWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
         guard devices.setup.peers.first(where: { $0.id == id })?.paused == nil else { return }
         pause(id, .byYou, problem: "The device couldn't be paused.")
     }
 
     /// A device paused at its limit, resumed by hand while it's still at it, goes over it until the
-    /// 1st, see `checkLimits`. One the count already let go (the 1st, before a read caught up) doesn't.
+    /// count resets, see `checkLimits`. One the count already let go (the reset, before a read caught
+    /// up) doesn't.
     func resumeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
         let peer = devices.setup.peers.first { $0.id == id }
         let atLimit = peer?.paused == .atLimit && peer?.limit.map { usage(of: id).thisMonth.total >= $0 } == true
@@ -532,14 +538,46 @@ final class HotspotSession {
         return true
     }
 
-    /// Resumed at its limit this month, so it's over it until the 1st.
+    /// Resumed at its limit this period, so it's over it until the count resets.
     func overLimit(_ id: WireGuardSetup.Peer.ID) -> Bool {
-        monthlyUsage.resumedOver(id, at: now(), calendar: calendar)
+        followResetDay()
+        return monthlyUsage.resumedOver(id, at: now(), calendar: calendar)
     }
 
-    /// The 1st of next month, when the counts and the limits start over, on the session's clock.
+    /// When the counts and the limits start over, on the session's clock, see `MonthlyUsage.nextReset`.
     var nextReset: Date {
-        calendar.dateInterval(of: .month, for: now())?.end ?? now()
+        followResetDay()
+        return monthlyUsage.nextReset(at: now(), calendar: calendar)
+    }
+
+    /// The running count, from its start to `nextReset`, for the screens' "since Nov 15", see
+    /// `Format.period`.
+    var period: DateInterval {
+        followResetDay()
+        return monthlyUsage.period(at: now(), calendar: calendar)
+    }
+
+    /// The period before `period`, for the device screen's row, see `Format.lastPeriod`.
+    var lastPeriod: DateInterval {
+        followResetDay()
+        return monthlyUsage.lastPeriod(at: now(), calendar: calendar)
+    }
+
+    /// Settings changed the reset day: followed now, so the screens show the new dates when Settings
+    /// closes, not at the next read.
+    func resetDayChanged() {
+        followResetDay()
+        willChange()
+    }
+
+    /// A new reset day counts from now, see `MonthlyUsage.setResetDay`. Saved at once, so a relaunch
+    /// doesn't move the change to its own time.
+    private func followResetDay() {
+        let day = resetDay()
+        guard day != monthlyUsage.resetDay else { return }
+        monthlyUsage.setResetDay(day, at: now(), calendar: calendar)
+        usageUnsaved = true
+        saveUsage()
     }
 
     @discardableResult
@@ -818,7 +856,8 @@ final class HotspotSession {
 
     /// What the device used this month and last, as of now, see `MonthlyUsage`.
     func usage(of id: WireGuardSetup.Peer.ID) -> MonthlyUsage.Usage {
-        monthlyUsage.of(id, at: now(), calendar: calendar)
+        followResetDay()
+        return monthlyUsage.of(id, at: now(), calendar: calendar)
     }
 
     /// The device's last handshake, kept through restarts and relaunches (#73). Nil for never, and for
@@ -846,6 +885,7 @@ final class HotspotSession {
             handshakes[id] = stats.lastHandshake
         }
         let paused = Set(devices.setup.peers.filter { $0.paused != nil }.map(\.id))
+        followResetDay()
         let before = monthlyUsage
         let now = self.now()
         monthlyUsage.record(counts, handshakes: handshakes, paused: paused, at: now, calendar: calendar)
@@ -856,10 +896,11 @@ final class HotspotSession {
 
     /// Each device's limit against what it used this month, after every read: at 90% it's told once,
     /// at its limit it's paused and told, unless it was resumed at its limit this month. A device paused
-    /// at its limit connects again once it's under it: on the 1st, or with a higher limit or none. A
+    /// at its limit connects again once it's under it: when the count resets, or with a higher limit or none. A
     /// pause or resume that can't be saved is tried again at the next read, and only a saved one is told.
     private func checkLimits() {
         guard devices.loaded else { return }
+        followResetDay()
         let now = self.now()
         var changed = false
         for peer in devices.setup.peers {
@@ -872,7 +913,7 @@ final class HotspotSession {
             case let (nil, limit?) where used >= limit && !monthlyUsage.resumedOver(peer.id, at: now, calendar: calendar):
                 guard devices.pause(peer.id, .atLimit) else { continue }
                 changed = true
-                log("WireGuard: a device reached its limit and is paused until the 1st")
+                log("WireGuard: a device reached its limit and is paused until the count resets")
                 alert(peer, .reached, used: used, limit: limit, now: now)
             case let (nil, limit?) where used < limit && used >= limit / 10 * 9 && !monthlyUsage.nearTold(peer.id, at: now, calendar: calendar):
                 monthlyUsage.markNearTold(peer.id, at: now, calendar: calendar)
@@ -889,7 +930,7 @@ final class HotspotSession {
     }
 
     private func alert(_ peer: WireGuardSetup.Peer, _ kind: LimitAlert.Kind, used: UInt64, limit: UInt64, now: Date) {
-        let alert = LimitAlert(device: peer.id, name: peer.name, kind: kind, used: used, limit: limit, resets: nextReset)
+        let alert = LimitAlert(device: peer.id, name: peer.name, kind: kind, used: used, limit: limit, period: period)
         limitAlerts = Array((limitAlerts + [alert]).suffix(20))
     }
 

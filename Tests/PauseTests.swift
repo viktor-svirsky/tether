@@ -264,7 +264,7 @@ final class PauseTests: XCTestCase {
         for c in cases {
             XCTAssertEqual(c.status.label, c.label, line: c.line)
             XCTAssertEqual(c.status.title, c.title, line: c.line)
-            XCTAssertEqual(c.status.detail(resets: "December 1"), c.detail, line: c.line)
+            XCTAssertEqual(c.status.detail(resets: "December 1", period: "this month"), c.detail, line: c.line)
         }
     }
 

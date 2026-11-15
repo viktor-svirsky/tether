@@ -13,6 +13,7 @@ final class LimitTests: XCTestCase {
     }()
     private var now = Date()
     private var hotspotOff = false
+    private var resetDay = ResetDay.default
     private var server: FakeServer!
     private var secrets: FlakySecrets!
     private var devices: WireGuardDevices!
@@ -30,12 +31,16 @@ final class LimitTests: XCTestCase {
     /// A session with one listed device, iPad, connected, on 10 November.
     private func iPad() throws -> WireGuardSetup.Peer {
         now = date(2026, 11, 10)
+        // XCTest makes every test's instance before the first runs, so the one above was emptied
+        // before the tests that ran earlier saved theirs.
+        usageDefaults.removePersistentDomain(forName: "LimitTests")
         server = FakeServer()
         secrets = FlakySecrets()
         devices = WireGuardDevices(secrets: secrets)
         session = HotspotSession(devices: devices, server: server, keepAlive: FakeSound(), page: FakePage(),
                                  sceneActive: true, hotspotAddress: { [unowned self] in hotspotOff ? nil : hotspot },
-                                 usageDefaults: usageDefaults, calendar: calendar, now: { [unowned self] in now })
+                                 usageDefaults: usageDefaults, calendar: calendar, now: { [unowned self] in now },
+                                 resetDay: { [unowned self] in resetDay })
         session.syncWithHotspot()
         var peer = try XCTUnwrap(devices.connectReady())
         XCTAssertTrue(devices.rename(peer.id, to: "iPad"))
@@ -79,7 +84,8 @@ final class LimitTests: XCTestCase {
         let status = DeviceStatus(peer, connected: ["10.7.0.2"])
         XCTAssertEqual(status.label, "Paused")
         XCTAssertEqual(status.title, "Paused at its limit")
-        XCTAssertEqual(status.detail(resets: "December 1"), "It used its data for this month. It connects again on December 1, or when you resume it.")
+        XCTAssertEqual(status.detail(resets: "December 1", period: "this month"), "It used its data this month. It connects again on December 1, or when you resume it.")
+        XCTAssertEqual(status.detail(resets: "December 15", period: "since Nov 15"), "It used its data since Nov 15. It connects again on December 15, or when you resume it.")
     }
 
     func testTheLimitChoices() {
@@ -275,8 +281,8 @@ final class LimitTests: XCTestCase {
         defaults.removePersistentDomain(forName: "LimitTests.notifier")
         var notifier = Notifier(defaults: defaults, calendar: calendar)
         let id = UUID()
-        let near = LimitAlert(device: id, name: "iPad", kind: .near, used: 9_100_000_000, limit: 10_000_000_000, resets: date(2026, 12, 1))
-        let reached = LimitAlert(device: id, name: "Travel router", kind: .reached, used: 10_000_000_000, limit: 10_000_000_000, resets: date(2026, 12, 1))
+        let near = LimitAlert(device: id, name: "iPad", kind: .near, used: 9_100_000_000, limit: 10_000_000_000, period: november)
+        let reached = LimitAlert(device: id, name: "Travel router", kind: .reached, used: 10_000_000_000, limit: 10_000_000_000, period: november)
         func round(_ alerts: [LimitAlert], onScreen: Bool = false) -> Notifier.Round {
             Notifier.Round(now: now, onScreen: onScreen, hotspot: true, sharing: true, devices: [], connected: [], limitAlerts: alerts)
         }
@@ -305,13 +311,86 @@ final class LimitTests: XCTestCase {
         let first = date(2026, 12, 1)
         XCTAssertEqual(LimitAlert.day(first, calendar: calendar, locale: Locale(identifier: "en_US")), "December 1")
         XCTAssertEqual(LimitAlert.day(first, calendar: calendar, locale: Locale(identifier: "en_GB")), "1 December")
-        let reached = LimitAlert(device: UUID(), name: "iPad", kind: .reached, used: 1, limit: 10_000_000_000, resets: first)
+        let reached = LimitAlert(device: UUID(), name: "iPad", kind: .reached, used: 1, limit: 10_000_000_000, period: november)
         XCTAssertEqual(reached.notice(calendar: calendar, locale: Locale(identifier: "en_US")).body,
                        "It used 10 GB this month. It connects again on December 1, or when you resume it.")
     }
 
     func testTheNearNoticeSaysHowMuch() {
-        let near = LimitAlert(device: UUID(), name: "iPad", kind: .near, used: 9_100_000_000, limit: 10_000_000_000, resets: date(2026, 12, 1))
-        XCTAssertEqual(near.notice(calendar: calendar).body, "It used 9.1 GB of its 10 GB this month.")
+        let near = LimitAlert(device: UUID(), name: "iPad", kind: .near, used: 9_100_000_000, limit: 10_000_000_000, period: november)
+        XCTAssertEqual(near.notice(calendar: calendar, locale: Locale(identifier: "en_US")).body, "It used 9.1 GB of its 10 GB this month.")
+    }
+
+    /// With another reset day the notices count since the period's start, not "this month" (#187).
+    func testTheNoticesSaySinceTheResetDay() {
+        let us = Locale(identifier: "en_US")
+        let fromThe15th = DateInterval(start: midnight(2026, 11, 15), end: midnight(2026, 12, 15))
+        let near = LimitAlert(device: UUID(), name: "iPad", kind: .near, used: 9_100_000_000, limit: 10_000_000_000, period: fromThe15th)
+        XCTAssertEqual(near.notice(calendar: calendar, locale: us).body, "It used 9.1 GB of its 10 GB since Nov 15.")
+        let reached = LimitAlert(device: UUID(), name: "iPad", kind: .reached, used: 1, limit: 10_000_000_000, period: fromThe15th)
+        XCTAssertEqual(reached.notice(calendar: calendar, locale: us).body,
+                       "It used 10 GB since Nov 15. It connects again on December 15, or when you resume it.")
+        XCTAssertEqual(reached.resets, midnight(2026, 12, 15))
+    }
+
+    private var november: DateInterval { DateInterval(start: midnight(2026, 11, 1), end: midnight(2026, 12, 1)) }
+
+    // MARK: The reset day (#187)
+
+    private func midnight(_ year: Int, _ month: Int, _ day: Int) -> Date {
+        calendar.date(from: DateComponents(year: year, month: month, day: day))!
+    }
+
+    /// Reset on the 15th, a device paused at its limit on November 10 connects again on November 15,
+    /// and its notice names that date.
+    func testAPausedDeviceConnectsAgainOnTheResetDay() throws {
+        resetDay = ResetDay(15)!
+        let ipad = try iPad()
+        XCTAssertTrue(session.setLimit(ipad.id, 1_000))
+        used(ipad, 1_000)
+        XCTAssertEqual(current(ipad)?.paused, .atLimit)
+        XCTAssertEqual(session.nextReset, midnight(2026, 11, 15))
+        XCTAssertEqual(session.limitAlerts.last?.resets, midnight(2026, 11, 15))
+        XCTAssertEqual(session.limitAlerts.last?.period.start, midnight(2026, 10, 15))
+        XCTAssertEqual(session.period, DateInterval(start: midnight(2026, 10, 15), end: midnight(2026, 11, 15)))
+        now = date(2026, 11, 14)
+        session.watch()
+        XCTAssertEqual(current(ipad)?.paused, .atLimit)
+        now = midnight(2026, 11, 15)
+        session.watch()
+        XCTAssertNil(current(ipad)?.paused)
+    }
+
+    /// The day changed while a device is paused at its limit: it stays paused until the new day's
+    /// next date, not the 1st, and that's the date shown. The change is saved at once.
+    func testANewResetDayKeepsAPausedDevicePausedUntilItsDate() throws {
+        let ipad = try iPad()
+        XCTAssertTrue(session.setLimit(ipad.id, 1_000))
+        used(ipad, 1_000)
+        XCTAssertEqual(session.nextReset, midnight(2026, 12, 1))
+        now = date(2026, 11, 20)
+        resetDay = ResetDay(15)!
+        XCTAssertEqual(session.nextReset, midnight(2026, 12, 15))
+        XCTAssertEqual(MonthlyUsage.load(from: usageDefaults).resetDay, ResetDay(15))
+        now = date(2026, 12, 1)
+        session.watch()
+        XCTAssertEqual(current(ipad)?.paused, .atLimit, "not on the 1st")
+        XCTAssertEqual(session.usage(of: ipad.id).thisMonth.total, 1_000)
+        now = midnight(2026, 12, 15)
+        session.watch()
+        XCTAssertNil(current(ipad)?.paused)
+    }
+
+    /// Settings tells the session at once, so the screens show the new dates when it closes, saved.
+    /// On November 10, from the 1st to the 15th, the running period ends on November 15.
+    func testAChangedResetDayIsToldToTheScreensAtOnce() throws {
+        _ = try iPad()
+        var told = 0
+        session.willChange = { told += 1 }
+        resetDay = ResetDay(15)!
+        session.resetDayChanged()
+        XCTAssertGreaterThan(told, 0)
+        XCTAssertEqual(MonthlyUsage.load(from: usageDefaults).resetDay, ResetDay(15))
+        XCTAssertEqual(session.period, DateInterval(start: midnight(2026, 11, 1), end: midnight(2026, 11, 15)))
     }
 }

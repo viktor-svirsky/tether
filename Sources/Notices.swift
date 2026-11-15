@@ -38,30 +38,33 @@ struct Notice: Equatable {
 }
 
 /// A device near its data limit (90%), or paused at it, see `HotspotSession.checkLimits`. Each is
-/// made once a month for a limit, so its `id` is told once.
+/// made once a period for a limit, so its `id` is told once.
 struct LimitAlert: Equatable {
     enum Kind: String { case near, reached }
 
     let device: WireGuardSetup.Peer.ID
     let name: String
     let kind: Kind
-    /// Both ways this month, and the limit, in bytes.
+    /// Both ways this period, and the limit, in bytes.
     let used: UInt64
     let limit: UInt64
-    /// The 1st of next month, when the count starts over.
-    let resets: Date
+    /// The running count, which ends when the count starts over, see `HotspotSession.period`.
+    let period: DateInterval
+
+    var resets: Date { period.end }
 
     var id: String { "\(kind.rawValue)-\(device)-\(Int(resets.timeIntervalSince1970))-\(limit)" }
 
     /// One notice per device, so "paused" takes the place of "near" in Notification Center.
     func notice(calendar: Calendar, locale: Locale = .current) -> Notice {
-        switch kind {
+        let counted = Format.period(period, calendar: calendar, locale: locale)
+        return switch kind {
         case .near:
             Notice(kind: .limit, id: "limit-\(device)", title: "\(name) is near its limit",
-                   body: "It used \(Format.bytes(used)) of its \(Format.bytes(limit)) this month.")
+                   body: "It used \(Format.bytes(used)) of its \(Format.bytes(limit)) \(counted).")
         case .reached:
             Notice(kind: .limit, id: "limit-\(device)", title: "\(name) paused at its limit",
-                   body: "It used \(Format.bytes(limit)) this month. It connects again on \(Self.day(resets, calendar: calendar, locale: locale)), or when you resume it.")
+                   body: "It used \(Format.bytes(limit)) \(counted). It connects again on \(Self.day(resets, calendar: calendar, locale: locale)), or when you resume it.")
         }
     }
 
