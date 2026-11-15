@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 /// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle, the
-/// DNS server Tether asks for the devices, a switch for each kind of notification, a button for the permission before Tether asked for it
+/// DNS server Tether asks for the devices, whether they reach the iPhone's local networks, a switch for each kind of notification, a button for the permission before Tether asked for it
 /// itself, the way to Settings when iOS has Tether's notifications off, the log to share for a bug
 /// report, and what this build is.
 struct SettingsView: View {
@@ -15,6 +15,8 @@ struct SettingsView: View {
     @AppStorage private var dns: DNSChoice
     @AppStorage private var dnsOther: String
     @AppStorage private var dnsControlD: String
+    /// Read by `HotspotSession` for each config it makes, see `LocalNetworks`.
+    @AppStorage private var localNetworksAllowed: Bool
 
     init(model: Model) {
         self.model = model
@@ -22,6 +24,7 @@ struct SettingsView: View {
         _dns = AppStorage(wrappedValue: .default, DNSChoice.key, store: model.settingsDefaults)
         _dnsOther = AppStorage(wrappedValue: "", DNSChoice.otherKey, store: model.settingsDefaults)
         _dnsControlD = AppStorage(wrappedValue: "", DNSChoice.controlDKey, store: model.settingsDefaults)
+        _localNetworksAllowed = AppStorage(wrappedValue: false, LocalNetworks.key, store: model.settingsDefaults)
     }
 
     var body: some View {
@@ -29,6 +32,7 @@ struct SettingsView: View {
             List {
                 sharing
                 newDevices
+                localNetworks
                 notices
                 help
                 about
@@ -154,6 +158,22 @@ struct SettingsView: View {
 
     private static let footer = "Your devices ask Tether, and Tether asks this server, so a change reaches them at once. A device whose DNS in WireGuard isn't 10.7.0.1 keeps its own: set it to 10.7.0.1 there, or add the device again. The server can see which sites your devices visit."
     private static let controlDFooter = "Your devices ask Tether, and Tether asks your Control D profile over HTTPS. Pick the country sites see in Control D, under Redirect (a paid plan). A device whose DNS in WireGuard isn't 10.7.0.1 keeps its own: set it to 10.7.0.1 there. Control D can see which sites your devices visit."
+
+    private var localNetworks: some View {
+        Section {
+            Toggle("Local networks", isOn: $localNetworksAllowed)
+                .accessibilityIdentifier("localNetworks.toggle")
+        } header: {
+            Text("What your devices can reach")
+        } footer: {
+            Text("Off: your devices reach the internet, but not the iPhone's Wi-Fi network, a VPN's private addresses or a Tailscale network. Tether's page still opens.")
+                // In the label colour, like the DNS footer: the grey just misses the contrast audit.
+                .foregroundStyle(Color(.label))
+                .accessibilityIdentifier("localNetworks.footer")
+        }
+        // Turning it off closes what the devices have open there at once (#230).
+        .onChange(of: localNetworksAllowed) { model.localNetworksChanged() }
+    }
 
     @ViewBuilder private var notices: some View {
         if model.noticePermission == .notAsked {

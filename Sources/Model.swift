@@ -154,6 +154,7 @@ final class Model: ObservableObject {
         noticeCenter = SystemNoticeCenter(log: Self.append)
         #endif
         notifier = Notifier(defaults: settingsDefaults)
+        Self.settleLocalNetworks(settingsDefaults, secrets: secrets) // before the session reads it (#230)
         poster = NoticePoster(center: noticeCenter)
         #if DEBUG
         session = demo?.makeSession(log: Self.append) ?? Self.session(secrets: secrets, settings: settingsDefaults)
@@ -195,6 +196,12 @@ final class Model: ObservableObject {
         if session.sceneActive { startSampler() }
     }
 
+    /// See `LocalNetworks.settle`. It does nothing once the setting is saved.
+    private static func settleLocalNetworks(_ settings: UserDefaults, secrets: SecretStore) {
+        LocalNetworks.settle(in: settings, introduced: UserDefaults.standard.bool(forKey: LocalNetworkIntro.key),
+                             savedSetup: { try secrets.load() })
+    }
+
     /// The session with the real server, sound, page and hotspot.
     private static func session(secrets: SecretStore, settings: UserDefaults) -> HotspotSession {
         HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(log: Self.append),
@@ -203,7 +210,11 @@ final class Model: ObservableObject {
                        hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,
                        carrierIPv6Only: Interfaces.carrierIPv6Only,
                        idleStopAfter: { IdleStop.After.saved(in: settings) },
-                       dns: { DNSChoice.upstream(in: settings) }, usageDefaults: settings,
+                       dns: { DNSChoice.upstream(in: settings) },
+                       blockLocal: {
+                           settleLocalNetworks(settings, secrets: secrets) // once the Keychain can be read
+                           return !LocalNetworks.allowed(in: settings)
+                       }, usageDefaults: settings,
                        log: Self.append)
     }
 
@@ -362,6 +373,8 @@ final class Model: ObservableObject {
 
     /// Settings > Devices changed, see `HotspotSession.dnsChanged`.
     func dnsChanged() { session.dnsChanged() }
+    /// Settings > local networks changed, see `HotspotSession.localNetworksChanged`.
+    func localNetworksChanged() { session.localNetworksChanged() }
 
     /// See `HotspotSession.overLimit`.
     func overLimit(_ id: WireGuardSetup.Peer.ID) -> Bool { session.overLimit(id) }

@@ -7,11 +7,12 @@ protocol WireGuardServing: AnyObject {
     var running: Bool { get }
     /// Listens on each of `hosts`. Applies the setup's devices as `setPeers` does, and is left
     /// stopped when they're refused.
-    func start(hosts: [String], setup: WireGuardSetup, dns: DNSChoice.Upstream, port: UInt16) throws
+    func start(hosts: [String], setup: WireGuardSetup, dns: DNSChoice.Upstream, blockLocal: Bool, port: UInt16) throws
     func stop()
     /// Listens on `hosts` instead, on the same port, and keeps every device's session (#219).
     func listen(on hosts: [String]) throws
-    func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream) throws
+    /// `blockLocal` keeps the devices out of the iPhone's local networks, see `LocalNetworks`.
+    func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream, blockLocal: Bool) throws
     /// Opens the config page to the devices on exactly `hosts`, see `ConfigPageServing.readyHosts`.
     /// A start opens it nowhere.
     func setPage(_ hosts: [String])
@@ -117,6 +118,8 @@ final class HotspotSession {
     /// Settings > Devices: where the server sends lookups to its own address, the DNS server every
     /// config names, read for each start and change, see `dnsChanged`.
     private let dns: () -> DNSChoice.Upstream
+    /// Settings: whether the devices are kept out of the iPhone's local networks, read with `dns`.
+    private let blockLocal: () -> Bool
     /// Where each device's data per month is saved, see `MonthlyUsage`. Nil keeps it in memory only.
     private let usageDefaults: UserDefaults?
     /// Follows a time zone change while Tether runs for days on the silent sound: `.current` is a
@@ -163,6 +166,7 @@ final class HotspotSession {
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
          idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> DNSChoice.Upstream = { DNSChoice.defaultUpstream },
+         blockLocal: @escaping () -> Bool = { false },
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
@@ -172,6 +176,7 @@ final class HotspotSession {
         self.sceneActive = sceneActive
         self.hotspotAddress = hotspotAddress
         self.carrierIPv6Only = carrierIPv6Only
+        self.blockLocal = blockLocal
         self.idleStopAfter = idleStopAfter
         self.dns = dns
         self.usageDefaults = usageDefaults
@@ -335,7 +340,7 @@ final class HotspotSession {
         guard devices.loaded else { return } // the setup's problem shows already
         let hosts = Self.hosts(for: hotspot)
         do {
-            try server.start(hosts: hosts, setup: serverSetup, dns: dns(), port: WireGuardSetup.port)
+            try server.start(hosts: hosts, setup: serverSetup, dns: dns(), blockLocal: blockLocal(), port: WireGuardSetup.port)
             page.start(hosts: hosts, port: ConfigPage.port)
             startProblem = nil
             showProblem()
@@ -701,7 +706,7 @@ final class HotspotSession {
         devices.prepareReady() // a removal on a full subnet makes room for the QR code
         publishSetup()
         do {
-            try server.setPeers(serverSetup, dns: dns())
+            try server.setPeers(serverSetup, dns: dns(), blockLocal: blockLocal())
         } catch {
             log("WireGuard devices: \(error), restarting")
             if running, let boundHost { startWireGuard(on: boundHost) }
@@ -711,6 +716,11 @@ final class HotspotSession {
     /// Settings > Devices changed. Every device whose config names Tether's own address asks the new
     /// choice from its next lookup (#121).
     func dnsChanged() {
+        wireGuardPeersChanged()
+    }
+
+    /// Settings > local networks changed. Blocking them closes what the devices have open there (#230).
+    func localNetworksChanged() {
         wireGuardPeersChanged()
     }
 

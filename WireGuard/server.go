@@ -269,7 +269,14 @@ type Server struct {
 	// from storing out of order.
 	local     atomic.Pointer[map[netip.Addr]struct{}]
 	listAddrs func() ([]net.Addr, error)
-	listing   sync.Mutex
+	// onLink is the networks the iPhone is on, read with local. blockLocal is the Block setting,
+	// read on the packet path without a lock and set under mu, see SetBlockLocal. tcpTo is where each
+	// open TCP connection Block covers goes, by its sockets, under mu: a destination can become local
+	// later, when the iPhone joins its network, so Block and refreshLocal check them all.
+	onLink     atomic.Pointer[[]netip.Prefix]
+	blockLocal atomic.Bool
+	tcpTo      map[io.Closer]netip.Addr
+	listing    sync.Mutex
 	// page is where Tether's config page listens, see SetPage. A device whose tunnel works opens it
 	// through the tunnel, so it's the one own address that stays reachable, over TCP only. The
 	// packet path reads it without a lock.
@@ -313,6 +320,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 		traffic:   map[netip.Addr]*traffic{},
 		now:       time.Now,
 		flows:     map[netip.Addr]map[io.Closer]struct{}{},
+		tcpTo:     map[io.Closer]netip.Addr{},
 		cones:     map[netip.AddrPort]*cone{},
 		conesOf:   map[netip.Addr]int{},
 		arriving:  map[stack.TransportEndpointID]*arrival{},
@@ -337,6 +345,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	}
 	s.page.Store(&[]netip.AddrPort{})
 	s.local.Store(&map[netip.Addr]struct{}{})
+	s.onLink.Store(&[]netip.Prefix{})
 	// Before any device's packet can come in. Without it every own address is open, so a failed
 	// read fails the start and Swift tries again on its next round. Nothing is running yet.
 	if err := s.refreshLocal(); err != nil {
@@ -828,7 +837,7 @@ func forwardable(dst netip.Addr) bool {
 // accepted: a device would need the iPhone's new address within seconds.
 func (s *Server) leaves(dst netip.Addr) bool {
 	_, own := (*s.local.Load())[dst]
-	return forwardable(dst) && !own
+	return forwardable(dst) && !own && !s.blocks(dst)
 }
 
 // SetPage opens exactly these own addresses to the devices, over TCP: where Tether's config page
@@ -866,6 +875,9 @@ func (s *Server) refreshLocal() error {
 			own[addr.Unmap()] = struct{}{}
 		}
 	}
+	onLink := onLinkOf(addrs)
+	s.onLink.Store(&onLink)
+	s.closeBlocked() // a new network can make an open connection's destination local
 	if maps.Equal(*s.local.Load(), own) {
 		return nil
 	}
@@ -924,19 +936,22 @@ func (s *Server) unpausedOwnerLocked(src netip.Addr) netip.Addr {
 // the key that asked for the connection: SetPeers changed the devices while it was being made,
 // after it closed the ones it knew about. The key matters when an address changes hands, since the
 // address alone would let the old key's connection open as the new key's.
-func (s *Server) track(src, device netip.Addr, key [32]byte, conns ...io.Closer) (untrack func(), ok bool) {
+// to is the connection's destination when Block covers it, invalid when it doesn't (DNS, the page, UDP).
+func (s *Server) track(src, device netip.Addr, key [32]byte, to netip.Addr, conns ...io.Closer) (untrack func(), ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.keys[device] != key || s.ownerLocked(src) != device {
+	// Block read under mu, so it can't turn on between this and the connection being kept.
+	if s.closed || s.keys[device] != key || s.ownerLocked(src) != device || to.IsValid() && s.blocks(to) {
 		return nil, false
 	}
 	if src != device {
 		s.routed = true // a client's connection through the router
 	}
-	return s.trackLocked(device, conns...), true
+	return s.trackLocked(device, to, conns...), true
 }
 
-func (s *Server) trackLocked(device netip.Addr, conns ...io.Closer) (untrack func()) {
+// trackLocked keeps conns as device's, and a valid to in tcpTo, for Block to check, see track.
+func (s *Server) trackLocked(device, to netip.Addr, conns ...io.Closer) (untrack func()) {
 	set := s.flows[device]
 	if set == nil {
 		set = map[io.Closer]struct{}{}
@@ -944,12 +959,16 @@ func (s *Server) trackLocked(device netip.Addr, conns ...io.Closer) (untrack fun
 	}
 	for _, c := range conns {
 		set[c] = struct{}{}
+		if to.IsValid() {
+			s.tcpTo[c] = to
+		}
 	}
 	return func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		for _, c := range conns {
 			delete(s.flows[device], c)
+			delete(s.tcpTo, c)
 		}
 	}
 }
@@ -1148,7 +1167,13 @@ func (s *Server) forwardTCP(r forwardRequest) {
 	src := addrPort(id.RemoteAddress, 0).Addr()
 	dst := addrPort(id.LocalAddress, id.LocalPort)
 	lookups := dst == dnsAddr && s.upstream.Load().set() // Tether answers them, see dns.go
-	allowed := lookups || s.leaves(dst.Addr()) || slices.Contains(*s.page.Load(), dst)
+	page := slices.Contains(*s.page.Load(), dst)
+	allowed := lookups || s.leaves(dst.Addr()) || page
+	// Only a connection leaves let through is closed by Block: DNS and the page stay open.
+	var to netip.Addr
+	if !lookups && !page {
+		to = dst.Addr()
+	}
 	if a.refuse || !allowed {
 		refuse()
 		return
@@ -1173,7 +1198,7 @@ func (s *Server) forwardTCP(r forwardRequest) {
 	// to wait for.
 	var ended atomic.Bool
 	counts := s.trafficOf(a.owner)
-	untrackOut, ok := s.track(src, a.owner, a.key, &closer{func() { ended.Store(true); resetOut() }}, wake{&wq})
+	untrackOut, ok := s.track(src, a.owner, a.key, to, &closer{func() { ended.Store(true); resetOut() }}, wake{&wq})
 	if !ok {
 		out.Close() // nothing was exchanged, so a FIN is as honest as a reset
 		refuse()
@@ -1207,7 +1232,7 @@ func (s *Server) forwardTCP(r forwardRequest) {
 		in.Close()
 	}
 	closeBoth := func() { in.Close(); out.Close() }
-	untrackIn, ok := s.track(src, a.owner, a.key, &closer{func() { ended.Store(true); resetIn() }})
+	untrackIn, ok := s.track(src, a.owner, a.key, to, &closer{func() { ended.Store(true); resetIn() }})
 	if !ok {
 		resetIn()
 		resetOut()

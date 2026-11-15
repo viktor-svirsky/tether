@@ -55,19 +55,20 @@ final class NotificationsTests: TetherUITestCase {
     func testASwitchTurnedOffStaysOff() {
         launch(.sharing)
         openSettings()
-        toggle("connected").switches.firstMatch.tap()
+        // Below the Sharing, DNS and local networks sections, past the screen on a small iPhone.
+        reveal(toggle("connected")).switches.firstMatch.tap()
         XCTAssertEqual(value(of: toggle("connected")), "0")
         app.buttons["settings.done"].tap()
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5), "back on the main screen")
         openSettings()
-        XCTAssertEqual(value(of: toggle("connected")), "0")
-        XCTAssertEqual(value(of: toggle("disconnected")), "1", "only that one")
+        XCTAssertEqual(value(of: reveal(toggle("connected"))), "0")
+        XCTAssertEqual(value(of: reveal(toggle("disconnected"))), "1", "only that one")
     }
 
     func testBeforeTetherAskedThereIsAButtonToAllow() {
         launch(.sharing)
         openSettings()
-        XCTAssertTrue(element("notices.allow").waitForExistence(timeout: 5))
+        XCTAssertTrue(reveal(element("notices.allow")).exists)
         reveal(element("notices.footer")) // below Devices
         XCTAssertEqual(label(of: "notices.footer"), "Only while Tether is in the background. While it's open, you see it on screen.")
         assertNowhere(element("notices.denied"))
@@ -76,6 +77,7 @@ final class NotificationsTests: TetherUITestCase {
     func testNotificationsOffInSettingsSaysSoWithTheWayThere() {
         launch(.notificationsOff)
         openSettings()
+        reveal(element("notices.settings"))
         XCTAssertEqual(label(of: "notices.denied"), "Notifications are off for Tether in iOS Settings.")
         XCTAssertTrue(element("notices.settings").isHittable)
         assertNowhere(element("notices.allow"))
@@ -134,7 +136,7 @@ final class NotificationsTests: TetherUITestCase {
             for (scenario, id) in [(Scenario.sharing, "notices.allow"), (.notificationsOff, "notices.denied")] {
                 launch(scenario)
                 openSettings()
-                XCTAssertTrue(element(id).waitForExistence(timeout: 5), id)
+                XCTAssertTrue(reveal(element(id)).exists, id)
                 try audit()
                 app.terminate()
             }

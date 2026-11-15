@@ -22,7 +22,7 @@ final class WireGuardServer {
     /// Listens on the hotspot's addresses only. Go leaves out one it can't listen on, unless none works.
     /// `port` is for the tests, which can't count on 51820 being free.
     func start(hosts: [String], setup: WireGuardSetup, dns: DNSChoice.Upstream = DNSChoice.defaultUpstream,
-               port: UInt16 = WireGuardSetup.port) throws {
+               blockLocal: Bool = false, port: UInt16 = WireGuardSetup.port) throws {
         stop()
         // Go reads exactly 32 bytes behind each key pointer.
         guard setup.serverPrivateKey.count == 32 else { throw Failure(message: "the server key isn't 32 bytes") }
@@ -35,7 +35,7 @@ final class WireGuardServer {
         if let message = take(error) { throw Failure(message: message) }
         running = true
         do {
-            try setPeers(setup, dns: dns)
+            try setPeers(setup, dns: dns, blockLocal: blockLocal)
         } catch {
             // Not left half started: HotspotSession's watcher round retries a server that isn't running.
             TetherWGStop()
@@ -57,9 +57,9 @@ final class WireGuardServer {
     /// Lets in exactly the devices in `setup`. A removed device's open connections finish on their own,
     /// and what it used is dropped, as on the server. A saved device the server doesn't let in now keeps it.
     /// A paused device stays, and keeps what it used: the server closes its connections and lets nothing through.
-    /// `dns` is where lookups to Tether's own address go, see `DNSChoice`. It goes in the same message, so
-    /// the two never disagree.
-    func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream = DNSChoice.defaultUpstream) throws {
+    /// `dns` is where lookups to Tether's own address go, see `DNSChoice`, and `blockLocal` keeps the devices
+    /// out of the iPhone's local networks, see `LocalNetworks`. They go in the same message, so they never disagree.
+    func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream = DNSChoice.defaultUpstream, blockLocal: Bool = false) throws {
         // Also while stopped: a device removed then mustn't hand what it used to the next device
         // that gets its address.
         carriedDevices.keep(only: Set(setup.serverPeers.map(\.address)).union(setup.peers.map(\.address)))
@@ -67,7 +67,7 @@ final class WireGuardServer {
         let peers = setup.serverPeers
         guard peers.allSatisfy({ $0.publicKey.count == 32 }) else { throw Failure(message: "a device key isn't 32 bytes") }
         // No router mark: the server finds a router by its clients' traffic, see noticeRouter in server.go.
-        let message = ConfigMessage(peers, dns: dns)
+        let message = ConfigMessage(peers, dns: dns, blockLocal: blockLocal)
         let json = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
         let error = json.withCString { TetherWGConfigure(UnsafeMutablePointer(mutating: $0)) }
         if let message = take(error) { throw Failure(message: message) }
@@ -135,6 +135,8 @@ final class WireGuardServer {
         let peers: [Peer]
         /// Added later, so the version stays. Without it Go keeps lookups to 10.7.0.1 inside.
         var dns: DNS?
+        /// Added later, so the version stays. Always sent: without it Go lets the devices into the local networks.
+        var blockLocal = false
 
         struct Peer: Encodable {
             let key: Data // base64 in the JSON
@@ -271,12 +273,12 @@ private func take(_ p: UnsafeMutablePointer<CChar>?) -> String? {
 
 extension WireGuardServer.ConfigMessage {
     /// The devices the server lets in, paused or not, and where lookups to Tether's own address go.
-    init(_ peers: [WireGuardSetup.Peer], dns: DNSChoice.Upstream? = nil) {
+    init(_ peers: [WireGuardSetup.Peer], dns: DNSChoice.Upstream? = nil, blockLocal: Bool = false) {
         let message: DNS? = switch dns {
         case let .doh(url): DNS(doh: url.absoluteString)
         case let .servers(servers): DNS(udp: servers)
         case nil: nil
         }
-        self.init(peers: peers.map { Peer(key: $0.publicKey, address: $0.address, paused: $0.paused != nil) }, dns: message)
+        self.init(peers: peers.map { Peer(key: $0.publicKey, address: $0.address, paused: $0.paused != nil) }, dns: message, blockLocal: blockLocal)
     }
 }

@@ -205,6 +205,7 @@ struct DemoState {
         let session = HotspotSession(devices: WireGuardDevices(secrets: secrets()), server: server, keepAlive: FakeSound(),
                                      page: FakePage(), sceneActive: true, hotspotAddress: { address },
                                      dns: { DNSChoice.upstream(in: UserDefaults(suiteName: Self.settingsSuite)!) },
+                                     blockLocal: { !LocalNetworks.allowed(in: UserDefaults(suiteName: Self.settingsSuite)!) },
                                      now: { clock.now }, log: log)
         session.syncWithHotspot()
         server.connected = connected

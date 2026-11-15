@@ -365,6 +365,27 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertNil(plain?["doh"])
     }
 
+    /// The local networks setting is always in the message, so Go never falls back to letting the
+    /// devices in (#230).
+    func testTheDeviceListCarriesTheLocalNetworksSetting() throws {
+        func blockLocal(_ message: WireGuardServer.ConfigMessage) throws -> Bool? {
+            let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any]
+            return json?["blockLocal"] as? Bool
+        }
+        XCTAssertEqual(try blockLocal(WireGuardServer.ConfigMessage([], blockLocal: true)), true)
+        XCTAssertEqual(try blockLocal(WireGuardServer.ConfigMessage([], blockLocal: false)), false)
+        XCTAssertEqual(try blockLocal(WireGuardServer.ConfigMessage([])), false, "sent when not given")
+    }
+
+    /// Go takes the setting at start and in a change.
+    func testTheServerTakesTheLocalNetworksSetting() throws {
+        let server = WireGuardServer()
+        defer { server.stop() }
+        XCTAssertNoThrow(try server.start(hosts: ["127.0.0.1"], setup: .new(), blockLocal: true, port: freePort()))
+        XCTAssertNoThrow(try server.setPeers(.new(), blockLocal: false))
+        XCTAssertNoThrow(try server.setPeers(.new(), blockLocal: true))
+    }
+
     /// Go reads both kinds, at start and in a change.
     func testTheServerTakesEachKindOfDNS() throws {
         let server = WireGuardServer()

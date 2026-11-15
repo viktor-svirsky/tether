@@ -222,8 +222,8 @@ func (s *Server) receivePings() {
 		addr, _ := netip.AddrFromSlice(u.IP)
 		src := s.fromNet(netip.AddrPortFrom(addr.Unmap(), 0)).Addr()
 		w, ok := s.pings.take(uint16(echo.ID), src)
-		if !ok {
-			continue // another app's, or one that waited too long
+		if !ok || s.blocks(src) {
+			continue // another app's, one that waited too long, or a local host's sent before Block
 		}
 		s.count(w.traffic, false, len(echo.Data))
 		packets := echoReply(w.dst, w.device, w.id, uint16(echo.Seq), echo.Data, s.nextID())

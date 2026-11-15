@@ -24,6 +24,9 @@ type configMessage struct {
 	Peers []configPeer `json:"peers"`
 	// DNS is added later, see parseDNS. A message without it keeps lookups to 10.7.0.1 inside.
 	DNS *configDNS `json:"dns"`
+	// BlockLocal keeps the devices out of the iPhone's local networks (#230). Missing is false,
+	// the way it was before the setting.
+	BlockLocal bool `json:"blockLocal"`
 }
 
 type configPeer struct {
@@ -74,52 +77,52 @@ type peerStats struct {
 // parseConfig reads a configMessage. A key that isn't 32 bytes, an address that isn't one, or a
 // key or address used twice is an error, so a device can't be shown as set up while the server
 // leaves it out.
-func parseConfig(js string) ([]Peer, *dnsUpstream, error) {
+func parseConfig(js string) ([]Peer, *dnsUpstream, bool, error) {
 	var m configMessage
 	if err := json.Unmarshal([]byte(js), &m); err != nil {
-		return nil, nil, fmt.Errorf("device list: %w", err)
+		return nil, nil, false, fmt.Errorf("device list: %w", err)
 	}
 	if m.V != messageVersion {
-		return nil, nil, fmt.Errorf("device list version %d, this server reads %d", m.V, messageVersion)
+		return nil, nil, false, fmt.Errorf("device list version %d, this server reads %d", m.V, messageVersion)
 	}
 	if m.Peers == nil { // missing or null, while no devices is []
-		return nil, nil, fmt.Errorf("device list: no peers")
+		return nil, nil, false, fmt.Errorf("device list: no peers")
 	}
 	peers := make([]Peer, 0, len(m.Peers))
 	seenKeys := map[[32]byte]bool{}
 	seenAddrs := map[netip.Addr]bool{}
 	for i, p := range m.Peers {
 		if len(p.Key) != 32 {
-			return nil, nil, fmt.Errorf("device %d: its key is %d bytes, not 32", i+1, len(p.Key))
+			return nil, nil, false, fmt.Errorf("device %d: its key is %d bytes, not 32", i+1, len(p.Key))
 		}
 		a, err := netip.ParseAddr(p.Address)
 		if err != nil {
-			return nil, nil, fmt.Errorf("device %d: %w", i+1, err)
+			return nil, nil, false, fmt.Errorf("device %d: %w", i+1, err)
 		}
 		// Inside the tunnel's network and not its DNS address: one at 10.7.0.1 would take DNS's
 		// place, and an IPv6 one would look set up while its UDP is dropped (#155).
 		if !a.Is4() || !tunnelNet.Contains(a) || a == dnsAddr.Addr() {
-			return nil, nil, fmt.Errorf("device %d: %v isn't a device address in %v", i+1, a, tunnelNet)
+			return nil, nil, false, fmt.Errorf("device %d: %v isn't a device address in %v", i+1, a, tunnelNet)
 		}
 		var key [32]byte
 		copy(key[:], p.Key)
 		if seenKeys[key] || seenAddrs[a] {
-			return nil, nil, fmt.Errorf("device %d repeats a key or address", i+1)
+			return nil, nil, false, fmt.Errorf("device %d repeats a key or address", i+1)
 		}
 		seenKeys[key], seenAddrs[a] = true, true
 		peers = append(peers, Peer{PublicKey: key, Address: a, Paused: p.Paused})
 	}
 	dns, err := parseDNS(m.DNS)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	return peers, dns, nil
+	return peers, dns, m.BlockLocal, nil
 }
 
 // configure lets in exactly the devices in a configMessage. With no server it only checks the
 // message: WireGuardServer.swift sends the devices again with each start.
 func configure(js string) error {
-	peers, dns, err := parseConfig(js)
+	peers, dns, blockLocal, err := parseConfig(js)
 	if err != nil {
 		return err
 	}
@@ -129,6 +132,7 @@ func configure(js string) error {
 		return nil
 	}
 	server.SetDNS(dns)
+	server.SetBlockLocal(blockLocal)
 	return server.SetPeers(peers)
 }
 
