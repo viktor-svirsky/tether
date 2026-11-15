@@ -18,7 +18,7 @@ import (
 // Ping: a device's echo request goes out from the iPhone as a real one, and the real reply comes
 // back, so a ping through the tunnel says what a ping from the iPhone would. gVisor hands echo
 // requests to handlePing, after it put a fragmented one back together, and replies are built like
-// UDP's.
+// UDP's. A ping to the server's own tunnel address is answered there, see answerPing.
 //
 // iOS lets an app ping without privileges, through a datagram ICMP socket. Darwin keeps the
 // identifier the app chose and hands such a socket every echo reply, so one socket serves every
@@ -89,16 +89,34 @@ func (s *Server) handlePing(id stack.TransportEndpointID, pkt *stack.PacketBuffe
 	if m.Code() != 0 || len(m) > maxEcho {
 		return true
 	}
+	src, dst := netip.AddrFrom4(id.RemoteAddress.As4()), netip.AddrFrom4(id.LocalAddress.As4())
+	if dst == dnsAddr.Addr() {
+		s.answerPing(src, dst, m)
+		return true
+	}
 	s.pings.once.Do(s.startPinging)
 	if s.pings.conn.Load() == nil {
 		return true
 	}
-	src, dst := netip.AddrFrom4(id.RemoteAddress.As4()), netip.AddrFrom4(id.LocalAddress.As4())
 	select {
 	case s.pings.queue <- echoRequest{src, dst, slices.Clone(m)}:
 	default:
 	}
 	return true
+}
+
+// answerPing replies to an echo request for the server's own tunnel address itself. Routers ping
+// it to check the tunnel is up, and take it down when it doesn't answer (#132). Nothing leaves the
+// iPhone, so nothing is counted. Pings to other tunnel addresses still get no reply, see leaves.
+func (s *Server) answerPing(src, dst netip.Addr, m header.ICMPv4) {
+	packets := echoReply(dst, src, m.Ident(), m.Sequence(), m.Payload(), s.nextID())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed && s.ownerLocked(src).IsValid() {
+		for _, p := range packets {
+			s.tun.inject(p)
+		}
+	}
 }
 
 func (s *Server) startPinging() {
