@@ -54,7 +54,7 @@ func TestBlockingLocalNetworksRefusesTheirRanges(t *testing.T) {
 // an odd VPN address can't block the internet.
 func TestBlockingLocalNetworksRefusesTheNetworksTheIPhoneIsOn(t *testing.T) {
 	s := startAlone(t)
-	ownAre(s, "203.0.113.5/24", "2607:fb90:1:2::5/64", "8.8.4.4/8", "2001:db8::5/32")
+	ownAre(s, "203.0.113.5/24", "2607:fb90:1:2::5/64", "8.8.4.4/8", "2001:db8::5/32", "198.18.0.1/16")
 	s.refreshLocal()
 	blockLocal(s, true)
 	for _, a := range []string{"203.0.113.9", "2607:fb90:1:2::6"} {
@@ -62,7 +62,8 @@ func TestBlockingLocalNetworksRefusesTheNetworksTheIPhoneIsOn(t *testing.T) {
 			t.Errorf("%s is on the iPhone's network and went out with Block", a)
 		}
 	}
-	for _, a := range []string{"203.0.114.9", "2607:fb90:1:3::1", "8.1.1.1", "2001:db8:1::1"} {
+	// A proxy app's interface in 198.18.0.0/15 doesn't make its fake addresses local.
+	for _, a := range []string{"203.0.114.9", "2607:fb90:1:3::1", "8.1.1.1", "2001:db8:1::1", "198.18.5.5"} {
 		if !s.leaves(netip.MustParseAddr(a)) {
 			t.Errorf("%s isn't on the iPhone's network and stayed inside", a)
 		}

@@ -21,6 +21,9 @@ var localNets = []netip.Prefix{
 	netip.MustParsePrefix("fc00::/7"),
 }
 
+// fakeIPNet is where proxy apps like Clash put fake addresses, and often their own interface, see localNets.
+var fakeIPNet = netip.MustParsePrefix("198.18.0.0/15")
+
 // widestOnLink is the widest network of the iPhone's own that counts as local, per family. A VPN
 // that gives its interface an odd mask, like /1, would otherwise block the internet.
 const widestOnLink4, widestOnLink6 = 16, 48
@@ -47,7 +50,8 @@ func onLinkOf(addrs []net.Addr) []netip.Prefix {
 		if ones < widest {
 			continue
 		}
-		if p, err := addr.Prefix(ones); err == nil {
+		// A proxy app's own interface sits in fakeIPNet: blocking its network would cut the internet.
+		if p, err := addr.Prefix(ones); err == nil && !fakeIPNet.Contains(addr) {
 			nets = append(nets, p)
 		}
 	}
