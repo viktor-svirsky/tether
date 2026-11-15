@@ -270,11 +270,12 @@ type Server struct {
 	local     atomic.Pointer[map[netip.Addr]struct{}]
 	listAddrs func() ([]net.Addr, error)
 	// onLink is the networks the iPhone is on, read with local. blockLocal is the Block setting,
-	// read on the packet path without a lock and set under mu, see SetBlockLocal. localFlows is each
-	// open TCP connection's sockets to a local address, under mu, for Block to close.
+	// read on the packet path without a lock and set under mu, see SetBlockLocal. tcpTo is where each
+	// open TCP connection Block covers goes, by its sockets, under mu: a destination can become local
+	// later, when the iPhone joins its network, so Block and refreshLocal check them all.
 	onLink     atomic.Pointer[[]netip.Prefix]
 	blockLocal atomic.Bool
-	localFlows map[io.Closer]struct{}
+	tcpTo      map[io.Closer]netip.Addr
 	listing    sync.Mutex
 	// page is where Tether's config page listens, see SetPage. A device whose tunnel works opens it
 	// through the tunnel, so it's the one own address that stays reachable, over TCP only. The
@@ -310,28 +311,28 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 		Enable: true, Idle: 10 * time.Minute, Interval: 30 * time.Second, Count: 4,
 	}}
 	s := &Server{
-		peers:      map[[32]byte]netip.Addr{},
-		keys:       map[netip.Addr][32]byte{},
-		names:      map[string]netip.Addr{},
-		shaken:     map[netip.Addr]time.Time{},
-		endpoints:  map[netip.Addr]string{},
-		knocks:     newKnocks(),
-		traffic:    map[netip.Addr]*traffic{},
-		now:        time.Now,
-		flows:      map[netip.Addr]map[io.Closer]struct{}{},
-		localFlows: map[io.Closer]struct{}{},
-		cones:      map[netip.AddrPort]*cone{},
-		conesOf:    map[netip.Addr]int{},
-		arriving:   map[stack.TransportEndpointID]*arrival{},
-		dials:      map[netip.Addr]int{},
-		conns:      map[netip.Addr]int{},
-		maxCones:   maxCones,
-		maxDials:   maxDials,
-		maxConns:   maxConns,
-		maxPings:   maxPings,
-		dial:       dialer.DialContext, // see dialer above
-		toNet:      func(a netip.AddrPort) netip.AddrPort { return a },
-		fromNet:    func(a netip.AddrPort) netip.AddrPort { return a },
+		peers:     map[[32]byte]netip.Addr{},
+		keys:      map[netip.Addr][32]byte{},
+		names:     map[string]netip.Addr{},
+		shaken:    map[netip.Addr]time.Time{},
+		endpoints: map[netip.Addr]string{},
+		knocks:    newKnocks(),
+		traffic:   map[netip.Addr]*traffic{},
+		now:       time.Now,
+		flows:     map[netip.Addr]map[io.Closer]struct{}{},
+		tcpTo:     map[io.Closer]netip.Addr{},
+		cones:     map[netip.AddrPort]*cone{},
+		conesOf:   map[netip.Addr]int{},
+		arriving:  map[stack.TransportEndpointID]*arrival{},
+		dials:     map[netip.Addr]int{},
+		conns:     map[netip.Addr]int{},
+		maxCones:  maxCones,
+		maxDials:  maxDials,
+		maxConns:  maxConns,
+		maxPings:  maxPings,
+		dial:      dialer.DialContext, // see dialer above
+		toNet:     func(a netip.AddrPort) netip.AddrPort { return a },
+		fromNet:   func(a netip.AddrPort) netip.AddrPort { return a },
 		sendTo: func(c *net.UDPConn, payload []byte, to netip.AddrPort) error {
 			_, err := c.WriteToUDPAddrPort(payload, to)
 			return err
@@ -876,6 +877,7 @@ func (s *Server) refreshLocal() error {
 	}
 	onLink := onLinkOf(addrs)
 	s.onLink.Store(&onLink)
+	s.closeBlocked() // a new network can make an open connection's destination local
 	if maps.Equal(*s.local.Load(), own) {
 		return nil
 	}
@@ -934,21 +936,22 @@ func (s *Server) unpausedOwnerLocked(src netip.Addr) netip.Addr {
 // the key that asked for the connection: SetPeers changed the devices while it was being made,
 // after it closed the ones it knew about. The key matters when an address changes hands, since the
 // address alone would let the old key's connection open as the new key's.
-func (s *Server) track(src, device netip.Addr, key [32]byte, local bool, conns ...io.Closer) (untrack func(), ok bool) {
+// to is the connection's destination when Block covers it, invalid when it doesn't (DNS, the page, UDP).
+func (s *Server) track(src, device netip.Addr, key [32]byte, to netip.Addr, conns ...io.Closer) (untrack func(), ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Block read under mu, so it can't turn on between this and the connection being kept.
-	if s.closed || s.keys[device] != key || s.ownerLocked(src) != device || local && s.blockLocal.Load() {
+	if s.closed || s.keys[device] != key || s.ownerLocked(src) != device || to.IsValid() && s.blocks(to) {
 		return nil, false
 	}
 	if src != device {
 		s.routed = true // a client's connection through the router
 	}
-	return s.trackLocked(device, local, conns...), true
+	return s.trackLocked(device, to, conns...), true
 }
 
-// trackLocked keeps conns as device's. local adds them to localFlows too, for Block to close.
-func (s *Server) trackLocked(device netip.Addr, local bool, conns ...io.Closer) (untrack func()) {
+// trackLocked keeps conns as device's, and a valid to in tcpTo, for Block to check, see track.
+func (s *Server) trackLocked(device, to netip.Addr, conns ...io.Closer) (untrack func()) {
 	set := s.flows[device]
 	if set == nil {
 		set = map[io.Closer]struct{}{}
@@ -956,8 +959,8 @@ func (s *Server) trackLocked(device netip.Addr, local bool, conns ...io.Closer) 
 	}
 	for _, c := range conns {
 		set[c] = struct{}{}
-		if local {
-			s.localFlows[c] = struct{}{}
+		if to.IsValid() {
+			s.tcpTo[c] = to
 		}
 	}
 	return func() {
@@ -965,7 +968,7 @@ func (s *Server) trackLocked(device netip.Addr, local bool, conns ...io.Closer) 
 		defer s.mu.Unlock()
 		for _, c := range conns {
 			delete(s.flows[device], c)
-			delete(s.localFlows, c)
+			delete(s.tcpTo, c)
 		}
 	}
 }
@@ -1167,7 +1170,10 @@ func (s *Server) forwardTCP(r forwardRequest) {
 	page := slices.Contains(*s.page.Load(), dst)
 	allowed := lookups || s.leaves(dst.Addr()) || page
 	// Only a connection leaves let through is closed by Block: DNS and the page stay open.
-	local := !lookups && !page && s.isLocal(dst.Addr())
+	var to netip.Addr
+	if !lookups && !page {
+		to = dst.Addr()
+	}
 	if a.refuse || !allowed {
 		refuse()
 		return
@@ -1192,7 +1198,7 @@ func (s *Server) forwardTCP(r forwardRequest) {
 	// to wait for.
 	var ended atomic.Bool
 	counts := s.trafficOf(a.owner)
-	untrackOut, ok := s.track(src, a.owner, a.key, local, &closer{func() { ended.Store(true); resetOut() }}, wake{&wq})
+	untrackOut, ok := s.track(src, a.owner, a.key, to, &closer{func() { ended.Store(true); resetOut() }}, wake{&wq})
 	if !ok {
 		out.Close() // nothing was exchanged, so a FIN is as honest as a reset
 		refuse()
@@ -1226,7 +1232,7 @@ func (s *Server) forwardTCP(r forwardRequest) {
 		in.Close()
 	}
 	closeBoth := func() { in.Close(); out.Close() }
-	untrackIn, ok := s.track(src, a.owner, a.key, local, &closer{func() { ended.Store(true); resetIn() }})
+	untrackIn, ok := s.track(src, a.owner, a.key, to, &closer{func() { ended.Store(true); resetIn() }})
 	if !ok {
 		resetIn()
 		resetOut()

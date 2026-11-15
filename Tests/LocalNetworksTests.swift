@@ -11,22 +11,36 @@ final class LocalNetworksTests: XCTestCase {
         defaults.removePersistentDomain(forName: "LocalNetworksTests")
     }
 
+    private struct Locked: Error {}
+
     func testANewTetherBlocksThem() {
-        LocalNetworks.settle(in: defaults, wasSetUp: false)
-        XCTAssertFalse(LocalNetworks.allowed(in: defaults))
+        LocalNetworks.settle(in: defaults, introduced: false, savedSetup: { nil })
+        XCTAssertEqual(defaults.object(forKey: LocalNetworks.key) as? Bool, false)
     }
 
     func testATetherSetUpBeforeTheSettingKeepsThem() {
-        LocalNetworks.settle(in: defaults, wasSetUp: true)
+        LocalNetworks.settle(in: defaults, introduced: true, savedSetup: { throw Locked() })
+        XCTAssertTrue(LocalNetworks.allowed(in: defaults), "the screen's mark is enough, Keychain or not")
+        defaults.removePersistentDomain(forName: "LocalNetworksTests")
+        LocalNetworks.settle(in: defaults, introduced: false, savedSetup: { Data([1]) })
+        XCTAssertTrue(LocalNetworks.allowed(in: defaults), "a saved setup from before 1.6 counts too")
+    }
+
+    /// A locked Keychain decides nothing, so an update from before 1.6 isn't saved as blocked by a
+    /// launch in the background. The next call, once it can be read, decides.
+    func testALockedKeychainDecidesLater() {
+        LocalNetworks.settle(in: defaults, introduced: false, savedSetup: { throw Locked() })
+        XCTAssertNil(defaults.object(forKey: LocalNetworks.key))
+        LocalNetworks.settle(in: defaults, introduced: false, savedSetup: { Data([1]) })
         XCTAssertTrue(LocalNetworks.allowed(in: defaults))
     }
 
     func testTheOwnersChoiceStays() {
         defaults.set(true, forKey: LocalNetworks.key)
-        LocalNetworks.settle(in: defaults, wasSetUp: false)
+        LocalNetworks.settle(in: defaults, introduced: false, savedSetup: { nil })
         XCTAssertTrue(LocalNetworks.allowed(in: defaults), "settle doesn't overwrite a saved choice")
         defaults.set(false, forKey: LocalNetworks.key)
-        LocalNetworks.settle(in: defaults, wasSetUp: true)
+        LocalNetworks.settle(in: defaults, introduced: true, savedSetup: { Data([1]) })
         XCTAssertFalse(LocalNetworks.allowed(in: defaults))
     }
 }

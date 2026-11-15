@@ -86,21 +86,32 @@ func (s *Server) blocks(dst netip.Addr) bool {
 func (s *Server) SetBlockLocal(block bool) {
 	s.mu.Lock()
 	was := s.blockLocal.Swap(block)
-	var closing []io.Closer
-	if block {
-		for c := range s.localFlows {
-			closing = append(closing, c)
-		}
-	}
 	s.mu.Unlock()
-	for _, c := range closing {
-		c.Close()
-	}
+	s.closeBlocked()
 	if was != block {
 		text := "devices can reach the iPhone's local networks"
 		if block {
 			text = "devices can't reach the iPhone's local networks"
 		}
 		serverLog.add(time.Now(), text)
+	}
+}
+
+// closeBlocked resets the open TCP connections Block now covers: after it turns on, and after the
+// iPhone's networks change. Closed after s.mu is let go, as SetPeers does.
+func (s *Server) closeBlocked() {
+	if !s.blockLocal.Load() {
+		return
+	}
+	s.mu.Lock()
+	var closing []io.Closer
+	for c, to := range s.tcpTo {
+		if s.isLocal(to) {
+			closing = append(closing, c)
+		}
+	}
+	s.mu.Unlock()
+	for _, c := range closing {
+		c.Close()
 	}
 }

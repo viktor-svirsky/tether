@@ -124,6 +124,26 @@ func TestBlockingClosesOpenLocalConnectionsOnly(t *testing.T) {
 	}
 }
 
+// A connection opened to an address that wasn't local is reset once the iPhone joins its network
+// with Block on, since a device could otherwise keep reaching that network through it.
+func TestAConnectionWhoseDestinationBecomesLocalIsReset(t *testing.T) {
+	s, c := setup(t)
+	conn := connect(t, c, farEnd(t, func(conn *net.TCPConn) { io.Copy(conn, conn) }))
+	blockLocal(s, true)
+	if _, err := conn.Write([]byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(conn, make([]byte, 2)); err != nil {
+		t.Fatal("remote isn't local yet, so it should still echo:", err)
+	}
+	onLinkRemote(s)
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	conn.Write([]byte("hi"))
+	if _, err := io.ReadFull(conn, make([]byte, 2)); err == nil {
+		t.Fatal("a connection to what became a local address still echoes")
+	}
+}
+
 // UDP to a local address is dropped with Block, and so is a reply from one, also to a port the
 // device opened while it was allowed.
 func TestUDPToAndFromLocalAddressesFollowsTheSetting(t *testing.T) {
