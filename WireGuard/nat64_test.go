@@ -148,6 +148,7 @@ func TestARefusedDialIsntTriedThroughTheNAT64(t *testing.T) {
 	s, c := setup(t)
 	var mu sync.Mutex
 	var dialed []string
+	s.mu.Lock() // the server reads it after taking s.mu, so the race detector sees the order (#250)
 	s.nat64.lookup = func(context.Context) (netip.Prefix, error) { return carrierNAT64, nil }
 	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
 		mu.Lock()
@@ -155,6 +156,7 @@ func TestARefusedDialIsntTriedThroughTheNAT64(t *testing.T) {
 		mu.Unlock()
 		return nil, &net.OpError{Op: "dial", Net: network, Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}
 	}
+	s.mu.Unlock()
 	if _, err := fetch(t, c, net.JoinHostPort(remote, "80")); err == nil {
 		t.Fatal("the fetch worked")
 	}

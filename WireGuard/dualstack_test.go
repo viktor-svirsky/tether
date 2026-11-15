@@ -18,7 +18,9 @@ func startOn(t *testing.T, hosts ...netip.Addr) (*Server, [32]byte) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
+	s.mu.Lock() // the server reads it after taking s.mu, so the race detector sees the order (#250)
 	viaLoopback(s)
+	s.mu.Unlock()
 	return s, sPub
 }
 

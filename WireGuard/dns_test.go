@@ -714,7 +714,9 @@ func TestARouterCarryingOnlyLookupsKeepsItsRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
+	s.mu.Lock() // the server reads it after taking s.mu, so the race detector sees the order (#250)
 	viaLoopback(s)
+	s.mu.Unlock()
 	viaPlain(s, newPlain(t, 1))
 	a, b := netip.MustParseAddr("10.7.0.2"), netip.MustParseAddr("10.7.0.3")
 	if err := s.SetPeers([]Peer{{PublicKey: aPub, Address: a}, {PublicKey: bPub, Address: b}}); err != nil {
@@ -772,10 +774,12 @@ func TestASlowNAT64PrefixDoesntAskTheBackup(t *testing.T) {
 	// Longer than the whole lookup. It ignores its context, which ends at nat64LookupTimeout, and
 	// prefix takes what it returns.
 	hold := 3 * s.plainTimeout
+	s.mu.Lock() // the server reads it after taking s.mu, so the race detector sees the order (#250)
 	s.nat64.lookup = func(context.Context) (netip.Prefix, error) {
 		time.Sleep(hold)
 		return carrierNAT64, nil
 	}
+	s.mu.Unlock()
 	first, second := newPlain(t, 1), newPlain(t, 2)
 	viaPlain(s, first, second)
 	a, err := lookupUDP(c, lookupFor(t, 67, "example.com.", 0), answerWait)

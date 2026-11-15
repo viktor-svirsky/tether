@@ -209,8 +209,10 @@ func TestLoadAFarEndThatNeverAnswersTimesOutAfterTheDialTimeout(t *testing.T) {
 	}
 	t.Cleanup(s.Close)
 	real := s.dial // Start's, with dialTimeout
+	s.mu.Lock()    // the server reads it after taking s.mu, so the race detector sees the order (#250)
 	viaLoopback(s)
 	s.dial = func(ctx context.Context, network, _ string) (net.Conn, error) { return real(ctx, network, blackhole) }
+	s.mu.Unlock()
 	addr := netip.MustParseAddr("10.7.0.2")
 	if err := s.SetPeers([]Peer{{PublicKey: cPub, Address: addr}}); err != nil {
 		t.Fatal(err)
