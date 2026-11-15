@@ -279,9 +279,6 @@ final class Model: ObservableObject {
                 guard let self else { return }
                 let task = UIApplication.shared.beginBackgroundTask()
                 Task {
-                    // iOS 18 still counts Tether as on screen right after it leaves, and drops a notice
-                    // posted then. The real app posts from a background round, seconds later.
-                    try? await Task.sleep(for: .seconds(2))
                     await self.poster.post([DemoScenario.notice])
                     UIApplication.shared.endBackgroundTask(task)
                 }
