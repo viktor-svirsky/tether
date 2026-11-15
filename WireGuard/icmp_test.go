@@ -121,6 +121,20 @@ func TestTheServerAnswersAPingToItsOwnAddress(t *testing.T) {
 	}
 }
 
+// An echo request up to maxEcho bytes, the ICMP header included, gets its reply, and a bigger one
+// is dropped before it waits for the ping socket. A ping to 10.7.0.1 shows it, since the server
+// answers that one itself.
+func TestAnEchoRequestOverMaxEchoIsDropped(t *testing.T) {
+	_, c := setup(t)
+	data := make([]byte, maxEcho-header.ICMPv4MinimumSize)
+	if _, err := pingFrom(c, "10.7.0.1", 0, data, 5*time.Second); err != nil {
+		t.Fatalf("a ping of exactly %d bytes got no reply: %v", maxEcho, err)
+	}
+	if echo, err := pingFrom(c, "10.7.0.1", 1, append(data, 0), 500*time.Millisecond); err == nil {
+		t.Fatalf("a ping of %d bytes got a reply, seq %d", maxEcho+1, echo.Seq)
+	}
+}
+
 // iOS closes a suspended app's sockets during a phone call (#106). The ping socket is opened again,
 // so pings through the tunnel work after the call, not only TCP and UDP (#151).
 func TestPingWorksAfterIOSClosedItsSocket(t *testing.T) {
