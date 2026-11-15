@@ -82,8 +82,8 @@ struct WireGuardProblemSection: View {
     }
 }
 
-/// One device: whether it's connected or paused, pausing and resuming it, and removing it. Tapping
-/// the title renames it. A change that couldn't be saved says so at the top, and so does a config
+/// One device: whether it's connected or paused, renaming it, pausing and resuming it, and removing
+/// it. Rename, or tapping the title, renames it (#173). A change that couldn't be saved says so at the top, and so does a config
 /// that points at an old address of this iPhone.
 struct DeviceView: View {
     @ObservedObject var model: Model
@@ -92,6 +92,10 @@ struct DeviceView: View {
     /// Other amount, typed in GB.
     @State private var typingLimit = false
     @State private var typedLimit = ""
+    @State private var renaming = false
+    @State private var typedName = ""
+    /// Selects the name when its field starts editing, see `SelectsAllOnEdit`.
+    @State private var selectsName = false
     @Environment(\.dismiss) private var dismiss
 
     /// The saved device, so a new name shows at once.
@@ -143,6 +147,15 @@ struct DeviceView: View {
                             .accessibilityIdentifier("device.lastConnected")
                     }
                 }
+                // A row anyone finds, since the title's menu is easy to miss (#173).
+                Section {
+                    Button("Rename") {
+                        typedName = current.name
+                        selectsName = true
+                        renaming = true
+                    }
+                    .accessibilityIdentifier("device.rename")
+                }
                 pauseSection
                 usageSection
                 Section {
@@ -172,6 +185,16 @@ struct DeviceView: View {
         } message: {
             Text("Per month, both ways, in GB.")
         }
+        .alert("Rename", isPresented: $renaming) {
+            TextField("Name", text: $typedName)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+            Button("Save") {
+                if let name = DeviceName.toSave(typed: typedName, current: current.name) { model.renameWireGuardDevice(peer.id, to: name) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .modifier(SelectsAllOnEdit(pending: $selectsName))
         .confirmationDialog("Remove \(current.name)?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
                 // A removal that couldn't be saved stays here, and the screen says so.

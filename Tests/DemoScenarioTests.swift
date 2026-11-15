@@ -10,7 +10,7 @@ final class DemoScenarioTests: XCTestCase {
     private let waiting: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro]
     /// The list shows both states: the iPad connected, the Windows PC not.
     private let iPadConnected: Set<DemoScenario> = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying,
-                                                    .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .oldAddress, .staleConfig]
+                                                    .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .staleConfig]
     private let noSpeed: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro, .noDevices, .wireGuardUnsaved,
                                               .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6]
 
@@ -60,8 +60,17 @@ final class DemoScenarioTests: XCTestCase {
             let hasProblem = [.wireGuardLocked, .wireGuardLockedWaiting, .wireGuardNeedsReset, .wireGuardUnsaved].contains(scenario)
             XCTAssertEqual(session.wireGuardProblem != nil, hasProblem, "\(scenario): \(session.wireGuardProblem ?? "no problem")")
             XCTAssertEqual(session.wireGuardNeedsReset, scenario == .wireGuardNeedsReset, "\(scenario)")
-            XCTAssertEqual(session.wireGuardReady == nil, hasProblem || scenario == .qrCodeUnsaved, "\(scenario): the QR code")
+            XCTAssertEqual(session.wireGuardReady == nil, hasProblem || [.qrCodeUnsaved, .addDeviceDoneUnsaved].contains(scenario), "\(scenario): the QR code")
         }
+    }
+
+    /// The sheet's name for the iPad can't be saved, and the session says so for the iPad.
+    func testNamingTheIPadFailsInTheUnsavedAddDeviceDemo() throws {
+        let session = DemoState(.addDeviceDoneUnsaved).makeSession()
+        let ipad = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "iPad" })
+        session.renameWireGuardDevice(ipad.id, to: "Living room")
+        XCTAssertEqual(session.wireGuardDeviceProblem?.device, ipad.id)
+        XCTAssertEqual(session.wireGuardPeers.first { $0.id == ipad.id }?.name, "iPad")
     }
 
     func testOnlyTheStaleConfigDemoShowsOne() {

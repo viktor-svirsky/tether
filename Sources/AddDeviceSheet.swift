@@ -6,14 +6,21 @@ import SwiftUI
 /// was ready when it opened, see `AddDeviceProgress`. The page and the connected list keep up only
 /// while Tether is on screen, so in the background the steps wait, and they catch up when it's back.
 /// The code works only while the sheet is on screen and for 10 minutes after, see
-/// `AddWindow`, so opening it after that shows a new code.
+/// `AddWindow`, so opening it after that shows a new code. Once the device connects, it asks for
+/// its name, filled with the one it got ("Device 2") and selected, so typing replaces it (#173).
 struct AddDeviceSheet: View {
     @ObservedObject var model: Model
     @Environment(\.dismiss) private var dismiss
     /// The device behind the code. Until it's claimed, a new code (after starting over, say) takes its place.
     @State private var readyID: WireGuardSetup.Peer.ID?
-    /// Which way the device gets its config: a phone or tablet scans, a computer downloads.
+    /// Which way the device gets its config: a phone or tablet scans, a computer or a travel router
+    /// gets the file (#171).
     @State private var kind = Kind.phone
+    /// The device's name, typed once it connects and saved when the sheet closes.
+    @State private var naming = AddDeviceNaming()
+    @FocusState private var nameFocused: Bool
+    /// Selects the name when the field starts editing, once, see `SelectsAllOnEdit`.
+    @State private var selectsName = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// The copy button that was just tapped, which shows a tick for a moment.
     @State private var copiedID: String?
@@ -85,29 +92,23 @@ struct AddDeviceSheet: View {
                     .padding(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 18))
                     .background(Self.card)
 
-                    if progress.finished, let device = progress.device {
-                        VStack(spacing: 14) {
-                            StatusOrb(look: .sharing)
-                            Text("\(device.name) is connected")
-                                .font(.system(.title, design: .rounded, weight: .heavy))
-                                .multilineTextAlignment(.center)
-                                .accessibilityIdentifier("add.result")
-                            Text("It uses this iPhone's data now. Tap it in your devices to rename it.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding(.top, 12)
-                        .padding(.horizontal, 24)
+                    if naming.device != nil {
+                        connected
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
             .background(Color(.systemGroupedBackground))
+            // Lowering the keyboard needs a way other than its Done, which saves and closes.
+            .scrollDismissesKeyboard(.immediately)
+            // iOS scrolls only the text of a focused field above the keyboard, not the box around
+            // it, which then ran under Done. The box's padding and the space above Done, as
+            // room under the scrolling content (#173).
+            .safeAreaPadding(.bottom, Self.nameBoxRoom)
             .safeAreaInset(edge: .bottom) {
-                if progress.finished {
-                    Button { dismiss() } label: {
+                if naming.device != nil {
+                    Button(action: finish) {
                         Text("Done").font(.headline).frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -147,14 +148,99 @@ struct AddDeviceSheet: View {
                 if let text = new.announcement(after: old) { AccessibilityNotification.Announcement(text).post() }
             }
             .onChange(of: progress.keepsScreenAwake) { _, awake in UIApplication.shared.isIdleTimerDisabled = awake }
+            // The first time it connects, the keyboard comes up with the name it got, selected, so
+            // typing replaces it. Its tunnel dropping after that leaves the step as it is.
+            .onChange(of: progress, initial: true) { _, progress in
+                guard naming.device == nil else { return }
+                naming.follow(progress)
+                if naming.device != nil {
+                    selectsName = true
+                    nameFocused = true
+                }
+            }
+            .modifier(SelectsAllOnEdit(pending: $selectsName))
             // Claimed: its file now holds a key that works.
             .onChange(of: progress.device != nil) { _, claimed in if claimed { ReadyCode.forget() } }
             .onDisappear {
+                // Closed another way than Done keeps what was typed too.
+                _ = saveName()
                 ReadyCode.forget()
                 model.closeAddWindow()
                 UIApplication.shared.isIdleTimerDisabled = false
             }
         }
+    }
+
+    /// Once it connects: that it did, and its name to type.
+    private var connected: some View {
+        VStack(spacing: 14) {
+            StatusOrb(look: .sharing)
+            // The tick is the step marks' own, and VoiceOver reads the word.
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(LinearGradient(colors: StepMark.doneColors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .accessibilityHidden(true)
+                Text("Connected")
+                    .accessibilityIdentifier("add.result")
+            }
+            .font(.system(.title, design: .rounded, weight: .heavy))
+            Text("It uses this iPhone's data now.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            // Above the field, so the keyboard doesn't cover it. The draft stays to try again.
+            if let problem = nameProblem {
+                WarningLabel(problem)
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("add.nameProblem")
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                // The field says Name to VoiceOver itself.
+                Text("Name")
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityHidden(true)
+                TextField("Name", text: $naming.draft)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .focused($nameFocused)
+                    .onSubmit(finish)
+                    // The prompt alone isn't the label once the field holds a name.
+                    .accessibilityLabel("Name")
+                    .accessibilityIdentifier("add.name")
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    // The box, for the tests: the text field's own frame is only the text.
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("add.nameBox")
+            }
+        }
+        .padding(.top, 12)
+    }
+
+    /// The name box's padding under the text, and the space between the box and Done.
+    private static let nameBoxRoom: CGFloat = 12 + 16
+
+    /// Done: saves the name and closes, or stays with the draft when it couldn't be saved.
+    private func finish() {
+        if saveName() { dismiss() }
+    }
+
+    /// True when the name saved or there was nothing to save, see `AddDeviceNaming.change`. A failed
+    /// save keeps the old name and says why, on the device's screen too.
+    private func saveName() -> Bool {
+        guard let change = naming.change(in: model.wireGuardPeers) else { return true }
+        model.renameWireGuardDevice(change.id, to: change.name)
+        guard let problem = model.wireGuardDeviceProblem, problem.device == change.id else { return true }
+        AccessibilityNotification.Announcement(problem.text).post()
+        return false
+    }
+
+    /// Why the device's name couldn't be saved.
+    private var nameProblem: String? {
+        model.wireGuardDeviceProblem.flatMap { $0.device == naming.device ? $0.text : nil }
     }
 
     private static var card: some View {
@@ -201,12 +287,12 @@ struct AddDeviceSheet: View {
                 if dynamicTypeSize.isAccessibilitySize {
                     // A segmented control keeps its small text at every size, so here the two kinds
                     // are full-width buttons, one under the other (#176).
-                    kindButton("iPhone or iPad", .phone, id: "add.kind.phone")
-                    kindButton("Computer", .computer, id: "add.kind.computer")
+                    kindButton("Phone or tablet", .phone, id: "add.kind.phone")
+                    kindButton("Computer or router", .computer, id: "add.kind.computer")
                 } else {
                     Picker("Kind of device", selection: $kind) {
-                        Text("iPhone or iPad").tag(Kind.phone)
-                        Text("Computer").tag(Kind.computer)
+                        Text("Phone or tablet").tag(Kind.phone)
+                        Text("Computer or router").tag(Kind.computer)
                     }
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("add.kind")
@@ -249,7 +335,8 @@ struct AddDeviceSheet: View {
                 .accessibilityLabel("QR code for the next device")
                 .accessibilityIdentifier("add.qr")
         }
-        Text("In WireGuard, tap + and Create from QR code.")
+        // WireGuard for Android says Scan from QR code (#171).
+        Text("In WireGuard, tap + and Create from QR code. On Android, tap + and Scan from QR code.")
             .font(.subheadline)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
@@ -305,6 +392,12 @@ struct AddDeviceSheet: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("add.airdrop")
+            Text("On a travel router, import the file in its VPN settings, under WireGuard.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("add.router")
             windowNote(id: "add.fileWindow")
         }
     }
@@ -460,6 +553,22 @@ private struct StepRow<Content: View>: View {
         }
         // Sized to the content, so the line grows to the next step.
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Selects a text field's whole text when it starts editing, while `pending` is on, and turns it
+/// off, so a name is replaced by typing and a later tap can place the cursor. iOS starts editing
+/// with the cursor at the end, and SwiftUI has no selection before iOS 18.
+struct SelectsAllOnEdit: ViewModifier {
+    @Binding var pending: Bool
+
+    func body(content: Content) -> some View {
+        content.onReceive(NotificationCenter.default.publisher(for: UITextField.textDidBeginEditingNotification)) { note in
+            guard pending, let field = note.object as? UITextField else { return }
+            pending = false
+            // Selecting while editing begins doesn't hold.
+            DispatchQueue.main.async { field.selectAll(nil) }
+        }
     }
 }
 

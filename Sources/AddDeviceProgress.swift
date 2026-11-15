@@ -46,3 +46,45 @@ struct AddDeviceProgress: Equatable {
         tunnel = isConnected ? .done : device == nil ? .toDo : .waiting
     }
 }
+
+/// A name typed for a device, on Add a device once it connects or through Rename on its screen.
+enum DeviceName {
+    /// Longer names are cut, which still fits a list row.
+    static let maxLength = 40
+
+    /// The name as it's saved: without the spaces around it, and cut to `maxLength`.
+    static func saved(_ typed: String) -> String {
+        String(typed.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxLength))
+    }
+
+    /// What to save, or nil when there's nothing to: a blank field, or the name it has once it's
+    /// cut. Done without a change saves nothing, so a store that can't save doesn't say a rename
+    /// failed, and a name saved by Done isn't saved again when the sheet goes.
+    static func toSave(typed: String, current: String) -> String? {
+        let name = saved(typed)
+        return name.isEmpty || name == current ? nil : name
+    }
+}
+
+/// Add a device's naming step, from the moment the code's device first connects (#173). It stays
+/// with that device while its tunnel drops and comes back, so the draft is filled once, and a
+/// close while it's down still saves it.
+struct AddDeviceNaming: Equatable {
+    private(set) var device: WireGuardSetup.Peer.ID?
+    var draft = ""
+
+    /// Starts the step, with the device's name, the first time it connects. Later changes leave it be.
+    mutating func follow(_ progress: AddDeviceProgress) {
+        guard device == nil, progress.finished, let peer = progress.device else { return }
+        device = peer.id
+        draft = peer.name
+    }
+
+    /// The device and the name to save, or nil when there's nothing to save: no step yet, no
+    /// change (see `DeviceName.toSave`), or the device was removed meanwhile.
+    func change(in peers: [WireGuardSetup.Peer]) -> (id: WireGuardSetup.Peer.ID, name: String)? {
+        guard let device, let peer = peers.first(where: { $0.id == device }),
+              let name = DeviceName.toSave(typed: draft, current: peer.name) else { return nil }
+        return (device, name)
+    }
+}

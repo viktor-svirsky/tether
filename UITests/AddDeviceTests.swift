@@ -32,20 +32,22 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(label(of: "add.step3"), "Step 3 of 3, Turn its tunnel on")
         XCTAssertEqual(value(of: element("add.step3")), "")
         XCTAssertEqual(label(of: "add.hotspotPath"), "Settings > Personal Hotspot > Allow Others to Join")
-        XCTAssertTrue(app.segmentedControls.buttons["iPhone or iPad"].isSelected, "a phone or tablet first")
+        XCTAssertTrue(app.segmentedControls.buttons["Phone or tablet"].isSelected, "a phone or tablet first")
+        XCTAssertTrue(app.segmentedControls.buttons["Computer or router"].exists)
         XCTAssertEqual(element("add.qr").label, "QR code for the next device")
-        XCTAssertEqual(reveal(element("add.scan")).label, "In WireGuard, tap + and Create from QR code.")
+        // The iOS app's wording and the Android app's (#171).
+        XCTAssertEqual(reveal(element("add.scan")).label, "In WireGuard, tap + and Create from QR code. On Android, tap + and Scan from QR code.")
         // It stops working later (#29), and nothing else would say so (#91).
         XCTAssertEqual(reveal(element("add.codeWindow")).label, Self.windowNote)
         assertNowhere(element("add.address"), element("add.share"), element("add.result"), element("add.done"), element("add.joinFirst"))
     }
 
     /// A computer gets the page's address as text, a button that copies it, and the file to share. Not a
-    /// link: a tap would open the page on this iPhone (#184).
-    func testAComputerGetsTheAddressAndTheFile() {
+    /// link: a tap would open the page on this iPhone (#184). A travel router imports the file (#171).
+    func testAComputerOrRouterGetsTheAddressAndTheFile() {
         launch(.waiting)
         openAddDevice()
-        app.segmentedControls.buttons["Computer"].tap()
+        app.segmentedControls.buttons["Computer or router"].tap()
         XCTAssertEqual(reveal(element("add.laptop")).label, "Open this in the computer's browser while Tether is on screen:")
         let address = reveal(element("add.address"))
         XCTAssertEqual(address.label, "Page address")
@@ -55,6 +57,7 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(value(of: element("add.copy")), "")
         XCTAssertTrue(reveal(element("add.share")).label.contains("Share the file"))
         XCTAssertEqual(reveal(element("add.airdrop")).label, "AirDrop it to a Mac, then open it in WireGuard.")
+        XCTAssertEqual(reveal(element("add.router")).label, "On a travel router, import the file in its VPN settings, under WireGuard.")
         // The file stops working like the code. A download from the page is listed at once, so it doesn't.
         XCTAssertEqual(reveal(element("add.fileWindow")).label, Self.windowNote)
         assertNowhere(element("add.qr"), element("add.codeWindow"), element("add.macLabel"), element("add.addressMac"), element("add.ipv6"),
@@ -117,12 +120,12 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(app.segmentedControls.count, 0)
         let phone = reveal(element("add.kind.phone"), maxSwipes: 30)
         XCTAssertTrue(phone.isSelected, "a phone or tablet first")
-        XCTAssertEqual(phone.label, "iPhone or iPad")
+        XCTAssertEqual(phone.label, "Phone or tablet")
         let window = app.windows.firstMatch.frame
         XCTAssertGreaterThan(phone.frame.width, window.width * 0.6, "full width")
         XCTAssertGreaterThan(phone.frame.height, 60, "it grows with the text")
         let computer = element("add.kind.computer")
-        XCTAssertEqual(computer.label, "Computer")
+        XCTAssertEqual(computer.label, "Computer or router")
         XCTAssertFalse(computer.isSelected)
         XCTAssertGreaterThanOrEqual(computer.frame.minY, phone.frame.maxY, "under it, not beside it")
         try audit(only: "add.kind")
@@ -170,17 +173,128 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertTrue(text(containing: "Windows PC has it").exists)
         XCTAssertEqual(value(of: element("add.step3")), "Waiting")
         XCTAssertTrue(text(containing: "Waiting for Windows PC to connect").exists)
-        assertNowhere(element("add.qr"), element("add.kind"), element("add.done"), element("add.result"))
+        assertNowhere(element("add.qr"), element("add.kind"), element("add.done"), element("add.result"), element("add.name"))
     }
 
-    func testOnceItConnectsDoneClosesTheSheet() {
+    /// Once it connects, the sheet asks for its name, with the keyboard up and the name it got
+    /// selected (#173). Done without typing keeps that name.
+    func testOnceItConnectsDoneClosesTheSheet() throws {
         launch(.addDeviceDone)
         XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
         XCTAssertEqual(value(of: element("add.step3")), "Done")
-        XCTAssertEqual(label(of: "add.result"), "iPad is connected")
+        XCTAssertEqual(label(of: "add.result"), "Connected")
+        let field = app.textFields["add.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.label, "Name")
+        XCTAssertEqual(field.value as? String, "iPad")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "the keyboard is up for the name")
+        assertNowhere(text(containing: "rename it"), message: "it's named here now")
+        assertNameBoxAboveDone()
+        try audit(only: "add.")
         element("add.done").tap()
         waitUntilGone(element("add.step1"))
         XCTAssertTrue(reveal(element("device.iPad")).exists)
+    }
+
+    /// With the keyboard down too, scrolled to the end, the box stays above Done, at the usual and
+    /// the largest text size.
+    func testTheNameBoxClearsDoneWithTheKeyboardDown() {
+        for arguments in [[], ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]] {
+            launch(.addDeviceDone, arguments: arguments)
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            waitUntilStill(element("add.nameBox"))
+            lowerTheKeyboardAndCheckTheBox()
+            app.terminate()
+        }
+    }
+
+    /// A drag lowers the keyboard, then the sheet is scrolled to its end, where the box sits on Done.
+    private func lowerTheKeyboardAndCheckTheBox(file: StaticString = #filePath, line: UInt = #line) {
+        // In the sheet's upper part, on its scrolling content at every text size. Not on the
+        // screen behind it, which has scroll views too.
+        let window = app.windows.firstMatch
+        func drag(from: CGFloat, to: CGFloat) {
+            window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: from))
+                .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: to)))
+        }
+        drag(from: 0.3, to: 0.5)
+        waitUntilGone(app.keyboards.firstMatch)
+        for _ in 0..<4 { drag(from: 0.6, to: 0.2) }
+        waitUntilStill(element("add.nameBox"))
+        assertNameBoxAboveDone(file: file, line: line)
+    }
+
+    /// The whole box around the name shows, with space above Done: its bottom was under it (#173).
+    private func assertNameBoxAboveDone(file: StaticString = #filePath, line: UInt = #line) {
+        let box = element("add.nameBox"), done = element("add.done")
+        waitUntilStill(box)
+        XCTAssertTrue(box.exists, file: file, line: line)
+        XCTAssertLessThanOrEqual(box.frame.maxY, done.frame.minY, "the name's box \(box.frame) runs under Done \(done.frame)", file: file, line: line)
+    }
+
+    /// What's typed replaces the name, since it's selected, and Done saves it.
+    func testANameTypedOnceItConnectsIsSaved() {
+        launch(.addDeviceDone)
+        let field = app.textFields["add.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        waitUntilStill(field)
+        field.typeText("Living room")
+        XCTAssertEqual(field.value as? String, "Living room", "the name it had was selected and replaced")
+        element("add.done").tap()
+        waitUntilGone(element("add.step1"))
+        XCTAssertTrue(reveal(element("device.Living room")).exists)
+        assertNowhere(element("device.iPad"))
+    }
+
+    /// A name that can't be saved says so in the sheet, which stays open with what was typed, to try
+    /// again. Closing it keeps the old name, and the device's screen says why.
+    func testANameThatCantBeSavedSaysSoAndKeepsTheSheetOpen() {
+        launch(.addDeviceDoneUnsaved)
+        let field = app.textFields["add.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        waitUntilStill(field)
+        field.typeText("Living room")
+        element("add.done").tap()
+        let problem = staticText("add.nameProblem") // the warning icon carries the identifier too
+        XCTAssertTrue(problem.waitForExistence(timeout: 5))
+        XCTAssertEqual(problem.label, "The new name couldn't be saved.")
+        XCTAssertTrue(element("add.step1").exists, "the sheet stays open")
+        XCTAssertEqual(field.value as? String, "Living room", "what was typed stays")
+        element("add.close").tap()
+        waitUntilGone(element("add.step1"))
+        openDevice("iPad")
+        XCTAssertEqual(staticText("device.problem").label, "The new name couldn't be saved.")
+    }
+
+    /// The keyboard's Done saves and closes too.
+    func testTheKeyboardsDoneSavesTheName() {
+        launch(.addDeviceDone)
+        let field = app.textFields["add.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        waitUntilStill(field)
+        field.typeText("Kitchen\n")
+        waitUntilGone(element("add.step1"))
+        XCTAssertTrue(reveal(element("device.Kitchen")).exists)
+    }
+
+    /// At the largest text size the name field and Done stay reachable over the keyboard.
+    func testTheNameFieldWorksAtTheLargestTextSize() throws {
+        launch(.addDeviceDone, arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
+        let field = app.textFields["add.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        waitUntilStill(field)
+        XCTAssertTrue(field.isHittable, "the field scrolls above the keyboard")
+        XCTAssertTrue(element("add.done").isHittable)
+        assertNameBoxAboveDone()
+        try audit(types: [.textClipped], only: "add.")
+        field.typeText("Den")
+        element("add.done").tap()
+        waitUntilGone(element("add.step1"))
+        XCTAssertTrue(reveal(element("device.Den"), maxSwipes: 30).exists)
     }
 
     /// The devices it has still connect, so it's sharing. Only the next device has to wait.

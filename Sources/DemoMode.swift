@@ -56,6 +56,8 @@ enum DemoScenario: String, CaseIterable {
     case addDeviceWaiting
     /// Like `addDeviceWaiting`, for the iPad, which is connected.
     case addDeviceDone
+    /// Like `addDeviceDone`, but nothing can be saved, so the iPad's new name doesn't save.
+    case addDeviceDoneUnsaved
     /// Like `sharing`, but the Windows PC's config points at an IPv6 address this iPhone had before,
     /// the way a new cellular session moves it on an IPv6-only carrier, so it needs adding again.
     case oldAddress
@@ -133,7 +135,7 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .localNetworkDenied, .oldAddress, .staleConfig, .paused:
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .localNetworkDenied, .oldAddress, .staleConfig, .paused:
             var setup = WireGuardSetup.new()
             let ipad = setup.addPeer(name: "iPad")
             if scenario == .paused, let ipad { setup.pausePeer(ipad.id, .byYou) }
@@ -148,7 +150,7 @@ struct DemoState {
         }
         switch scenario {
         case .wireGuardLocked, .wireGuardLockedWaiting: return LockedSecrets()
-        case .wireGuardUnsaved, .qrCodeUnsaved: return UnsavableSecrets(secrets.data)
+        case .wireGuardUnsaved, .qrCodeUnsaved, .addDeviceDoneUnsaved: return UnsavableSecrets(secrets.data)
         default: return secrets
         }
     }
@@ -184,7 +186,7 @@ struct DemoState {
     /// The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states. In `paused` the
     /// session shows the iPad paused instead.
     var connected: Set<String> {
-        [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .oldAddress, .staleConfig, .paused].contains(scenario) ? ["10.7.0.2"] : []
+        [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .staleConfig, .paused].contains(scenario) ? ["10.7.0.2"] : []
     }
 
     /// When this build stops opening: two days on for `expiring`, never for the others.

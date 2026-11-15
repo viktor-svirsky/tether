@@ -12,7 +12,8 @@ final class DeviceViewTests: TetherUITestCase {
         launch(.sharing)
         openDevice("iPad")
         XCTAssertEqual(staticText("device.status").label, "Connected")
-        XCTAssertTrue(element("device.remove").exists)
+        // Below the screen on an iPhone SE.
+        XCTAssertTrue(reveal(element("device.remove")).exists)
         assertNowhere(element("wireguard.qr"), text(containing: "10.7.0.2"), message: "no per-device code or address any more")
         assertNowhere(element("device.lastConnected"), message: "connected says it")
         // Where its handshake comes from, without the port (#73).
@@ -124,10 +125,45 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(element("device.Windows PC"))
     }
 
+    /// A Rename row above Pause and Remove, since the title's menu is easy to miss (#173). The name
+    /// is selected, so typing replaces it.
+    func testTheRenameRowRenamesTheDevice() {
+        launch(.sharing)
+        openDevice("Windows PC")
+        let row = reveal(element("device.rename"))
+        XCTAssertEqual(row.label, "Rename")
+        XCTAssertLessThan(row.frame.maxY, reveal(element("device.pause")).frame.minY, "above Pause")
+        row.tap()
+        let alert = app.alerts["Rename"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        let field = alert.textFields.firstMatch
+        XCTAssertEqual(field.value as? String, "Windows PC")
+        waitUntilStill(field)
+        field.typeText("Work PC")
+        alert.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Work PC"].waitForExistence(timeout: 5))
+        assertNowhere(element("device.problem"))
+        goBack(to: "Tether")
+        XCTAssertTrue(reveal(element("device.Work PC")).exists)
+        assertNowhere(element("device.Windows PC"))
+    }
+
+    func testCancellingRenameKeepsTheName() {
+        launch(.sharing)
+        openDevice("iPad")
+        reveal(element("device.rename")).tap()
+        let alert = app.alerts["Rename"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.textFields.firstMatch.typeText("Other")
+        alert.buttons["Cancel"].tap()
+        waitUntilGone(alert)
+        XCTAssertTrue(app.navigationBars["iPad"].exists)
+    }
+
     func testCancellingTheRemoveDialogKeepsTheDevice() {
         launch(.sharing)
         openDevice("iPad")
-        element("device.remove").tap()
+        reveal(element("device.remove")).tap()
         XCTAssertTrue(app.buttons["Remove"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Remove iPad?"].exists)
         cancelDialog()
@@ -141,7 +177,7 @@ final class DeviceViewTests: TetherUITestCase {
     func testRemovingADeviceTakesItOffTheListAndKeepsTheOther() {
         launch(.sharing)
         openDevice("Windows PC")
-        element("device.remove").tap()
+        reveal(element("device.remove")).tap()
         app.buttons["Remove"].firstMatch.tap()
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5), "back on the main screen")
         waitUntilGone(element("device.Windows PC"))
@@ -196,7 +232,7 @@ final class DeviceViewTests: TetherUITestCase {
     func testARemovalThatCantBeSavedStaysOnTheDeviceAndSaysSo() {
         launch(.qrCodeUnsaved)
         openDevice("Windows PC")
-        element("device.remove").tap()
+        reveal(element("device.remove")).tap()
         app.buttons["Remove"].firstMatch.tap()
         let problem = staticText("device.problem")
         XCTAssertTrue(problem.waitForExistence(timeout: 5))

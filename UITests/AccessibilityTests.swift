@@ -99,7 +99,7 @@ final class AccessibilityTests: TetherUITestCase {
             try audit(only: "add.")
             openAddDevice()
             try audit()
-            app.segmentedControls.buttons["Computer"].tap()
+            app.segmentedControls.buttons["Computer or router"].tap()
             XCTAssertTrue(reveal(element("add.share")).isHittable)
             try audit(only: "add.")
             let shot = XCTAttachment(screenshot: app.screenshot())
