@@ -44,18 +44,20 @@ final class FakeServer: WireGuardServing {
     private(set) var lastSetup: WireGuardSetup?
     /// Where the last start or change sent lookups to Tether's own address.
     private(set) var lastDNS: DNSChoice.Upstream?
+    /// Whether the last start or change kept the devices out of the local networks.
+    private(set) var lastBlockLocal: Bool?
     /// Where the config page is open to the devices, see `setPage`. A run starts with it nowhere, as
     /// the real one does.
     private(set) var page: [String] = []
 
-    func start(hosts: [String], setup: WireGuardSetup, dns: DNSChoice.Upstream, port: UInt16) throws {
+    func start(hosts: [String], setup: WireGuardSetup, dns: DNSChoice.Upstream, blockLocal: Bool, port: UInt16) throws {
         stop()
         starts.append(hosts.joined(separator: ","))
         if let startError { throw startError }
         running = true
         page = []
         do {
-            try setPeers(setup, dns: dns)
+            try setPeers(setup, dns: dns, blockLocal: blockLocal)
         } catch {
             running = false
             throw error
@@ -83,11 +85,12 @@ final class FakeServer: WireGuardServing {
         if let listenError { throw listenError }
     }
 
-    func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream) throws {
+    func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream, blockLocal: Bool) throws {
         guard running else { return }
         if let refusedAddress, setup.serverPeers.contains(where: { $0.address == refusedAddress }) { throw Refused() }
         lastSetup = setup
         lastDNS = dns
+        lastBlockLocal = blockLocal
     }
 
     func snapshot() -> ServerSnapshot {

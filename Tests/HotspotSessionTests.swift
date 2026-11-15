@@ -19,6 +19,7 @@ final class HotspotSessionTests: XCTestCase {
     private var ipv6Only = false
     private var idleAfter = IdleStop.After.never
     private var dns = DNSChoice.Upstream.servers(["1.1.1.1", "1.0.0.1"])
+    private var blockLocal = true
     private let usageDefaults: UserDefaults = {
         let defaults = UserDefaults(suiteName: "HotspotSessionTests.usage")!
         defaults.removePersistentDomain(forName: "HotspotSessionTests.usage")
@@ -40,7 +41,7 @@ final class HotspotSessionTests: XCTestCase {
         session = HotspotSession(devices: devices, server: server, keepAlive: sound, page: page,
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
                                  carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
-                                 dns: { [unowned self] in dns }, usageDefaults: usageDefaults,
+                                 dns: { [unowned self] in dns }, blockLocal: { [unowned self] in blockLocal }, usageDefaults: usageDefaults,
                                  now: { [unowned self] in now }, log: log)
     }
 
@@ -453,6 +454,20 @@ final class HotspotSessionTests: XCTestCase {
         dns = .servers(["9.9.9.9", "149.112.112.112"])
         session.dnsChanged()
         XCTAssertEqual(server.lastDNS, .servers(["9.9.9.9", "149.112.112.112"]))
+    }
+
+    /// Whether the devices reach the iPhone's local networks goes with each start and each change (#230).
+    func testTheServerFollowsTheLocalNetworksSetting() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertEqual(server.lastBlockLocal, true, "at start")
+        blockLocal = false
+        session.localNetworksChanged()
+        XCTAssertEqual(server.lastBlockLocal, false)
+        blockLocal = true
+        session.localNetworksChanged()
+        XCTAssertEqual(server.lastBlockLocal, true)
     }
 
     /// Each device's data this month comes from its counters, on screen and in the background, and

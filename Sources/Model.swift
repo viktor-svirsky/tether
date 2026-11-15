@@ -154,6 +154,11 @@ final class Model: ObservableObject {
         noticeCenter = SystemNoticeCenter(log: Self.append)
         #endif
         notifier = Notifier(defaults: settingsDefaults)
+        // Before the session reads it (#230). Tether was set up before the setting when the Local Network
+        // screen was passed (since 1.6) or a setup is saved. The Keychain can't be read while the iPhone is
+        // locked, as in a background launch, so the screen's mark counts on its own.
+        let introduced = UserDefaults.standard.bool(forKey: LocalNetworkIntro.key)
+        LocalNetworks.settle(in: settingsDefaults, wasSetUp: introduced || (try? secrets.load()) != nil)
         poster = NoticePoster(center: noticeCenter)
         #if DEBUG
         session = demo?.makeSession(log: Self.append) ?? Self.session(secrets: secrets, settings: settingsDefaults)
@@ -203,7 +208,8 @@ final class Model: ObservableObject {
                        hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,
                        carrierIPv6Only: Interfaces.carrierIPv6Only,
                        idleStopAfter: { IdleStop.After.saved(in: settings) },
-                       dns: { DNSChoice.upstream(in: settings) }, usageDefaults: settings,
+                       dns: { DNSChoice.upstream(in: settings) },
+                       blockLocal: { !LocalNetworks.allowed(in: settings) }, usageDefaults: settings,
                        log: Self.append)
     }
 
@@ -365,6 +371,8 @@ final class Model: ObservableObject {
 
     /// Settings > Devices changed, see `HotspotSession.dnsChanged`.
     func dnsChanged() { session.dnsChanged() }
+    /// Settings > local networks changed, see `HotspotSession.localNetworksChanged`.
+    func localNetworksChanged() { session.localNetworksChanged() }
 
     /// See `HotspotSession.overLimit`.
     func overLimit(_ id: WireGuardSetup.Peer.ID) -> Bool { session.overLimit(id) }
