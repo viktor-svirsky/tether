@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -348,5 +350,36 @@ func TestTheIPv6ListenerListensAgainAfterIOSClosesIt(t *testing.T) {
 	}
 	if at := s.statsMessage().Proxy.Addresses; len(at) != 2 || at[1] != at6 {
 		t.Fatalf("listening on %q, want %s again", at, at6)
+	}
+}
+
+// Reading the iPhone's interfaces can fail. The IPv6 socket then doesn't listen with no network to
+// serve, which would refuse every client until the socket failed: it tries again, as after a failed
+// listen, and serves once the read works.
+func TestTheIPv6ListenerReadsTheHotspotsNetworkAgainAfterAFailure(t *testing.T) {
+	s, _, at6, _ := proxyOn6(t, netip.IPv6Loopback(), "::1/64")
+	s.mu.Lock()
+	list := s.listAddrs
+	var failed atomic.Bool
+	s.listAddrs = func() ([]net.Addr, error) {
+		if !failed.Swap(true) {
+			return nil, errors.New("no addresses for you")
+		}
+		return list()
+	}
+	ln := s.proxy.run.socks[1].ln
+	s.mu.Unlock()
+	ln.Close() // iOS closes it, and the next read fails
+	echo := echoFarEnd(t)
+	if !waitFor(10*time.Second, func() bool {
+		c, err := net.DialTimeout("tcp", at6, time.Second)
+		if err != nil {
+			return false // not listening again yet
+		}
+		c.Close()
+		conn, r, status := tunnel(t, at6, echo)
+		return status == http.StatusOK && echoes(conn, r)
+	}) {
+		t.Fatalf("after one failed read, %s still refuses clients", at6)
 	}
 }

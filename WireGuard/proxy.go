@@ -377,13 +377,22 @@ func (k *proxySocket) serve() {
 		if host != announced {
 			k.down = false // a new address's failure is news
 		}
+		// On IPv6 whom it serves comes first: listening without it would refuse every client until the
+		// socket failed, so a failed read waits and tries again, as a failed listen does.
 		var clients netip.Prefix
+		var ln net.Listener
+		var err error
 		if k.v6 {
-			if addrs, err := list(); err == nil {
+			var addrs []net.Addr
+			if addrs, err = list(); err == nil {
 				clients, _ = hotspotNet6(addrs, host)
+			} else {
+				err = fmt.Errorf("can't read its network: %w", err)
 			}
 		}
-		ln, err := r.listen(r.ctx, at.String())
+		if err == nil {
+			ln, err = r.listen(r.ctx, at.String())
+		}
 		if err == nil {
 			s.mu.Lock()
 			if r.stopped {
