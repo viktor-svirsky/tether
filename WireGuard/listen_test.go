@@ -1,9 +1,12 @@
 package main
 
 import (
+	"errors"
+	"net"
 	"net/netip"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 )
 
@@ -79,5 +82,70 @@ func TestAnAddressThatCantBeListenedOnLeavesTheOldOnes(t *testing.T) {
 	}
 	if got := s.port(t); got != port {
 		t.Fatalf("listening on port %d, want %d", got, port)
+	}
+}
+
+// Another app's socket can hold Tether's port on every address: one that got 51820 for port 0, say.
+// The server still listens on the hotspot's address, and its devices' packets come to it, not to
+// the other socket. A socket of either family can hold it: Darwin keeps a dual-stack one with the
+// IPv4 ones too.
+func TestAnotherSocketOnEveryAddressLeavesThePort(t *testing.T) {
+	for _, network := range []string{"udp4", "udp"} {
+		t.Run(network, func(t *testing.T) {
+			other, err := net.ListenUDP(network, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer other.Close()
+			port := other.LocalAddr().(*net.UDPAddr).Port
+			heard := make(chan struct{}, 1)
+			go func() {
+				buf := make([]byte, 2048)
+				if _, _, err := other.ReadFromUDP(buf); err == nil {
+					heard <- struct{}{}
+				}
+			}()
+
+			sPriv, sPub := keyPair(t)
+			cPriv, cPub := keyPair(t)
+			s, err := Start([]netip.Addr{loopback}, port, sPriv)
+			if err != nil {
+				t.Fatalf("can't listen on port %d next to the other socket: %v", port, err)
+			}
+			t.Cleanup(s.Close)
+			viaLoopback(s)
+			addr := netip.MustParseAddr("10.7.0.2")
+			if err := s.SetPeers([]Peer{{PublicKey: cPub, Address: addr}}); err != nil {
+				t.Fatal(err)
+			}
+			c := newDeviceVia(t, s, loopback, sPub, cPriv, MTU, addr)
+			if n, err := fetch(t, c, tcpServer(t, 1000)); err != nil || n != 1000 {
+				t.Fatalf("got %d bytes, %v", n, err)
+			}
+			select {
+			case <-heard:
+				t.Fatal("the other socket got the device's packets")
+			default:
+			}
+		})
+	}
+}
+
+// A socket on the hotspot's own address and port still keeps the server out: two servers on one
+// address would each get some of the devices' packets.
+func TestAnotherSocketOnTheSameAddressRefusesThePort(t *testing.T) {
+	other, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(netip.AddrPortFrom(loopback, 0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	sPriv, _ := keyPair(t)
+	s, err := Start([]netip.Addr{loopback}, other.LocalAddr().(*net.UDPAddr).Port, sPriv)
+	if err == nil {
+		s.Close()
+		t.Fatal("listened on an address and port another socket has")
+	}
+	if !errors.Is(err, syscall.EADDRINUSE) {
+		t.Fatalf("got %v, want address already in use", err)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/netip"
@@ -54,11 +55,12 @@ func (b *hostBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 			b.closeAll()
 			return nil, 0, errors.New("two addresses of one family: a reply couldn't tell which to go out of")
 		}
-		c, err := net.ListenUDP("udp", net.UDPAddrFromAddrPort(netip.AddrPortFrom(host, port)))
+		pc, err := reuseAddr.ListenPacket(context.Background(), "udp", netip.AddrPortFrom(host, port).String())
 		if err != nil {
 			b.closeAll()
 			return nil, 0, err
 		}
+		c := pc.(*net.UDPConn)
 		port = uint16(c.LocalAddr().(*net.UDPAddr).Port)
 		if host.Is4() {
 			b.v4 = c
@@ -71,6 +73,21 @@ func (b *hostBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	b.broken = false
 	return fns, port, nil
 }
+
+// reuseAddr listens with SO_REUSEADDR, which Go sets on multicast UDP sockets only. Without it
+// Darwin refuses 172.20.10.1:51820 while another socket has *:51820, and 51820 is in the range
+// iOS gives out for port 0: any app or service sending UDP can hold it, also after Tether is
+// relaunched. With it the hotspot address is Tether's, and its packets come to the more specific
+// socket. A socket on the same address, or another user's on the port, still refuses it.
+var reuseAddr = net.ListenConfig{Control: func(_, _ string, c syscall.RawConn) error {
+	var err error
+	if e := c.Control(func(fd uintptr) {
+		err = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+	}); e != nil {
+		return e
+	}
+	return err
+}}
 
 func (b *hostBind) receiveOn(c *net.UDPConn) conn.ReceiveFunc {
 	return func(packets [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {

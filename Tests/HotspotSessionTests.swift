@@ -695,6 +695,22 @@ final class HotspotSessionTests: XCTestCase {
         ])
     }
 
+    /// Another socket on the port is something the person can act on, so it's said (the issue in the shared log).
+    func testAPortInUseSaysSo() {
+        struct InUse: Error, CustomStringConvertible {
+            var description: String { "listen udp 172.20.10.1:51820: bind: address already in use" }
+        }
+        makeSession()
+        address = hotspot
+        server.startError = InUse()
+        session.syncWithHotspot()
+        XCTAssertEqual(session.wireGuardProblem, HotspotSession.problem(starting: InUse()))
+        XCTAssertTrue(session.wireGuardProblem?.hasPrefix("Something else on this iPhone is using port 51820.") ?? false)
+        server.startError = nil
+        session.syncWithHotspot()
+        XCTAssertNil(session.wireGuardProblem, "gone once it starts")
+    }
+
     func testTheSetupProblemComesBeforeTheStartProblem() {
         run([
             Round(address: hotspot, locked: true, startFails: true, problem: locked, serverRunning: false),

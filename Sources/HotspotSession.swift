@@ -352,9 +352,19 @@ final class HotspotSession {
             log("WireGuard on \(hosts.joined(separator: " and ")) port \(WireGuardSetup.port), \(wireGuardPeers.count) devices")
         } catch {
             // The error goes to the log, see `showProblem`: on screen it says what to do.
-            startProblem = "It couldn't start. Tether tries again by itself. If this stays, share the log from Settings."
+            startProblem = Self.problem(starting: error)
             showProblem(because: error)
         }
+    }
+
+    /// Why WireGuard can't start, for `wireGuardProblem`. Another socket on 51820 is the one reason a
+    /// person can do something about: a WireGuard tunnel on this iPhone with ListenPort 51820, say.
+    static func problem(starting error: Error) -> String {
+        guard "\(error)".contains("address already in use") else {
+            return "It couldn't start. Tether tries again by itself. If this stays, share the log from Settings."
+        }
+        return "Something else on this iPhone is using port \(WireGuardSetup.port). Tether tries again by itself. "
+            + "If this stays, turn off other VPN or WireGuard tunnels on this iPhone, or restart it."
     }
 
     /// Why the saved setup can't be used, for `wireGuardProblem`.
