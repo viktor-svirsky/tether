@@ -195,8 +195,9 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertEqual(stats.stale, StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030), from: "172.20.10.9:51820"))
         XCTAssertEqual(stats.recentStale, [StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_010), from: "172.20.10.4:51820"),
                                            StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030), from: "172.20.10.9:51820")])
-        // The proxy's own counters (#78). ProxyTests reads where it listens.
+        // The proxy's own counters and where it listens (#78).
         XCTAssertEqual(stats.proxy.open, 3)
+        XCTAssertEqual(stats.proxy.addresses, ["172.20.10.1:8118", "[2607:fb90:1:2::5]:8118"])
         XCTAssertEqual(stats.proxy.traffic, TrafficTotals(bytesUp: 2210, bytesDown: 48210))
     }
 
