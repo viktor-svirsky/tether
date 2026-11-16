@@ -285,6 +285,8 @@ type Server struct {
 	closed bool
 	// forwarding counts the forwardTCP goroutines handleTCP let in, for Close to wait for.
 	forwarding sync.WaitGroup
+	// proxy is the HTTP proxy for devices without WireGuard, see proxy.go.
+	proxy *proxy
 }
 
 // arrival is a TCP connection a device asked for, from its SYN until its dial ends.
@@ -343,6 +345,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 		dead:      make(chan struct{}, 1),
 		listAddrs: listAddrs,
 	}
+	s.proxy = newProxy()
 	s.page.Store(&[]netip.AddrPort{})
 	s.local.Store(&map[netip.Addr]struct{}{})
 	s.onLink.Store(&[]netip.Prefix{})
@@ -423,6 +426,7 @@ func (s *Server) close() {
 	s.closed = true
 	s.mu.Unlock()
 	s.cancel()
+	s.stopProxy() // after cancel, which ends its dials and NAT64 lookups, so it doesn't wait them out
 	s.dev.Close() // closes the tun too
 	s.stack.Close()
 	s.closePings()
@@ -1183,13 +1187,7 @@ func (s *Server) forwardTCP(r forwardRequest) {
 		refuse()
 		return
 	}
-	// A reset, unlike Close, tells a side the transfer didn't finish.
-	resetOut := func() {
-		if t, ok := out.(*net.TCPConn); ok {
-			t.SetLinger(0)
-		}
-		out.Close()
-	}
+	resetOut := func() { resetTCP(out) }
 	// out is tracked from here, so SetPeers or Close can close it while the device's side is
 	// made, and end that too. It waits for the device's ACK, which never comes when the device's
 	// key just went or the stack is closed.
@@ -1346,6 +1344,14 @@ func (s *Server) dialTCP(ctx context.Context, dst netip.AddrPort, nat64Wait func
 		}
 	}
 	return out, err
+}
+
+// resetTCP closes c with a reset, which, unlike a FIN, tells the other side the transfer didn't finish.
+func resetTCP(c net.Conn) {
+	if t, ok := c.(*net.TCPConn); ok {
+		t.SetLinger(0)
+	}
+	c.Close()
 }
 
 // wake ends the handshake CreateEndpoint waits on: gVisor waits for the queue's next event, then

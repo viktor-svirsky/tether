@@ -1495,7 +1495,7 @@ func FuzzFitUDP(f *testing.F) {
 
 func TestTheDNSInTheDeviceList(t *testing.T) {
 	parse := func(dns string) (*dnsUpstream, error) {
-		_, u, _, err := parseConfig(`{"v":1,"peers":[]` + dns + `}`)
+		_, u, _, _, err := parseConfig(`{"v":1,"peers":[]` + dns + `}`)
 		return u, err
 	}
 	if u, err := parse(""); u != nil || err != nil {
