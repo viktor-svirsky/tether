@@ -68,7 +68,7 @@ struct ProxyStatus: Equatable {
     enum State: Equatable {
         case paused(WireGuardSetup.Pause)
         case open(Int)
-        /// It doesn't listen yet: the hotspot is off.
+        /// It doesn't listen yet: no device is on the hotspot, which iOS makes look like the hotspot off.
         case waiting
     }
 
@@ -101,7 +101,7 @@ struct ProxyStatus: Equatable {
         case .open(0): "No connections open"
         case .open(1): "1 connection open"
         case let .open(n): "\(n) connections open"
-        case .waiting: "Starts when the hotspot is on"
+        case .waiting: "Waiting for a device to join Personal Hotspot"
         }
     }
 

@@ -274,7 +274,9 @@ final class ProxyTests: XCTestCase {
         XCTAssertEqual(status(0).label, "Idle")
         XCTAssertEqual(status(0).title, "No connections open")
         XCTAssertEqual(status(0, hotspot: false).label, "Idle")
-        XCTAssertEqual(status(0, hotspot: false).title, "Starts when the hotspot is on")
+        // The hotspot's network is there only while a device is on it, so off and on with nobody look
+        // the same, see `ShortcutReply.status`.
+        XCTAssertEqual(status(0, hotspot: false).title, "Waiting for a device to join Personal Hotspot")
         XCTAssertEqual(status(2).look, .connected)
         XCTAssertEqual(status(0).look, .notConnected)
         proxy.paused = .byYou
