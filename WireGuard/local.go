@@ -58,6 +58,29 @@ func onLinkOf(addrs []net.Addr) []netip.Prefix {
 	return nets
 }
 
+// hotspotNet6 is the on-link network of the hotspot's IPv6 address host, as InterfaceAddrs gives
+// it: the hotspot's clients take their addresses there. Only a /64 or narrower one counts: a wider
+// one isn't one link's, and the address is the iPhone's global one, so the proxy would face more
+// than the hotspot. False when host isn't among addrs.
+func hotspotNet6(addrs []net.Addr, host netip.Addr) (netip.Prefix, bool) {
+	for _, a := range addrs {
+		n, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if addr, ok := netip.AddrFromSlice(n.IP); !ok || addr.Unmap() != host {
+			continue
+		}
+		ones, bits := n.Mask.Size()
+		if bits != 128 || ones < 64 {
+			return netip.Prefix{}, false
+		}
+		p, err := host.Prefix(ones)
+		return p, err == nil
+	}
+	return netip.Prefix{}, false
+}
+
 // isLocal says whether dst is on a local network: in localNets or on a network the iPhone is on.
 func (s *Server) isLocal(dst netip.Addr) bool {
 	dst = dst.Unmap()

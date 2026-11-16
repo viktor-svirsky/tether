@@ -50,7 +50,12 @@ func proxyReady(t *testing.T) *Server {
 func proxyListening(t *testing.T, s *Server) string {
 	t.Helper()
 	var at string
-	if !waitFor(5*time.Second, func() bool { at = s.statsMessage().Proxy.Address; return at != "" }) {
+	if !waitFor(5*time.Second, func() bool {
+		if all := s.statsMessage().Proxy.Addresses; len(all) > 0 {
+			at = all[0]
+		}
+		return at != ""
+	}) {
 		t.Fatal("the proxy isn't listening")
 	}
 	return at
@@ -686,7 +691,7 @@ func TestTurningTheProxyOffStopsItAndOnStartsIt(t *testing.T) {
 		c.Close()
 		t.Fatal("the proxy still listens when off")
 	}
-	if at := s.statsMessage().Proxy.Address; at != "" {
+	if at := s.statsMessage().Proxy.Addresses; len(at) != 0 {
 		t.Fatalf("the stats say it listens on %q when off", at)
 	}
 	s.SetProxy(true, false)
@@ -727,7 +732,7 @@ func TestTheProxyListensAgainAfterIOSClosesItsSocket(t *testing.T) {
 	s.SetProxy(true, false)
 	proxy := proxyListening(t, s)
 	s.mu.Lock()
-	ln := s.proxy.run.ln
+	ln := s.proxy.run.socks[0].ln
 	s.mu.Unlock()
 	ln.Close() // what iOS does underneath
 	var status int
@@ -745,8 +750,8 @@ func TestTheProxyListensAgainAfterIOSClosesItsSocket(t *testing.T) {
 	}) || !echoes(conn, r) {
 		t.Fatalf("the proxy didn't listen again on %s", proxy)
 	}
-	if at := s.statsMessage().Proxy.Address; at != proxy {
-		t.Fatalf("listening on %s, want %s again", at, proxy)
+	if at := s.statsMessage().Proxy.Addresses; len(at) != 1 || at[0] != proxy {
+		t.Fatalf("listening on %q, want %s again", at, proxy)
 	}
 }
 
@@ -842,25 +847,42 @@ func TestTheConfigMessageCarriesTheProxy(t *testing.T) {
 	if err := configure(`{"v":1,"peers":[]}`); err != nil {
 		t.Fatal(err)
 	}
-	if at := s.statsMessage().Proxy.Address; at != "" {
-		t.Fatalf("a message without the proxy left it on at %s", at)
+	if at := s.statsMessage().Proxy.Addresses; len(at) != 0 {
+		t.Fatalf("a message without the proxy left it on at %q", at)
 	}
 }
 
-// Without a 172.20.10.x address of its own the proxy has nowhere to listen, and says so.
-func TestTheProxyListensOnlyOnTheHotspotsIPv4Address(t *testing.T) {
+// Without a 172.20.10.x address or an IPv6 one of the hotspot's the proxy has nowhere to listen,
+// and says so.
+func TestTheProxyListensOnlyOnTheHotspotsAddresses(t *testing.T) {
 	s := startAlone(t) // on loopback, not the hotspot
 	serverLog.reset()
 	s.SetProxy(true, false)
-	if at := s.statsMessage().Proxy.Address; at != "" {
-		t.Fatalf("listening on %s", at)
+	if at := s.statsMessage().Proxy.Addresses; len(at) != 0 {
+		t.Fatalf("listening on %q", at)
 	}
-	waitForLine(t, "proxy: no hotspot IPv4 address to listen on")
+	waitForLine(t, "proxy: no hotspot address to listen on")
 	if at, ok := hotspotHost([]netip.Addr{netip.MustParseAddr("2607:fb90:1:2::5"), netip.MustParseAddr("172.20.10.1")}); !ok || at != netip.MustParseAddr("172.20.10.1") {
 		t.Fatalf("picked %v", at)
 	}
 	if at, ok := hotspotHost([]netip.Addr{netip.MustParseAddr("2607:fb90:1:2::5")}); ok {
-		t.Fatalf("picked %v on IPv6 only, which faces the internet", at)
+		t.Fatalf("picked %v on IPv6 only", at)
+	}
+	for hosts, want := range map[string]string{
+		"172.20.10.1,2607:fb90:1:2::5":  "2607:fb90:1:2::5",
+		"2607:fb90:1:2::5":              "2607:fb90:1:2::5",
+		"172.20.10.1":                   "",
+		"172.20.10.1,fe80::1%bridge100": "",
+		"::ffff:172.20.10.1":            "",
+	} {
+		var addrs []netip.Addr
+		for _, h := range strings.Split(hosts, ",") {
+			addrs = append(addrs, netip.MustParseAddr(h))
+		}
+		at, ok := hotspotHost6(addrs)
+		if want == "" && ok || want != "" && at.String() != want {
+			t.Errorf("%s: picked %v %v, want %q", hosts, at, ok, want)
+		}
 	}
 }
 
@@ -874,7 +896,7 @@ func TestTheStatsCarryTheProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, ok := m["proxy"].(map[string]any)
-	if !ok || p["address"] != proxy || p["paused"] != false {
+	if at, _ := p["addresses"].([]any); !ok || len(at) != 1 || at[0] != proxy || p["paused"] != false {
 		t.Fatalf("stats %s", js)
 	}
 }

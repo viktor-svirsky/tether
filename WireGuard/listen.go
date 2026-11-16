@@ -21,7 +21,7 @@ func (s *Server) ListenOn(hosts []netip.Addr) error {
 	// A listen_port line closes the sockets and opens them again on that port, as reopen does.
 	err := s.dev.IpcSet(fmt.Sprintf("listen_port=%d\n", port))
 	if err == nil {
-		s.wakeProxy() // the hotspot's address is back, so the proxy can listen there too
+		s.wakeProxy() // the proxy follows the hotspot's addresses, which may be back
 		return nil
 	}
 	s.bind.mu.Lock()
