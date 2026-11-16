@@ -77,11 +77,24 @@ struct StaleConfig: Equatable {
     func shown(at now: Date) -> Bool { now.timeIntervalSince(at) < Self.shownFor }
 }
 
-/// What the server reports at one moment: its totals, each device by tunnel address, the last
-/// config that knocked but no longer works, and each address's from the last minute.
+/// The HTTP proxy as the server reports it, see proxyStats in WireGuard/proxy.go (#78).
+struct ProxyStats: Equatable {
+    /// Where it listens, "ip:port": 172.20.10.1 first, then "[ip]:port" on a hotspot that gives Apple
+    /// devices IPv6 only. Empty while it doesn't listen: off, or not listening yet. Paused, it listens.
+    var addresses: [String] = []
+    var paused = false
+    /// The client connections it has open, from every device on it.
+    var open = 0
+    /// Its bytes, the same ones as the totals. They only grow, across restarts, like a device's.
+    var traffic = TrafficTotals()
+}
+
+/// What the server reports at one moment: its totals, each device by tunnel address, the proxy, the
+/// last config that knocked but no longer works, and each address's from the last minute.
 struct ServerSnapshot: Equatable {
     var totals = TrafficTotals()
     var peers: [String: PeerStats] = [:]
+    var proxy = ProxyStats()
     var stale: StaleConfig?
     /// For the config page to tell each device its own (#63): two removed devices may keep trying.
     var recentStale: [StaleConfig] = []

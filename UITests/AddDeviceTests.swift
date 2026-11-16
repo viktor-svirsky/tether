@@ -112,8 +112,7 @@ final class AddDeviceTests: TetherUITestCase {
     /// instead of a word or two a line (#176).
     func testAtTheLargestTextSizeTheKindsAreButtonsAndTheStepsUseTheWidth() throws {
         launch(.waiting, arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
-        reveal(element("add.open"), maxSwipes: 30).tap()
-        XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
+        openAddDevice(maxSwipes: 30)
         let install = element("add.install")
         let step1 = reveal(element("add.step1"), maxSwipes: 30)
         XCTAssertLessThan(abs(step1.frame.minX - install.frame.minX), 20, "the title starts at the card's edge, not after the mark")

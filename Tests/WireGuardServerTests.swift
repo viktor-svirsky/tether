@@ -195,6 +195,9 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertEqual(stats.stale, StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030), from: "172.20.10.9:51820"))
         XCTAssertEqual(stats.recentStale, [StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_010), from: "172.20.10.4:51820"),
                                            StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030), from: "172.20.10.9:51820")])
+        // The proxy's own counters (#78). ProxyTests reads where it listens.
+        XCTAssertEqual(stats.proxy.open, 3)
+        XCTAssertEqual(stats.proxy.traffic, TrafficTotals(bytesUp: 2210, bytesDown: 48210))
     }
 
     /// A device's screen shows where it connects from without the port (#73), and the session goes
@@ -375,6 +378,19 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertEqual(try blockLocal(WireGuardServer.ConfigMessage([], blockLocal: true)), true)
         XCTAssertEqual(try blockLocal(WireGuardServer.ConfigMessage([], blockLocal: false)), false)
         XCTAssertEqual(try blockLocal(WireGuardServer.ConfigMessage([])), false, "sent when not given")
+    }
+
+    /// Go takes the proxy (#78) at start and in a change.
+    func testGoTakesTheProxy() throws {
+        let server = WireGuardServer()
+        defer { server.stop() }
+        var setup = WireGuardSetup.new()
+        setup.turnProxy(on: true)
+        XCTAssertNoThrow(try server.start(hosts: ["127.0.0.1"], setup: setup, port: freePort()))
+        setup.pausePeer(try XCTUnwrap(setup.proxy?.id), .byYou)
+        XCTAssertNoThrow(try server.setPeers(setup))
+        setup.turnProxy(on: false)
+        XCTAssertNoThrow(try server.setPeers(setup))
     }
 
     /// Go takes the setting at start and in a change.

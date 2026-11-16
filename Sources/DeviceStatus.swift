@@ -58,3 +58,81 @@ extension WireGuardSetup.Pause {
         }
     }
 }
+
+/// What the proxy's row on the main screen and its own screen say about it (#78), like `DeviceStatus`
+/// for a device: paused, or how many connections the devices on it have open.
+struct ProxyStatus: Equatable {
+    /// Its row's name, and its name in a limit notification.
+    static let name = "Proxy"
+
+    enum State: Equatable {
+        case paused(WireGuardSetup.Pause)
+        case open(Int)
+        /// It doesn't listen yet: the hotspot is off.
+        case waiting
+    }
+
+    let state: State
+
+    /// Paused comes first, as for a device: its devices' connections are closed.
+    init(_ proxy: WireGuardSetup.Proxy, stats: ProxyStats, hotspotOn: Bool) {
+        if let pause = proxy.paused {
+            state = .paused(pause)
+        } else if !hotspotOn {
+            state = .waiting
+        } else {
+            state = .open(stats.open)
+        }
+    }
+
+    /// The row's word, short, beside the name.
+    var label: String {
+        switch state {
+        case .paused: "Paused"
+        case let .open(n) where n > 0: "\(n) open"
+        default: "Idle"
+        }
+    }
+
+    /// The first line on its screen.
+    var title: String {
+        switch state {
+        case let .paused(pause): pause.title
+        case .open(0): "No connections open"
+        case .open(1): "1 connection open"
+        case let .open(n): "\(n) connections open"
+        case .waiting: "Starts when the hotspot is on"
+        }
+    }
+
+    /// The icon `DeviceStatusLabel` shows: connected while a device has a connection open.
+    var look: DeviceStatus {
+        switch state {
+        case let .paused(pause): .paused(pause)
+        case let .open(n) where n > 0: .connected
+        default: .notConnected
+        }
+    }
+
+    /// The line under the title on its screen, while it's paused, see `DeviceStatus.detail`.
+    func detail(resets: String, period: String) -> String? {
+        switch state {
+        case .paused(.byYou): "Nothing goes through it until you resume it."
+        case .paused(.atLimit): "It used its data \(period). It works again on \(resets), or when you resume it."
+        default: nil
+        }
+    }
+}
+
+/// What a device types into its proxy settings (#78): the server, without brackets, and the port.
+enum ProxyAddress {
+    /// proxyPort in WireGuard/proxy.go.
+    static let port = "8118"
+
+    /// Where the proxy listens, IPv4 first, from Go's "ip:port" and "[ip]:port". Before it listens,
+    /// 172.20.10.1, where it will: Add a device shows it as the proxy turns on.
+    static func servers(_ addresses: [String]) -> [String] {
+        let servers = addresses.compactMap { PeerStats.address($0) }
+        return servers.isEmpty ? [Hotspot.host] : servers
+    }
+}

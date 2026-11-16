@@ -39,6 +39,12 @@ final class FakeServer: WireGuardServing {
     var stale: StaleConfig?
     /// Other addresses' configs that knocked before `stale`, which the config page reads with it.
     var earlierStale: [StaleConfig] = []
+    /// The proxy's counters, always reported, like a device's.
+    var proxyTraffic = TrafficTotals()
+    /// Its open connections and where it listens, reported only while running with the proxy on, as
+    /// Go does. Nil listens where Go does on a usual hotspot.
+    var proxyOpen = 0
+    var proxyAddresses: [String]?
     /// The addresses of each start, comma-separated.
     private(set) var starts: [String] = []
     private(set) var lastSetup: WireGuardSetup?
@@ -103,7 +109,13 @@ final class FakeServer: WireGuardServing {
             }
             for (address, handshake) in handshakes { peers[address, default: PeerStats()].lastHandshake = handshake }
         }
-        return ServerSnapshot(totals: totals, peers: peers, stale: running ? stale : nil,
+        var proxy = ProxyStats(traffic: proxyTraffic)
+        if running, let on = lastSetup?.proxy, on.on {
+            proxy.addresses = proxyAddresses ?? ["\(Hotspot.host):8118"]
+            proxy.paused = on.paused != nil
+            proxy.open = proxyOpen
+        }
+        return ServerSnapshot(totals: totals, peers: peers, proxy: proxy, stale: running ? stale : nil,
                               recentStale: running ? earlierStale + [stale].compactMap(\.self) : [])
     }
 

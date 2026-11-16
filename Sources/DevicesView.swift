@@ -288,11 +288,7 @@ extension DeviceView {
     }
 
     /// The menu's choices, with a typed amount the device has, then Other amount.
-    private var limitPicks: [LimitPick] {
-        var picks = DataLimit.choices.map(LimitPick.preset)
-        if let limit = current.limit, !DataLimit.choices.contains(limit) { picks.append(.preset(limit)) }
-        return picks + [.other]
-    }
+    private var limitPicks: [LimitPick] { LimitPick.picks(current.limit) }
 
     /// Under the status: Pause, or Resume once it's paused, filled since it's the main action then.
     @ViewBuilder private var pauseSection: some View {
@@ -360,10 +356,17 @@ struct DeviceStatusLabel: View {
     }
 }
 
-/// A choice in a device's Limit menu.
-private enum LimitPick: Hashable {
+/// A choice in a device's Limit menu, and the proxy's.
+enum LimitPick: Hashable {
     case preset(UInt64?)
     case other
+
+    /// The menu's choices, with a typed amount `limit` is, then Other amount.
+    static func picks(_ limit: UInt64?) -> [LimitPick] {
+        var picks = DataLimit.choices.map(LimitPick.preset)
+        if let limit, !DataLimit.choices.contains(limit) { picks.append(.preset(limit)) }
+        return picks + [.other]
+    }
 }
 
 /// This month's data against the limit, in the app icon's blue-to-teal, or orange, the pause's

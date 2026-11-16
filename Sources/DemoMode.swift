@@ -63,6 +63,15 @@ enum DemoScenario: String, CaseIterable {
     case oldAddress
     /// Like `sharing`, but the iPad is paused: its tunnel is up, and nothing gets through.
     case paused
+    /// Like `sharing`, with the proxy on (#78): two connections open, 85 MB this month.
+    case proxy
+    /// Like `proxy`, on a carrier that gives the iPhone IPv6 only: the proxy listens at 172.20.10.1 and
+    /// at the hotspot's IPv6 address, which Apple devices need there.
+    case proxyIPv6
+    /// Like `sharing`, opened on Add a device's proxy path, with the proxy on and no page through it yet.
+    case addDeviceProxy
+    /// Like `addDeviceProxy`, with a device's page going through the proxy, so it's working.
+    case addDeviceProxyWorking
 
     static let argument = "-TetherDemo"
 
@@ -135,7 +144,8 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .localNetworkDenied, .oldAddress, .staleConfig, .paused:
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .localNetworkDenied, .oldAddress, .staleConfig, .paused,
+             .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking:
             var setup = WireGuardSetup.new()
             let ipad = setup.addPeer(name: "iPad")
             if scenario == .paused, let ipad { setup.pausePeer(ipad.id, .byYou) }
@@ -143,6 +153,7 @@ struct DemoState {
             if let ipad { setup.limitPeer(ipad.id, 10_000_000_000) }
             // A documentation address. The demo listens on 172.20.10.1, so it's an old one.
             _ = setup.addPeer(name: "Windows PC", host: scenario == .oldAddress ? "2001:db8::1" : nil)
+            if Self.proxyOn.contains(scenario) { setup.turnProxy(on: true) }
             secrets.data = try? JSONEncoder().encode(setup) // no ready device yet: loading makes and saves one
         case .wireGuardNeedsReset:
             secrets.data = Data("not a WireGuard setup".utf8) // undecodable, like a setup from a newer version
@@ -186,8 +197,14 @@ struct DemoState {
     /// The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states. In `paused` the
     /// session shows the iPad paused instead.
     var connected: Set<String> {
-        [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .staleConfig, .paused].contains(scenario) ? ["10.7.0.2"] : []
+        ([.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .staleConfig, .paused] + Self.proxyOn).contains(scenario) ? ["10.7.0.2"] : []
     }
+
+    /// The demos with the proxy on.
+    private static let proxyOn: [DemoScenario] = [.proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
+
+    /// A carrier that gives the iPhone IPv6 only: Tether listens on a documentation IPv6 address too.
+    private var ipv6Only: Bool { [.addDeviceComputerIPv6, .proxyIPv6].contains(scenario) }
 
     /// When this build stops opening: two days on for `expiring`, never for the others.
     var expires: Date? { scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil }
@@ -203,7 +220,8 @@ struct DemoState {
         let server = FakeServer()
         let clock = DemoClock()
         // As long as a carrier's address gets, in the documentation range, so the screen is tried at full length.
-        let address = running ? (scenario == .addDeviceComputerIPv6 ? "2001:db8:9e74:4eaa:459:5cd0:7ec7:f792" : Hotspot.host) : nil
+        let ipv6 = "2001:db8:9e74:4eaa:459:5cd0:7ec7:f792"
+        let address = running ? (ipv6Only ? ipv6 : Hotspot.host) : nil
         let session = HotspotSession(devices: WireGuardDevices(secrets: secrets()), server: server, keepAlive: FakeSound(),
                                      page: FakePage(), sceneActive: true, hotspotAddress: { address },
                                      dns: { DNSChoice.upstream(in: UserDefaults(suiteName: Self.settingsSuite)!) },
@@ -220,6 +238,13 @@ struct DemoState {
         server.handshakes = ["10.7.0.3": clock.now.addingTimeInterval(-2 * 3600)]
         if connected.contains("10.7.0.2") { server.handshakes["10.7.0.2"] = clock.now.addingTimeInterval(-30) }
         if scenario == .staleConfig { server.stale = StaleConfig(kind: .device, at: clock.now) }
+        // The proxy's devices: two pages open and 85 MB this month on its screen, or one page through it.
+        if [.proxy, .proxyIPv6].contains(scenario) {
+            server.proxyOpen = 2
+            server.proxyTraffic = TrafficTotals(bytesUp: 5_000_000, bytesDown: 80_000_000)
+        }
+        if scenario == .addDeviceProxyWorking { server.proxyOpen = 1 }
+        if scenario == .proxyIPv6 { server.proxyAddresses = ["\(Hotspot.host):8118", "[\(ipv6)]:8118"] }
         session.sampleTraffic()
         clock.now = clock.now.addingTimeInterval(1)
         server.totals = TrafficTotals(bytesUp: UInt64(upSpeed / 8), bytesDown: UInt64(downSpeed / 8))
