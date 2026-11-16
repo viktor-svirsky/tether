@@ -826,32 +826,41 @@ func (r *proxyRun) lookup(ctx context.Context, host string) ([]netip.Addr, error
 	return addrs, nil
 }
 
-// lookupName asks Tether's DNS for host's IPv4 addresses, and its IPv6 ones when it has none.
-// dialTCP reaches an IPv4 one through NAT64 when the iPhone has no IPv4 route.
+// lookupName asks Tether's DNS for host's IPv4 and IPv6 addresses, IPv4 first, so dial can try
+// the other family when one doesn't answer. A lookup that fails leaves the other's addresses, and
+// it's an error only when neither has any. dialTCP reaches an IPv4 one through NAT64 when the
+// iPhone has no IPv4 route.
 func (s *Server) lookupName(ctx context.Context, host string) ([]netip.Addr, error) {
 	name, err := dnsmessage.NewName(strings.TrimSuffix(host, ".") + ".")
 	if err != nil {
 		return nil, err
 	}
-	for _, t := range []dnsmessage.Type{dnsmessage.TypeA, dnsmessage.TypeAAAA} {
+	var queries [2][]byte
+	for i, t := range []dnsmessage.Type{dnsmessage.TypeA, dnsmessage.TypeAAAA} {
 		b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: uint16(rand.Uint32()), RecursionDesired: true})
 		b.StartQuestions()
 		if err := b.Question(dnsmessage.Question{Name: name, Type: t, Class: dnsmessage.ClassINET}); err != nil {
 			return nil, err
 		}
-		query, err := b.Finish()
-		if err != nil {
+		if queries[i], err = b.Finish(); err != nil {
 			return nil, err
-		}
-		answer, err := s.resolveCtx(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		if addrs := addressesIn(answer); len(addrs) > 0 {
-			return addrs, nil
 		}
 	}
-	return nil, nil
+	// Both at once, so the second family costs no extra round trip.
+	var addrs [2][]netip.Addr
+	var errs [2]error
+	var wg sync.WaitGroup
+	for i, q := range queries {
+		wg.Go(func() {
+			answer, err := s.resolveCtx(ctx, q)
+			addrs[i], errs[i] = addressesIn(answer), err
+		})
+	}
+	wg.Wait()
+	if all := slices.Concat(addrs[0], addrs[1]); len(all) > 0 {
+		return all, nil
+	}
+	return nil, errors.Join(errs[0], errs[1])
 }
 
 // errTooManyLookups is a lookup past the proxy's maxLookups, which the client gets as 502.

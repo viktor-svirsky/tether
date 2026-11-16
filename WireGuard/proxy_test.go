@@ -351,6 +351,26 @@ func TestAHostnameGoesThroughTethersDNS(t *testing.T) {
 	}
 }
 
+// A name with both families is tried on both: when its IPv4 address doesn't answer, its IPv6 one
+// still makes the connection. NAT64 can't help an IPv4 far end that refuses.
+func TestANameWhoseIPv4FarEndRefusesIsReachedOverIPv6(t *testing.T) {
+	s, proxy := proxyOn(t)
+	d := newNamesDoH(t, map[string][]string{"both.example": {remote, "2001:db8::7"}})
+	viaNames(s, d)
+	s.mu.Lock()
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if strings.HasPrefix(address, remote+":") {
+			return nil, errors.New("connection refused")
+		}
+		return toLoopback(ctx, network, address)
+	}
+	s.mu.Unlock()
+	conn, r, status := tunnel(t, proxy, "both.example:"+port(echoFarEnd(t)))
+	if status != http.StatusOK || !echoes(conn, r) {
+		t.Fatalf("CONNECT both.example got %d, want its IPv6 address tried", status)
+	}
+}
+
 // Without an upstream in Settings, names are looked up the way the iPhone's own apps do.
 func TestWithoutADNSUpstreamTheIPhonesResolverAnswers(t *testing.T) {
 	s := proxyReady(t)
