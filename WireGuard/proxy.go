@@ -88,6 +88,7 @@ type proxy struct {
 	maxConns     int
 	handshake    time.Duration
 	maxLookups   int // the proxy's name lookups at once, for all its devices, like a device's maxLookups
+	maxDials     int // plain requests' dials at once, for all its devices, like a device's maxDials
 	maxPerClient int
 	listen       func(ctx context.Context, address string) (net.Listener, error)
 
@@ -99,6 +100,7 @@ type proxy struct {
 	open      int                // client connections, see maxConns
 	openBy    map[netip.Addr]int // each client's, see maxPerClient
 	lookups   int                // lookups still running, also ones whose client gave up
+	dials     int                // plain requests' dials still running, also ones whose client gave up
 	refusedAt time.Time          // when a refusal was last logged, so a busy client can't fill the log
 }
 
@@ -113,6 +115,7 @@ func newProxy() *proxy {
 		maxConns:     maxProxyConns,
 		maxPerClient: maxProxyPerClient,
 		maxLookups:   maxLookups,
+		maxDials:     maxDials,
 		handshake:    proxyHandshake,
 		openBy:       map[netip.Addr]int{},
 		listen: func(ctx context.Context, address string) (net.Listener, error) {
@@ -310,7 +313,13 @@ func (s *Server) newProxyRun() *proxyRun {
 			if err != nil {
 				return nil, err
 			}
+			// The transport goes on dialing after the client leaves, for its pool, so the client's
+			// slot doesn't hold these: they have their own cap.
+			if err := s.takeDial(); err != nil {
+				return nil, err
+			}
 			c, err := r.dial(ctx, host, uint16(n), &p.counts)
+			s.releaseDial()
 			if err != nil {
 				return nil, err // not a nil *outConn in a non-nil net.Conn
 			}
@@ -853,6 +862,26 @@ func (s *Server) takeLookup() error {
 func (s *Server) releaseLookup() {
 	s.mu.Lock()
 	s.proxy.lookups--
+	s.mu.Unlock()
+}
+
+// errTooManyDials is a plain request's dial past the proxy's maxDials, which the client gets as 502.
+var errTooManyDials = errors.New("too many dials at once")
+
+// takeDial counts a plain request's dial against the proxy's maxDials, or refuses it at the cap.
+func (s *Server) takeDial() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.proxy.dials >= s.proxy.maxDials {
+		return errTooManyDials
+	}
+	s.proxy.dials++
+	return nil
+}
+
+func (s *Server) releaseDial() {
+	s.mu.Lock()
+	s.proxy.dials--
 	s.mu.Unlock()
 }
 

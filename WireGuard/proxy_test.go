@@ -1061,6 +1061,47 @@ func TestTheProxysLookupsStopAtTheCap(t *testing.T) {
 	}
 }
 
+// A plain request's dial goes on after its client leaves, since the transport keeps what it makes
+// for its pool. Those dials are capped too, so a client that asks for a far end that never answers
+// and leaves, again and again, can't pile them up past its slot.
+func TestTheProxysPlainDialsStopAtTheCap(t *testing.T) {
+	s := proxyReady(t)
+	var started atomic.Int32
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) }) // before the server's Close, which doesn't wait for them
+	s.mu.Lock()
+	s.proxy.maxDials = 2
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		started.Add(1)
+		<-release // a far end that never answers, even after the client left
+		return nil, errors.New("no answer")
+	}
+	s.mu.Unlock()
+	s.SetProxy(true, false)
+	proxy := proxyListening(t, s)
+	for i := range 2 {
+		conn, err := net.Dial("tcp", proxy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(conn, "GET http://%s:%d/ HTTP/1.1\r\nHost: x\r\n\r\n", remote, 80+i)
+		if !waitFor(5*time.Second, func() bool { return started.Load() > int32(i) }) {
+			t.Fatal("the dial never started")
+		}
+		conn.Close()
+	}
+	if !waitFor(5*time.Second, func() bool { return s.statsMessage().Proxy.Open == 0 }) {
+		t.Fatal("the clients that left still hold their slots")
+	}
+	start := time.Now()
+	if status, _ := rawGet(t, proxy, fmt.Sprintf("http://%s:82/", remote)); status != http.StatusBadGateway || time.Since(start) > time.Second {
+		t.Fatalf("one past the cap got %d after %v, want 502 at once", status, time.Since(start))
+	}
+	if n := started.Load(); n != 2 {
+		t.Fatalf("%d dials started past a cap of 2", n)
+	}
+}
+
 // One device can't take every slot: past its share, its own next connection is refused while the
 // proxy still has room for others.
 func TestOneClientCantTakeEveryProxySlot(t *testing.T) {
