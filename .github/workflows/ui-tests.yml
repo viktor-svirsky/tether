@@ -17,7 +17,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
-    timeout-minutes: 90 # the suite took 34 min on Oct 30 and ran past 45 on Nov 13
+    timeout-minutes: 150 # 127 tests took 87 min on iOS 26.5 for 1.10.0 (Nov 16), 3 min short of the old 90
     strategy:
       fail-fast: false
       matrix:
