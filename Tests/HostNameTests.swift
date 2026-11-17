@@ -27,8 +27,11 @@ final class HostNameTests: XCTestCase {
         var tries = 0
         var lines: [String] = []
         let mdns = MDNSHostName(interfaces: { tries += 1; return [] }, now: { now }, log: { lines.append($0) })
+        var changes = 0
+        mdns.onChange = { changes += 1 }
         let a = "2001:db8::1"
         mdns.publish("tether-2a9a.local", at: a)
+        XCTAssertEqual(changes, 1, "told once it fails")
         XCTAssertEqual(tries, 1)
         XCTAssertEqual(mdns.failure, "no interface has \(a)")
         XCTAssertNil(mdns.published)
@@ -41,6 +44,7 @@ final class HostNameTests: XCTestCase {
         }
         XCTAssertEqual(waits, [10, 20, 40, 80, 160], "500 seconds")
         XCTAssertEqual(lines, ["mDNS: tether-2a9a.local: no interface has \(a), tries again later"])
+        XCTAssertEqual(changes, 1, "the same failure again isn't a change")
         mdns.publish("tether-2a9a.local", at: "2001:db8::2")
         XCTAssertEqual(tries, waits.count + 2, "a new address at once")
         mdns.publish("tether-2a9a.local", at: nil)
@@ -56,6 +60,8 @@ final class HostNameTests: XCTestCase {
         let name = "tether-test-\(UUID().uuidString.prefix(8).lowercased()).local"
         var lines: [String] = []
         let mdns = MDNSHostName(interfaces: { ["lo0: ::1"] }, log: { lines.append($0) })
+        var changes = 0
+        mdns.onChange = { changes += 1 }
         mdns.publish(name, at: "2001:db8::1") // on no interface here
         XCTAssertNotNil(mdns.failure)
         mdns.publish(name, at: "::1")
@@ -64,6 +70,7 @@ final class HostNameTests: XCTestCase {
         while mdns.published == nil, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
         XCTAssertEqual(mdns.published, HostNameRecord(name: name, address: "::1"), "\(lines)")
         XCTAssertNil(mdns.failure)
+        XCTAssertEqual(changes, 2, "failed, then answered")
         XCTAssertEqual(lookUp(name, type: kDNSServiceType_AAAA), [Data(repeating: 0, count: 15) + [1]])
         XCTAssertEqual(lookUp(name, type: kDNSServiceType_A), [])
         mdns.publish(name, at: nil)

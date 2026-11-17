@@ -800,6 +800,21 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertFalse(session.needsNewConfig(peer), "answered again")
     }
 
+    /// mDNS failing or answering again changes what a device on the name says, with no other change on
+    /// the screen, so the screen is told then too.
+    func testTheScreenFollowsTheNameFailingAndAnsweringAgain() throws {
+        names = FakeHostName()
+        makeSession()
+        address = "2607:fb91:88a2:e822::a"
+        session.syncWithHotspot()
+        var changes = 0
+        session.willChange = { changes += 1 }
+        names?.refuses = "taken by another device on the hotspot"
+        XCTAssertEqual(changes, 1, "failed")
+        names?.refuses = nil
+        XCTAssertEqual(changes, 2, "answered again")
+    }
+
     /// The usual download and then the Mac link from one Mac within seconds are two configs, two
     /// devices: the second isn't a repeat of the first.
     func testTheMacLinkRightAfterTheUsualDownloadGivesTheName() throws {

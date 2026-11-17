@@ -31,6 +31,9 @@ protocol HostNamePublishing: AnyObject {
     /// Why the name asked for isn't answered: taken by another device, or refused. Nil while it is,
     /// and while mDNS is still checking it.
     var failure: String? { get }
+    /// Called when `published` or `failure` changes, which can come between rounds: mDNSResponder
+    /// answers later. A device on the name says something else then.
+    var onChange: (@MainActor () -> Void)? { get set }
 }
 
 struct HostNameRecord: Equatable {
@@ -53,6 +56,7 @@ final class MDNSHostName: HostNamePublishing {
     static let lastRetry: TimeInterval = 600
 
     private(set) var published: HostNameRecord?
+    var onChange: (@MainActor () -> Void)?
     /// Kept through a new address until it's confirmed, so a device on the name stays told meanwhile.
     private(set) var failure: String?
     /// The last failure in the log, so each is said once for each address.
@@ -85,7 +89,7 @@ final class MDNSHostName: HostNamePublishing {
             guard let retryAt, now() >= retryAt else { return }
         } else {
             if asked != nil, record == nil { log("mDNS: \(name) withdrawn") }
-            if record == nil { failure = nil }
+            if record == nil { set(published: published, failure: nil) }
             said = nil
             wait = 0
         }
@@ -133,8 +137,7 @@ final class MDNSHostName: HostNamePublishing {
     private func registered(_ error: DNSServiceErrorType) {
         guard let asked else { return }
         if error == DNSServiceErrorType(kDNSServiceErr_NoError) {
-            published = asked
-            failure = nil
+            set(published: asked, failure: nil)
             said = nil
             wait = 0
             log("mDNS: \(asked.name) is \(asked.address)")
@@ -147,10 +150,9 @@ final class MDNSHostName: HostNamePublishing {
 
     /// Not answered: said once for each reason, and tried again later, a little later each time.
     private func fail(_ why: String) {
-        published = nil
         if why != said, let asked { log("mDNS: \(asked.name): \(why), tries again later") }
         said = why
-        failure = why
+        set(published: nil, failure: why)
         wait = min(max(wait * 2, Self.firstRetry), Self.lastRetry)
         retryAt = now().addingTimeInterval(wait)
     }
@@ -158,6 +160,14 @@ final class MDNSHostName: HostNamePublishing {
     private func close() {
         if let connection { DNSServiceRefDeallocate(connection) } // takes its record with it
         connection = nil
-        published = nil
+        set(published: nil, failure: failure)
+    }
+
+    /// Both at once, so a change is told once.
+    private func set(published: HostNameRecord?, failure: String?) {
+        guard published != self.published || failure != self.failure else { return }
+        self.published = published
+        self.failure = failure
+        onChange?()
     }
 }

@@ -199,6 +199,8 @@ final class HotspotSession {
         self.now = now
         self.hostName = hostName
         self.log = log
+        // A device on the name says something else once mDNS fails or answers again, see `newConfig`.
+        hostName?.onChange = { [weak self] in self?.willChange() }
         publishSetup()
         showSetupProblem() // from launch, before any device joins the hotspot
         page.respond = { [weak self] request, client in self?.pageResponse(request, from: client) ?? ConfigPage.notFound }

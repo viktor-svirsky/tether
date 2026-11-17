@@ -176,8 +176,9 @@ final class FakePage: ConfigPageServing {
 /// `confirms` is off (still checking) or `refuses` says why not (taken by another device, say).
 @MainActor
 final class FakeHostName: HostNamePublishing {
-    var confirms = true
-    var refuses: String?
+    var confirms = true { didSet { onChange?() } }
+    var refuses: String? { didSet { onChange?() } }
+    var onChange: (@MainActor () -> Void)?
     private var asked: HostNameRecord?
     var published: HostNameRecord? { confirms && refuses == nil ? asked : nil }
     var failure: String? { asked == nil ? nil : refuses }
