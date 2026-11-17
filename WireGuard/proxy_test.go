@@ -531,7 +531,7 @@ func TestBlockTurningOnEndsAnOpenProxyConnectionToALocalAddress(t *testing.T) {
 
 // Paused, the proxy ends the open connections, answers a new CONNECT with 403, and resumed it
 // serves again.
-func TestPauseRefusesNewProxyConnectionsAndEndsOpenOnes(t *testing.T) {
+func TestPauseEndsOpenProxyConnectionsAndAnswersNewOnesWith403(t *testing.T) {
 	s, proxy := proxyOn(t)
 	echo := echoFarEnd(t)
 	conn, r, _ := tunnel(t, proxy, echo)
