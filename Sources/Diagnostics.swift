@@ -17,13 +17,20 @@ enum Diagnostics {
     struct Section: Equatable, Identifiable {
         let id: String
         let title: String
+        /// "" for none.
         let footer: String
         let rows: [Row]
     }
 
-    static func sections(_ d: ServerDiagnostics) -> [Section] {
-        [
-            Section(id: "port", title: "WireGuard port", footer: "UDP in stays at 0 when nothing from a device reaches this iPhone. Rejected messages often mean a config that no longer works. Tap a row to copy it.", rows: [
+    /// Not `sharing`, there's nothing to count: the first footer says so, and the others, which
+    /// explain a 0, are left out. The rows stay, so the screen shows what it will count.
+    static func sections(_ d: ServerDiagnostics, sharing: Bool) -> [Section] {
+        let port = sharing ? "UDP in stays at 0 when nothing from a device reaches this iPhone. Rejected messages often mean a config that no longer works. The counts start again each time sharing starts. Tap a row to copy its value."
+            : "Tether isn't sharing, so there's nothing to count. Start sharing, then come back."
+        let tunnel = sharing ? "Packets in stays at 0 when a device's tunnel sends nothing to Tether. Dropped packets come from an address the device's config doesn't give it, like a router's clients before Tether finds the router." : ""
+        let out = sharing ? "The connections this iPhone makes for your devices." : ""
+        return [
+            Section(id: "port", title: "WireGuard port", footer: port, rows: [
                 Row(id: "listening", title: "Listening on", value: d.listening.isEmpty ? "Not listening" : d.listening.joined(separator: ", "), wide: true),
                 Row(id: "udpIn", title: "UDP in", value: count(d.udpIn)),
                 Row(id: "udpFrom", title: "Last UDP from", value: text(d.udpFrom, none: "None yet"), wide: true),
@@ -31,16 +38,16 @@ enum Diagnostics {
                 Row(id: "replyFailed", title: "Replies not sent", value: count(d.replyFailed)),
                 Row(id: "replyError", title: "Last send error", value: text(d.replyError, none: "None"), wide: true),
             ]),
-            Section(id: "tunnel", title: "Tunnel", footer: "Packets in stays at 0 when a device's tunnel sends nothing to Tether. Dropped packets come from an address the device's config doesn't give it, like a router's clients before Tether finds the router.", rows: [
+            Section(id: "tunnel", title: "Tunnel", footer: tunnel, rows: [
                 Row(id: "packetsIn", title: "Packets in", value: count(d.packetsIn)),
                 Row(id: "disallowed", title: "Dropped for their source address", value: count(d.disallowed)),
             ]),
-            Section(id: "out", title: "Out to the internet", footer: "The connections this iPhone makes for your devices. The counts start again each time sharing starts.", rows: [
-                Row(id: "tcpTried", title: "TCP connections", value: count(d.tcpTried)),
+            Section(id: "out", title: "Out to the internet", footer: out, rows: [
+                Row(id: "tcpTried", title: "TCP connections tried", value: count(d.tcpTried)),
                 Row(id: "tcpFailed", title: "TCP connections failed", value: count(d.tcpFailed)),
                 Row(id: "udpFailed", title: "UDP sends failed", value: count(d.udpFailed)),
-                Row(id: "nat64", title: "NAT64 prefix", value: text(d.nat64, none: "Not needed yet")),
-                Row(id: "lastError", title: "Last error", value: text(d.lastError, none: "None"), wide: true),
+                Row(id: "nat64", title: "NAT64 prefix", value: text(d.nat64, none: "Not needed yet"), wide: true),
+                Row(id: "lastError", title: "Last connection error", value: text(d.lastError, none: "None"), wide: true),
             ]),
         ]
     }
