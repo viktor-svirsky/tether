@@ -45,6 +45,9 @@ final class FakeServer: WireGuardServing {
     /// Go does. Nil listens where Go does on a usual hotspot.
     var proxyOpen = 0
     var proxyAddresses: [String]?
+    /// The Diagnostics screen's counters, reported only while running, as the real server's start
+    /// from zero with each run.
+    var diagnostics = ServerDiagnostics()
     /// The addresses of each start, comma-separated.
     private(set) var starts: [String] = []
     private(set) var lastSetup: WireGuardSetup?
@@ -116,7 +119,8 @@ final class FakeServer: WireGuardServing {
             proxy.open = proxyOpen
         }
         return ServerSnapshot(totals: totals, peers: peers, proxy: proxy, stale: running ? stale : nil,
-                              recentStale: running ? earlierStale + [stale].compactMap(\.self) : [])
+                              recentStale: running ? earlierStale + [stale].compactMap(\.self) : [],
+                              diagnostics: running ? diagnostics : ServerDiagnostics())
     }
 
     func freeMemory() {}

@@ -53,6 +53,8 @@ type statsMessage struct {
 	Recent []staleStats `json:"recent"`
 	// Proxy is the HTTP proxy's, one device for all its clients (#78).
 	Proxy proxyStats `json:"proxy"`
+	// Diag is for the Diagnostics screen in Settings (#256), see diagnostics.go.
+	Diag diagStats `json:"diag"`
 }
 
 // staleStats is a config that no longer works. Kind is staleDevice or staleServer, and "" with At 0
@@ -192,7 +194,7 @@ func (s *Server) statsMessage() statsMessage {
 	for _, a := range st.Connected {
 		connected[a] = true
 	}
-	m := statsMessage{V: messageVersion, Up: st.Up, Down: st.Down, Peers: []peerStats{}}
+	m := statsMessage{V: messageVersion, Up: st.Up, Down: st.Down, Peers: []peerStats{}, Diag: s.diagStats()}
 	addresses := s.addresses()
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -89,6 +89,57 @@ struct ProxyStats: Equatable {
     var traffic = TrafficTotals()
 }
 
+/// The server's counters for the Diagnostics screen in Settings (#256), see diagStats in
+/// WireGuard/diagnostics.go. They count from the server's start, so a stopped server has none. A
+/// text is "" for none yet.
+struct ServerDiagnostics: Equatable, Decodable {
+    /// Where the WireGuard port listens, "ip:port" or "[ip]:port", IPv4 first.
+    var listening: [String] = []
+    /// UDP that reached the WireGuard port, and where the last of it came from.
+    var udpIn: UInt64 = 0
+    var udpFrom = ""
+    /// WireGuard messages turned away: a config that no longer works, for one.
+    var rejected: UInt64 = 0
+    /// Replies to the devices that couldn't be sent, and why the last one couldn't.
+    var replyFailed: UInt64 = 0
+    var replyError = ""
+    /// Packets the devices sent into the tunnel, and the ones dropped for a source address their
+    /// config doesn't give them.
+    var packetsIn: UInt64 = 0
+    var disallowed: UInt64 = 0
+    /// The iPhone's side: TCP connections it tried for the devices and the ones that failed, UDP it
+    /// couldn't send on, the NAT64 prefix once one was needed, and the last of those errors.
+    var tcpTried: UInt64 = 0
+    var tcpFailed: UInt64 = 0
+    var udpFailed: UInt64 = 0
+    var nat64 = ""
+    var lastError = ""
+}
+
+extension ServerDiagnostics {
+    private enum CodingKeys: String, CodingKey {
+        case listening, udpIn, udpFrom, rejected, replyFailed, replyError, packetsIn, disallowed, tcpTried, tcpFailed, udpFailed, nat64, lastError
+    }
+
+    /// A key missing reads as nothing counted, so the two sides drifting never fails the whole stats read.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        listening = try c.decodeIfPresent([String].self, forKey: .listening) ?? []
+        udpIn = try c.decodeIfPresent(UInt64.self, forKey: .udpIn) ?? 0
+        udpFrom = try c.decodeIfPresent(String.self, forKey: .udpFrom) ?? ""
+        rejected = try c.decodeIfPresent(UInt64.self, forKey: .rejected) ?? 0
+        replyFailed = try c.decodeIfPresent(UInt64.self, forKey: .replyFailed) ?? 0
+        replyError = try c.decodeIfPresent(String.self, forKey: .replyError) ?? ""
+        packetsIn = try c.decodeIfPresent(UInt64.self, forKey: .packetsIn) ?? 0
+        disallowed = try c.decodeIfPresent(UInt64.self, forKey: .disallowed) ?? 0
+        tcpTried = try c.decodeIfPresent(UInt64.self, forKey: .tcpTried) ?? 0
+        tcpFailed = try c.decodeIfPresent(UInt64.self, forKey: .tcpFailed) ?? 0
+        udpFailed = try c.decodeIfPresent(UInt64.self, forKey: .udpFailed) ?? 0
+        nat64 = try c.decodeIfPresent(String.self, forKey: .nat64) ?? ""
+        lastError = try c.decodeIfPresent(String.self, forKey: .lastError) ?? ""
+    }
+}
+
 /// What the server reports at one moment: its totals, each device by tunnel address, the proxy, the
 /// last config that knocked but no longer works, and each address's from the last minute.
 struct ServerSnapshot: Equatable {
@@ -98,6 +149,8 @@ struct ServerSnapshot: Equatable {
     var stale: StaleConfig?
     /// For the config page to tell each device its own (#63): two removed devices may keep trying.
     var recentStale: [StaleConfig] = []
+    /// For the Diagnostics screen in Settings (#256).
+    var diagnostics = ServerDiagnostics()
 
     var connected: Set<String> { Set(peers.filter(\.value.connected).keys) }
 }

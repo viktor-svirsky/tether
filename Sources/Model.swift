@@ -62,6 +62,8 @@ final class Model: ObservableObject {
     var proxy: WireGuardSetup.Proxy? { session.proxy }
     var proxyStats: ProxyStats { session.proxyStats }
     var proxyProblem: String? { session.proxyProblem }
+    /// For the Diagnostics screen in Settings (#256).
+    var serverDiagnostics: ServerDiagnostics { session.serverDiagnostics }
     /// On, so it has a row under Devices.
     var proxyOn: Bool { proxy?.on == true }
 

@@ -184,6 +184,7 @@ type Server struct {
 	// heard sees each line wireguard-go logs. Tests set it to look at the server mid-change.
 	heard atomic.Pointer[func(string)]
 	ipID  atomic.Uint32 // IPv4 identification for the UDP and ping replies we build
+	diag  diagnostics   // for the Diagnostics screen, see diagnostics.go
 	// up and down are the byte totals. Atomic, since every read and write of every connection
 	// adds to them, and a lock there would make them all take turns.
 	up, down atomic.Uint64
@@ -396,7 +397,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 
 	logger := &device.Logger{Verbosef: s.notice, Errorf: s.noticeError}
 	s.bind = &hostBind{hosts: hosts, died: s.socketDied}
-	s.dev = device.NewDevice(s.tun, s.bind, logger)
+	s.dev = device.NewDevice(countingTun{s.tun, &s.diag.packetsIn}, s.bind, logger)
 	if err := s.dev.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\n", hex.EncodeToString(privateKey[:]), port)); err != nil {
 		s.dev.Close()
 		s.stack.Close()
@@ -554,6 +555,7 @@ func (s *Server) notice(format string, args ...any) {
 	s.noticeHandshake(format)
 	s.noticeRouter(format, args...)
 	s.noticeStale(format, args...)
+	s.diag.heard(format)
 	s.keep("", format, args)
 }
 
@@ -1183,6 +1185,9 @@ func (s *Server) forwardTCP(r forwardRequest) {
 		return
 	}
 	out, err := s.dialOut(dst, lookups)
+	if !lookups {
+		s.diag.dialed(dst, err)
+	}
 	if err != nil {
 		refuse()
 		return

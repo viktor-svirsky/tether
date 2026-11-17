@@ -107,7 +107,7 @@ final class WireGuardServer {
         var proxy = run.proxy
         proxy.traffic = carriedProxy.apply(to: run.proxy.traffic)
         return ServerSnapshot(totals: carried.apply(to: run.totals), peers: carriedDevices.apply(to: run.peers), proxy: proxy,
-                              stale: run.stale, recentStale: run.recentStale)
+                              stale: run.stale, recentStale: run.recentStale, diagnostics: run.diagnostics)
     }
 
     /// This run's stats. Stats it can't read leave the last counters it read, so a stop still carries
@@ -181,6 +181,8 @@ final class WireGuardServer {
             let recent: [Stale]?
             /// Missing from a server before the proxy (#78).
             let proxy: Proxy?
+            /// Missing from a server before the Diagnostics screen (#256).
+            let diag: ServerDiagnostics?
 
             struct Peer: Decodable {
                 let address: String
@@ -237,7 +239,8 @@ final class WireGuardServer {
                 ProxyStats(addresses: $0.addresses ?? [], paused: $0.paused, open: $0.open, traffic: TrafficTotals(bytesUp: $0.up, bytesDown: $0.down))
             } ?? ProxyStats()
             return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, proxy: proxy,
-                                  stale: m.stale.flatMap(stale), recentStale: (m.recent ?? []).compactMap(stale))
+                                  stale: m.stale.flatMap(stale), recentStale: (m.recent ?? []).compactMap(stale),
+                                  diagnostics: m.diag ?? ServerDiagnostics())
         }
     }
 }

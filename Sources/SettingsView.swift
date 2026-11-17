@@ -5,7 +5,7 @@ import UserNotifications
 /// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle, the
 /// DNS server Tether asks for the devices, whether they reach the iPhone's local networks, a switch for each kind of notification, a button for the permission before Tether asked for it
 /// itself, the way to Settings when iOS has Tether's notifications off, the log to share for a bug
-/// report, and what this build is.
+/// report, the server's counters (`DiagnosticsView`), and what this build is.
 struct SettingsView: View {
     @ObservedObject var model: Model
     @Environment(\.dismiss) private var dismiss
@@ -65,6 +65,8 @@ struct SettingsView: View {
                 Label("Share the log", systemImage: "square.and.arrow.up")
             }
             .accessibilityIdentifier("settings.log")
+            NavigationLink("Diagnostics") { DiagnosticsView(model: model) }
+                .accessibilityIdentifier("settings.diagnostics")
             Link("Help and source code", destination: URL(string: "https://github.com/viktor-svirsky/tether")!)
                 .accessibilityIdentifier("settings.help")
         } header: {
