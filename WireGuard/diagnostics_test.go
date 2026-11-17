@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"net"
@@ -100,6 +101,37 @@ func TestDiagnosticsCountAFailedTCPConnection(t *testing.T) {
 	}
 }
 
+// A connection counts as tried while its dial is still waiting: a far end that drops SYNs keeps a
+// dial going for many seconds, and the screen shows it meanwhile. A NAT64 retry is part of it.
+func TestDiagnosticsCountATCPConnectionWhileItsDialWaits(t *testing.T) {
+	s, c := setup(t)
+	release := make(chan struct{})
+	s.mu.Lock()
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil, errors.New("i/o timeout")
+	}
+	s.mu.Unlock()
+	to := viaRemote("127.0.0.1:9")
+	done := make(chan error, 1)
+	go func() { _, err := fetch(t, c, to); done <- err }()
+	diagWithin(t, s, func(d diagStats) bool { return d.TCPTried == 1 })
+	if d := s.diagStats(); d.TCPFailed != 0 || d.LastError != "" {
+		t.Fatalf("diagnostics %+v while the dial waits, want it tried and not failed", d)
+	}
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("a connection whose dial failed went through")
+	}
+	d := diagWithin(t, s, func(d diagStats) bool { return d.TCPFailed == 1 && d.LastError != "" })
+	if d.TCPTried != 1 || d.LastError != "TCP to "+to+": i/o timeout" {
+		t.Fatalf("diagnostics %+v, want the one connection failed", d)
+	}
+}
+
 // A device's UDP the iPhone can't send on counts, and says why.
 func TestDiagnosticsCountAFailedUDPSend(t *testing.T) {
 	s, c := setup(t)
@@ -112,7 +144,13 @@ func TestDiagnosticsCountAFailedUDPSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	d := diagWithin(t, s, func(d diagStats) bool { conn.Write([]byte("hello")); return d.UDPFailed >= 1 })
+	// One packet: wireguard-go holds it until the handshake is done, then sends it. The wait only
+	// reads, so nothing can fail again between the read and the checks. The error is stored after
+	// the count, so it waits for both.
+	if _, err := conn.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	d := diagWithin(t, s, func(d diagStats) bool { return d.UDPFailed == 1 && d.LastError != "" })
 	if d.LastError != "UDP to "+to+": no buffer space available" {
 		t.Fatalf("last error %q", d.LastError)
 	}

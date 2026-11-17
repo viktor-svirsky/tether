@@ -1184,10 +1184,7 @@ func (s *Server) forwardTCP(r forwardRequest) {
 		refuse()
 		return
 	}
-	out, err := s.dialOut(dst, lookups)
-	if !lookups {
-		s.diag.dialed(dst, err)
-	}
+	out, err := s.dialCounted(dst, lookups)
 	if err != nil {
 		refuse()
 		return

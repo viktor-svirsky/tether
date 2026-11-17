@@ -52,13 +52,20 @@ func (d *diagnostics) heard(format string) {
 	}
 }
 
-// dialed counts a TCP connection the iPhone tried to make for a device.
-func (d *diagnostics) dialed(dst netip.AddrPort, err error) {
-	d.tcpTried.Add(1)
-	if err != nil {
-		d.tcpFailed.Add(1)
-		d.failed("TCP to " + dst.String() + ": " + err.Error())
+// dialCounted is dialOut, counting a connection the iPhone makes for a device. It counts as tried
+// before the dial, so one to a far end that drops SYNs shows while it waits, and a NAT64 retry is
+// part of the same try. Lookups Tether answers itself make no connection, so they don't count.
+func (s *Server) dialCounted(dst netip.AddrPort, lookups bool) (net.Conn, error) {
+	if lookups {
+		return s.dialOut(dst, lookups)
 	}
+	s.diag.tcpTried.Add(1)
+	out, err := s.dialOut(dst, lookups)
+	if err != nil {
+		s.diag.tcpFailed.Add(1)
+		s.diag.failed("TCP to " + dst.String() + ": " + err.Error())
+	}
+	return out, err
 }
 
 // sent counts a device's UDP packet the iPhone couldn't send on. One left queued when its cone
