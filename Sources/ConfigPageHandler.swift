@@ -21,6 +21,10 @@ struct ConfigPageHandler {
         /// iPhone itself, so a stale config isn't its.
         let hosts: [String]
         let now: Date
+        /// The iPhone's name, while it works for this client, and the ready device's config for it.
+        /// The page then offers a Mac that config too, see `ConfigPage.macConfigPath`.
+        var name: String? = nil
+        var nameConfig: String? = nil
     }
 
     enum Decision: Equatable {
@@ -51,11 +55,12 @@ struct ConfigPageHandler {
         let repeated = state != .ready ? nil : lastDownload.flatMap {
             $0.client == client && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil
         }
+        let name = inputs.nameConfig == nil ? nil : inputs.name
         switch request {
         case .page:
-            return .answer(ConfigPage.page(state, stale: stale))
+            return .answer(ConfigPage.page(state, stale: stale, name: name))
         case .pageHead:
-            return .answer(ConfigPage.page(state, stale: stale).forHead)
+            return .answer(ConfigPage.page(state, stale: stale, name: name).forHead)
         case .configHead:
             if let repeated { return .answer(repeated.forHead) }
             guard state == .ready, let config = inputs.config else { return .answer(ConfigPage.page(state, stale: stale, status: .notFound).forHead) }
@@ -66,6 +71,18 @@ struct ConfigPageHandler {
                 return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
             }
             return .download(ready, host: host, config: config)
+        case .macConfigHead:
+            if let repeated { return .answer(repeated.forHead) }
+            guard state == .ready, name != nil, let config = inputs.nameConfig else {
+                return .answer(ConfigPage.page(state, stale: stale, status: .notFound).forHead)
+            }
+            return .answer(ConfigPage.config(config, fileName: WireGuardSetup.fileName(for: "")).forHead)
+        case .macConfig:
+            if let repeated { return .answer(repeated) }
+            guard state == .ready, let ready = inputs.ready, let name, let config = inputs.nameConfig else {
+                return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
+            }
+            return .download(ready, host: name, config: config)
         case .configWithoutToken: return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
         case .notFound: return .answer(ConfigPage.notFound)
         case .notGet: return .answer(ConfigPage.notGet)

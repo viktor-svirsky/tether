@@ -14,6 +14,10 @@ enum ConfigPage {
     /// can't read the page for this (#158). New with each launch, like the page's code window.
     static let token = (0..<16).map { _ in String("0123456789abcdef".randomElement()!) }.joined()
     static var downloadPath: String { "\(configPath)?t=\(token)" }
+    /// The second link, for a Mac on an IPv6-only hotspot: its config names the iPhone, `tether-xxxx.local`,
+    /// so it follows the iPhone's IPv6 address when that changes (#65). Only offered while the name works.
+    static let macConfigPath = "/Tether-Mac.conf"
+    static var macDownloadPath: String { "\(macConfigPath)?t=\(token)" }
 
     /// The address to type, without the port when it's 80.
     static func url(host: String, port: UInt16 = port) -> String {
@@ -32,6 +36,8 @@ enum ConfigPage {
     /// as a GET, without the body. Download managers send one first.
     enum Request: Equatable {
         case page, config, pageHead, configHead, notFound, notGet, malformed
+        /// The config for the iPhone's name, see `macConfigPath`.
+        case macConfig, macConfigHead
         /// A GET of the config without the page's token: it gets the page, with a 404 so a
         /// download tool doesn't save it as the config.
         case configWithoutToken
@@ -61,10 +67,12 @@ enum ConfigPage {
             let target = parts[1]
             switch target.prefix(while: { $0 != "?" && $0 != "#" }) {
             case "/": self = head ? .pageHead : .page
-            case Substring(ConfigPage.configPath):
+            case let path where path == ConfigPage.configPath || path == ConfigPage.macConfigPath:
                 let query = target.drop { $0 != "?" }.dropFirst().prefix { $0 != "#" }
                 let tokened = query.split(separator: "&").contains { $0 == "t=\(ConfigPage.token)" }
-                self = tokened ? (head ? .configHead : .config) : head ? .pageHead : .configWithoutToken
+                let mac = path == ConfigPage.macConfigPath
+                self = !tokened ? (head ? .pageHead : .configWithoutToken)
+                    : mac ? (head ? .macConfigHead : .macConfig) : head ? .configHead : .config
             default: self = .notFound
             }
         }
@@ -196,15 +204,24 @@ enum ConfigPage {
         }
     }
 
-    static func page(_ state: State, stale: Stale? = nil, status: Status = .ok) -> Response {
-        Response(status: status, contentType: "text/html; charset=utf-8", body: Data(html(state, stale).utf8))
+    /// `name`: the iPhone's name, which `ready` offers a Mac a second config for, see `macConfigPath`.
+    static func page(_ state: State, stale: Stale? = nil, name: String? = nil, status: Status = .ok) -> Response {
+        Response(status: status, contentType: "text/html; charset=utf-8", body: Data(html(state, stale, name).utf8))
     }
 
-    private static func html(_ state: State, _ stale: Stale?) -> String {
+    private static func html(_ state: State, _ stale: Stale?, _ name: String?) -> String {
+        // Not for an iPhone or iPad: whether WireGuard there finds a .local name is still to be tried.
+        let mac = name.map {
+            """
+
+            <p><a href="\(macDownloadPath)">For a Mac: a config that follows the iPhone when its address changes</a></p>
+            <p>It finds the iPhone by its name, \($0), instead of its address. After the address changes, turn the tunnel off and on.</p>
+            """
+        } ?? ""
         let content = switch state {
         case .ready:
             """
-            <p><a class="button" href="\(downloadPath)">Download the config</a></p>
+            <p><a class="button" href="\(downloadPath)">Download the config</a></p>\(mac)
             <p>Then import it in the WireGuard app.</p>
             <p>Turn the tunnel on. Tether on the iPhone then shows this device as connected.</p>
             <details open>

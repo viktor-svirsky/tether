@@ -696,14 +696,14 @@ final class HotspotSession {
         return deviceHost
     }
 
-    /// Where a config downloaded from the page points: the iPhone's name for a computer that asked
-    /// over IPv6, once mDNS answers it with the address Tether listens on, so the config survives a
-    /// new address (#65). Else where it reached Tether. The QR code keeps the address: an Android
-    /// phone scans it too, and Android doesn't look up .local names.
-    private func configHost(for client: String) -> String? {
-        let host = host(reachedFrom: client)
-        guard let host, host.contains(":"), let name = publishedName else { return host }
-        return name
+    /// The iPhone's name for a client that reached the page over IPv6, while mDNS answers it with the
+    /// address Tether listens on: the page then offers a Mac a config for it, which survives a new
+    /// address (#65). Every other config keeps the address. An iPad's Safari says it's a Mac, so the
+    /// page can't tell them apart, and whether WireGuard on an iPhone or iPad finds a .local name is
+    /// still to be tried. Over IPv4, 172.20.10.1 never changes anyway.
+    private func name(for client: String) -> String? {
+        guard host(reachedFrom: client)?.contains(":") == true else { return nil }
+        return publishedName
     }
 
     /// The IPv6 address Tether listens on, for the name. Nil without the hotspot or on IPv4.
@@ -733,11 +733,16 @@ final class HotspotSession {
     /// IPv4 again. Tether always listens on 172.20.10.1, see `boundHosts`. While the hotspot
     /// is off, or for a device saved before Tether kept where it points, it's not known, and no. A
     /// device that is connected reaches Tether, whatever is saved, see `rememberHosts`. A config
-    /// with the iPhone's name follows a new IPv6 address, and needs a new one only once the carrier
-    /// gives IPv4 again: the name has IPv6 only, see `MDNSHostName`.
+    /// with the iPhone's name follows a new IPv6 address. It needs a new one once the carrier gives
+    /// IPv4 again, since the name has IPv6 only (see `MDNSHostName`), and while mDNS can't answer the
+    /// name: taken by another device, or refused. A new config from the page then has the address.
     func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {
         guard running, let host = peer.host, !connectedNow.contains(peer.address) else { return false }
-        if HostName.isName(host) { return host != name || (listeningIPv6 == nil && !onIPv6OnlyCarrier) }
+        if HostName.isName(host) {
+            guard host == name else { return true }
+            guard listeningIPv6 != nil else { return !onIPv6OnlyCarrier }
+            return hostName.map { $0.failure != nil } ?? true
+        }
         return !boundHosts.contains(host)
     }
 
@@ -769,11 +774,13 @@ final class HotspotSession {
         followAddWindow() // by the clock, not only at the watcher's last round
         let ready = wireGuardReady
         let now = self.now()
-        let host = configHost(for: client)
+        let host = host(reachedFrom: client)
+        let named = name(for: client)
         let inputs = ConfigPageHandler.Inputs(letIn: readyLetIn, onScreen: sceneActive, ready: ready, host: host,
                                               config: ready.flatMap { wireGuardConfig(for: $0, host: host) },
                                               // Read now: only the on-screen sampler keeps the knock.
-                                              stale: server.snapshot().recentStale, hosts: boundHosts, now: now)
+                                              stale: server.snapshot().recentStale, hosts: boundHosts, now: now,
+                                              name: named, nameConfig: ready.flatMap { wireGuardConfig(for: $0, host: named) })
         switch pageHandler.answer(request, from: client, inputs) {
         case let .answer(response):
             return response

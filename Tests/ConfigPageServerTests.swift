@@ -29,6 +29,8 @@ final class ConfigPageServerTests: XCTestCase {
             case .notGet: ConfigPage.notGet
             case .malformed: ConfigPage.malformed
             case .configWithoutToken: ConfigPage.page(.ready, status: .notFound)
+            case .macConfig: ConfigPage.config("[Interface]\n", fileName: "Tether-Device.conf")
+            case .macConfigHead: ConfigPage.config("[Interface]\n", fileName: "Tether-Device.conf").forHead
             }
         }
         let ready = expectation(description: "listening")

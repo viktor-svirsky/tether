@@ -172,12 +172,15 @@ final class FakePage: ConfigPageServing {
     }
 }
 
-/// mDNS for `<name>.local`, see `HostNamePublishing`. It confirms each name at once, unless `confirms`
-/// is off, the way a name taken by another device stays unconfirmed.
+/// mDNS for `<name>.local`, see `HostNamePublishing`. It confirms each name at once, unless
+/// `confirms` is off (still checking) or `refuses` says why not (taken by another device, say).
 @MainActor
 final class FakeHostName: HostNamePublishing {
     var confirms = true
-    private(set) var published: HostNameRecord?
+    var refuses: String?
+    private var asked: HostNameRecord?
+    var published: HostNameRecord? { confirms && refuses == nil ? asked : nil }
+    var failure: String? { asked == nil ? nil : refuses }
     /// Each change, "name address" or "name -" for taken down.
     private(set) var changes: [String] = []
 
@@ -186,7 +189,7 @@ final class FakeHostName: HostNamePublishing {
         // Nothing to take down before the first name.
         guard change != changes.last ?? "\(name) -" else { return }
         changes.append(change)
-        published = confirms ? address.map { HostNameRecord(name: name, address: $0) } : nil
+        asked = address.map { HostNameRecord(name: name, address: $0) }
     }
 }
 
