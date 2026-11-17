@@ -29,6 +29,7 @@
 //   Shortcuts.swift     the Shortcuts actions; ShortcutReply.swift has what they say, Foundation only
 //   WireGuardSetup.swift  the hotspot address, WireGuard keys, devices and client configs, Foundation only
 //   WireGuardServer.swift  runs the WireGuard server (WireGuard/, Go)
+//   HostName.swift      the iPhone's name on the hotspot for configs on IPv6, by mDNS (#65)
 //   KeepAlive.swift, KeepAlivePolicy.swift  the silent sound that keeps Tether running
 
 import OSLog
@@ -229,7 +230,7 @@ final class Model: ObservableObject {
                            settleLocalNetworks(settings, secrets: secrets) // once the Keychain can be read
                            return !LocalNetworks.allowed(in: settings)
                        }, usageDefaults: settings,
-                       resetDay: { ResetDay.saved(in: settings) },
+                       resetDay: { ResetDay.saved(in: settings) }, hostName: MDNSHostName(log: Self.append),
                        log: Self.append)
     }
 

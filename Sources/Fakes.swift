@@ -172,6 +172,24 @@ final class FakePage: ConfigPageServing {
     }
 }
 
+/// mDNS for `<name>.local`, see `HostNamePublishing`. It confirms each name at once, unless `confirms`
+/// is off, the way a name taken by another device stays unconfirmed.
+@MainActor
+final class FakeHostName: HostNamePublishing {
+    var confirms = true
+    private(set) var published: HostNameRecord?
+    /// Each change, "name address" or "name -" for taken down.
+    private(set) var changes: [String] = []
+
+    func publish(_ name: String, at address: String?) {
+        let change = "\(name) \(address ?? "-")"
+        // Nothing to take down before the first name.
+        guard change != changes.last ?? "\(name) -" else { return }
+        changes.append(change)
+        published = confirms ? address.map { HostNameRecord(name: name, address: $0) } : nil
+    }
+}
+
 final class FakeSound: KeepAliveSound {
     private(set) var playing = false
     /// Started, but iOS gives it no sound.

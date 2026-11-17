@@ -20,6 +20,8 @@ final class HotspotSessionTests: XCTestCase {
     private var idleAfter = IdleStop.After.never
     private var dns = DNSChoice.Upstream.servers(["1.1.1.1", "1.0.0.1"])
     private var blockLocal = true
+    /// mDNS for the iPhone's name, nil for none, see `HostName`.
+    private var names: FakeHostName?
     private let usageDefaults: UserDefaults = {
         let defaults = UserDefaults(suiteName: "HotspotSessionTests.usage")!
         defaults.removePersistentDomain(forName: "HotspotSessionTests.usage")
@@ -42,7 +44,7 @@ final class HotspotSessionTests: XCTestCase {
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
                                  carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
                                  dns: { [unowned self] in dns }, blockLocal: { [unowned self] in blockLocal }, usageDefaults: usageDefaults,
-                                 now: { [unowned self] in now }, log: log)
+                                 now: { [unowned self] in now }, hostName: names, log: log)
     }
 
     private func minutes(_ m: Double) -> Date { start.addingTimeInterval(m * 60) }
@@ -641,6 +643,145 @@ final class HotspotSessionTests: XCTestCase {
         session.sampleTraffic()
         XCTAssertEqual(session.wireGuardPeers.map(\.host), [a], "not saved")
         XCTAssertFalse(session.needsNewConfig(peer))
+    }
+
+    // MARK: The iPhone's name on IPv6 (#65)
+
+    private func name() -> String { HostName.name(for: devices.setup.serverPublicKey) }
+
+    /// A computer that downloads over IPv6 gets a config for the iPhone's name, which mDNS keeps
+    /// pointing at the IPv6 address through a new cellular session. The QR code keeps the address:
+    /// an Android phone scans it too and can't look up a .local name, and whether WireGuard on an
+    /// iPhone or iPad can is still to be tried. Over IPv4 it's 172.20.10.1, as before.
+    func testOnAnIPv6HotspotAComputerOnIPv6GetsTheNameThatFollowsTheAddress() throws {
+        names = FakeHostName()
+        makeSession()
+        let a = "2607:fb91:88a2:e822::a", b = "2607:fb91:88a3:1234::b"
+        address = a
+        session.syncWithHotspot()
+        let name = name()
+        XCTAssertEqual(names?.changes, ["\(name) \(a)"], "only the IPv6 address, AAAA")
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertTrue(try XCTUnwrap(session.wireGuardConfig(for: ready)).contains("Endpoint = [\(a)]:51820\n"), "the QR code")
+        XCTAssertTrue(body(page.ask(.config, from: "2607:fb91:88a2:e822::99")).contains("Endpoint = \(name):51820\n"))
+        XCTAssertTrue(body(page.ask(.config, from: "172.20.10.2")).contains("Endpoint = 172.20.10.1:51820\n"))
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [name, hotspot])
+        XCTAssertEqual(WireGuardDevices(secrets: secrets).setup.peers.map(\.host), [name, hotspot], "saved")
+
+        address = b // a new cellular session
+        session.syncWithHotspot()
+        XCTAssertEqual(names?.changes.last, "\(name) \(b)")
+        XCTAssertFalse(session.wireGuardPeers.contains { session.needsNewConfig($0) })
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertEqual(names?.changes.last, "\(name) -", "taken down with the hotspot")
+    }
+
+    /// On a usual carrier nothing changes: no name, and every config points at 172.20.10.1.
+    func testOnIPv4TheConfigsKeep172_20_10_1AndNoNameIsPublished() throws {
+        names = FakeHostName()
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        XCTAssertTrue(try XCTUnwrap(session.wireGuardConfig(for: ready)).contains("Endpoint = 172.20.10.1:51820\n"))
+        XCTAssertTrue(body(page.ask(.config, from: "172.20.10.2")).contains("Endpoint = 172.20.10.1:51820\n"))
+        XCTAssertEqual(names?.changes, [])
+    }
+
+    /// The name comes from the server's key, which is in the Keychain, so a relaunch, or a reinstall
+    /// that drops the app's other data, keeps it, and with it every config made for it.
+    func testTheNameStaysTheSameAcrossLaunches() throws {
+        names = FakeHostName()
+        makeSession()
+        let a = "2607:fb91:88a2:e822::a"
+        address = a
+        session.syncWithHotspot()
+        let first = try XCTUnwrap(names?.published)
+        XCTAssertNotNil(first.name.range(of: #"^tether-[0-9a-f]{4}\.local$"#, options: .regularExpression), first.name)
+
+        let relaunched = FakeHostName()
+        let again = HotspotSession(devices: WireGuardDevices(secrets: secrets), server: FakeServer(), keepAlive: FakeSound(),
+                                   page: FakePage(), sceneActive: true, hotspotAddress: { [unowned self] in address },
+                                   carrierIPv6Only: { true }, hostName: relaunched)
+        again.syncWithHotspot()
+        XCTAssertEqual(relaunched.published, first)
+    }
+
+    /// A name mDNS hasn't confirmed, taken by another device say, is never handed out: the config
+    /// gets the address, and says so once it changes, as before.
+    func testAnUnconfirmedNameGivesTheAddress() throws {
+        names = FakeHostName()
+        names?.confirms = false
+        makeSession()
+        let a = "2607:fb91:88a2:e822::a"
+        address = a
+        session.syncWithHotspot()
+        session.openAddWindow()
+        XCTAssertTrue(body(page.ask(.config, from: "2607:fb91:88a2:e822::99")).contains("Endpoint = [\(a)]:51820\n"))
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [a])
+    }
+
+    /// A device on the address, from the QR code (an Android phone, or an iPhone or iPad for now), is
+    /// still told to be added again once the address changes. One on the name isn't, until Tether
+    /// listens on IPv4 only, where the name leads nowhere: the carrier gives IPv4 again. While an
+    /// IPv6-only carrier's hotspot is back on 172.20.10.1 before its IPv6 address, it waits.
+    func testADeviceOnTheAddressIsToldToAddItAgainAndOneOnTheNameOnlyOffIPv6() throws {
+        names = FakeHostName()
+        ipv6Only = true
+        makeSession()
+        let a = "2607:fb91:88a2:e822::a", b = "2607:fb91:88a3:1234::b"
+        address = a
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let scanned = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [scanned.address]
+        server.endpoints = [scanned.address: "[2607:fb91:88a2:e822::98]:51820"]
+        session.sampleTraffic()
+        _ = page.ask(.config, from: "2607:fb91:88a2:e822::99")
+        server.connected = []
+        session.sampleTraffic()
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [a, name()])
+        let (onAddress, onName) = (session.wireGuardPeers[0], session.wireGuardPeers[1])
+        let rounds: [(address: String?, ipv6Only: Bool, onAddress: Bool, onName: Bool, line: UInt)] = [
+            (a, true, false, false, #line),
+            (b, true, true, false, #line),
+            (hotspot, true, true, false, #line), // the IPv6 address isn't there yet
+            (hotspot, false, true, true, #line), // IPv4 from the carrier again
+            (b, true, true, false, #line),
+        ]
+        for round in rounds {
+            address = round.address
+            ipv6Only = round.ipv6Only
+            session.syncWithHotspot()
+            XCTAssertEqual(session.needsNewConfig(onAddress), round.onAddress, line: round.line)
+            XCTAssertEqual(session.needsNewConfig(onName), round.onName, line: round.line)
+        }
+    }
+
+    /// A device on the name that connects over IPv6 keeps the name: its config has it, not the address
+    /// the handshake came to. Overwritten, it would be told to add itself again at the next address.
+    func testAConnectedDeviceOnTheNameKeepsIt() throws {
+        names = FakeHostName()
+        makeSession()
+        let a = "2607:fb91:88a2:e822::a", b = "2607:fb91:88a3:1234::b"
+        address = a
+        session.syncWithHotspot()
+        session.openAddWindow()
+        _ = page.ask(.config, from: "2607:fb91:88a2:e822::99")
+        let peer = try XCTUnwrap(session.wireGuardPeers.first)
+        server.connected = [peer.address]
+        server.endpoints = [peer.address: "[2607:fb91:88a2:e822::99]:51820"]
+        session.sampleTraffic()
+        session.leftScreen()
+        session.watch()
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [name()])
+        server.connected = []
+        address = b
+        session.syncWithHotspot()
+        XCTAssertFalse(session.needsNewConfig(try XCTUnwrap(session.wireGuardPeers.first)))
     }
 
     // MARK: Problems

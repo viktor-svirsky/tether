@@ -139,6 +139,8 @@ final class HotspotSession {
     private var usageSavedAt: Date?
     private var usageUnsaved = false
     private let now: () -> Date
+    /// mDNS for the iPhone's name on IPv6, see `HostName`. Nil gives the devices the address itself.
+    private let hostName: HostNamePublishing?
     private let log: @MainActor (String) -> Void
 
     /// When the hotspot went away, or Tether was last on screen since. Nil while the hotspot is on.
@@ -177,7 +179,7 @@ final class HotspotSession {
          idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> DNSChoice.Upstream = { DNSChoice.defaultUpstream },
          blockLocal: @escaping () -> Bool = { false },
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
-         resetDay: @escaping () -> ResetDay = { .default },
+         resetDay: @escaping () -> ResetDay = { .default }, hostName: HostNamePublishing? = nil,
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -195,6 +197,7 @@ final class HotspotSession {
         monthlyUsage = usageDefaults.map { MonthlyUsage.load(from: $0, resetDay: resetDay()) } ?? MonthlyUsage(resetDay: resetDay())
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
+        self.hostName = hostName
         self.log = log
         publishSetup()
         showSetupProblem() // from launch, before any device joins the hotspot
@@ -224,6 +227,7 @@ final class HotspotSession {
     /// The hotspot interface exists only while Personal Hotspot is on. This starts WireGuard when
     /// it appears and stops it when it goes away or changes, so it never listens anywhere else.
     func syncWithHotspot() {
+        defer { followHostName() }
         checkSetup()
         followAddWindow()
         let ipv6Only = carrierIPv6Only()
@@ -692,14 +696,48 @@ final class HotspotSession {
         return deviceHost
     }
 
+    /// Where a config downloaded from the page points: the iPhone's name for a computer that asked
+    /// over IPv6, once mDNS answers it with the address Tether listens on, so the config survives a
+    /// new address (#65). Else where it reached Tether. The QR code keeps the address: an Android
+    /// phone scans it too, and Android doesn't look up .local names.
+    private func configHost(for client: String) -> String? {
+        let host = host(reachedFrom: client)
+        guard let host, host.contains(":"), let name = publishedName else { return host }
+        return name
+    }
+
+    /// The IPv6 address Tether listens on, for the name. Nil without the hotspot or on IPv4.
+    private var listeningIPv6: String? {
+        guard running, server.running, let boundHost, boundHost.contains(":") else { return nil }
+        return boundHost
+    }
+
+    /// The iPhone's name, from the server's key. Nil until the keys are read.
+    private var name: String? { devices.loaded ? HostName.name(for: devices.setup.serverPublicKey) : nil }
+
+    /// The name, while mDNS answers it with the address Tether listens on now.
+    private var publishedName: String? {
+        guard let name, let listeningIPv6, hostName?.published == HostNameRecord(name: name, address: listeningIPv6) else { return nil }
+        return name
+    }
+
+    /// Each round: the name answers with the IPv6 address Tether listens on, and goes with it.
+    private func followHostName() {
+        guard let hostName, let name else { return }
+        hostName.publish(name, at: listeningIPv6)
+    }
+
     /// The device's config points at an address Tether doesn't listen on, so it can't connect until
     /// it's added again (#65). That happens only to the IPv6 address of a carrier that gives the
     /// iPhone IPv6 only, which comes with each cellular session, or goes when the carrier gives it
     /// IPv4 again. Tether always listens on 172.20.10.1, see `boundHosts`. While the hotspot
     /// is off, or for a device saved before Tether kept where it points, it's not known, and no. A
-    /// device that is connected reaches Tether, whatever is saved, see `rememberHosts`.
+    /// device that is connected reaches Tether, whatever is saved, see `rememberHosts`. A config
+    /// with the iPhone's name follows a new IPv6 address, and needs a new one only once the carrier
+    /// gives IPv4 again: the name has IPv6 only, see `MDNSHostName`.
     func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {
         guard running, let host = peer.host, !connectedNow.contains(peer.address) else { return false }
+        if HostName.isName(host) { return host != name || (listeningIPv6 == nil && !onIPv6OnlyCarrier) }
         return !boundHosts.contains(host)
     }
 
@@ -731,7 +769,7 @@ final class HotspotSession {
         followAddWindow() // by the clock, not only at the watcher's last round
         let ready = wireGuardReady
         let now = self.now()
-        let host = host(reachedFrom: client)
+        let host = configHost(for: client)
         let inputs = ConfigPageHandler.Inputs(letIn: readyLetIn, onScreen: sceneActive, ready: ready, host: host,
                                               config: ready.flatMap { wireGuardConfig(for: $0, host: host) },
                                               // Read now: only the on-screen sampler keeps the knock.
@@ -872,12 +910,15 @@ final class HotspotSession {
     /// A device that is connected reaches Tether where its handshake came to, so its config points
     /// there, or at a name that leads there. Saved for a device saved before Tether kept where it
     /// points, and for one whose config was changed by hand to the new address. Not saved means the
-    /// next read tries again.
+    /// next read tries again. A device on the iPhone's name that reached the IPv6 address keeps the
+    /// name: that's where its config points.
     private func rememberHosts(_ peers: [String: PeerStats]) {
         guard running else { return }
+        let onName = Set(devices.setup.peers.filter { $0.host.map(HostName.isName) == true }.map(\.address))
         var reached: [String: Set<String>] = [:]
         for (address, stats) in peers where stats.connected {
-            if let host = host(reachedFrom: stats.endpoint) { reached[host, default: []].insert(address) }
+            guard let host = host(reachedFrom: stats.endpoint), !(onName.contains(address) && host.contains(":")) else { continue }
+            reached[host, default: []].insert(address)
         }
         var changed = false
         for (host, addresses) in reached where devices.point(addresses, at: host) { changed = true }
