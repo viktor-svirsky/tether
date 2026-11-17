@@ -80,17 +80,18 @@ var errNotHTTP = errors.New("not HTTP")
 // proxy is the server's HTTP proxy. Its state is under s.mu.
 type proxy struct {
 	// Read when the proxy turns on, and at and port6 each time it listens. Tests swap them, under s.mu.
-	at           netip.AddrPort // where it listens on IPv4. Invalid is the hotspot's address on proxyPort
-	port6        uint16         // its port on the hotspot's IPv6 address
-	clients      netip.Prefix   // whom it serves on IPv4. On IPv6 it's the hotspot's network, see hotspotNet6
-	systemLookup func(ctx context.Context, host string) ([]netip.Addr, error)
-	retry        time.Duration
-	maxConns     int
-	handshake    time.Duration
-	maxLookups   int // the proxy's name lookups at once, for all its devices, like a device's maxLookups
-	maxDials     int // plain requests' dials at once, for all its devices, like a device's maxDials
-	maxPerClient int
-	listen       func(ctx context.Context, address string) (net.Listener, error)
+	at                netip.AddrPort // where it listens on IPv4. Invalid is the hotspot's address on proxyPort
+	port6             uint16         // its port on the hotspot's IPv6 address
+	clients           netip.Prefix   // whom it serves on IPv4. On IPv6 it's the hotspot's network, see hotspotNet6
+	systemLookup      func(ctx context.Context, host string) ([]netip.Addr, error)
+	retry             time.Duration
+	maxConns          int
+	handshake         time.Duration
+	maxLookups        int // the proxy's name lookups at once, for all its devices, like a device's maxLookups
+	maxDials          int // plain requests' dials at once, for all its devices, like a device's maxDials
+	maxDialsPerClient int // one device's share of maxDials, like maxPerClient
+	maxPerClient      int
+	listen            func(ctx context.Context, address string) (net.Listener, error)
 
 	// counts is the proxy's bytes, the same ones the totals count.
 	counts traffic
@@ -101,6 +102,7 @@ type proxy struct {
 	openBy    map[netip.Addr]int // each client's, see maxPerClient
 	lookups   int                // lookups still running, also ones whose client gave up
 	dials     int                // plain requests' dials still running, also ones whose client gave up
+	dialsBy   map[netip.Addr]int // each client's, see maxDialsPerClient
 	refusedAt time.Time          // when a refusal was last logged, so a busy client can't fill the log
 }
 
@@ -111,13 +113,15 @@ func newProxy() *proxy {
 		systemLookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
-		retry:        proxyRetry,
-		maxConns:     maxProxyConns,
-		maxPerClient: maxProxyPerClient,
-		maxLookups:   maxLookups,
-		maxDials:     maxDials,
-		handshake:    proxyHandshake,
-		openBy:       map[netip.Addr]int{},
+		retry:             proxyRetry,
+		maxConns:          maxProxyConns,
+		maxPerClient:      maxProxyPerClient,
+		maxLookups:        maxLookups,
+		maxDials:          maxDials,
+		maxDialsPerClient: maxDials / 2,
+		handshake:         proxyHandshake,
+		openBy:            map[netip.Addr]int{},
+		dialsBy:           map[netip.Addr]int{},
 		listen: func(ctx context.Context, address string) (net.Listener, error) {
 			// The keepalive of a tunnel device's side, see Start: a device that leaves the hotspot
 			// never closes its connections.
@@ -315,11 +319,13 @@ func (s *Server) newProxyRun() *proxyRun {
 			}
 			// The transport goes on dialing after the client leaves, for its pool, so the client's
 			// slot doesn't hold these: they have their own cap.
-			if err := s.takeDial(); err != nil {
+			// The transport keeps the request's values, so the client is the one whose request started it.
+			from, _ := ctx.Value(proxyClient{}).(netip.Addr)
+			if err := s.takeDial(from); err != nil {
 				return nil, err
 			}
 			c, err := r.dial(ctx, host, uint16(n), &p.counts)
-			s.releaseDial()
+			s.releaseDial(from)
 			if err != nil {
 				return nil, err // not a nil *outConn in a non-nil net.Conn
 			}
@@ -652,6 +658,9 @@ func (r *proxyRun) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer context.AfterFunc(r.ctx, cancel)()
 	req = req.WithContext(ctx)
 	if req.Method != http.MethodConnect {
+		if a, err := netip.ParseAddrPort(req.RemoteAddr); err == nil {
+			req = req.WithContext(context.WithValue(ctx, proxyClient{}, a.Addr().Unmap()))
+		}
 		r.forward.ServeHTTP(w, req)
 		return
 	}
@@ -886,20 +895,27 @@ func (s *Server) releaseLookup() {
 // errTooManyDials is a plain request's dial past the proxy's maxDials, which the client gets as 502.
 var errTooManyDials = errors.New("too many dials at once")
 
-// takeDial counts a plain request's dial against the proxy's maxDials, or refuses it at the cap.
-func (s *Server) takeDial() error {
+// proxyClient is the context key of the client a plain request came from, see takeDial.
+type proxyClient struct{}
+
+// takeDial counts a plain request's dial from client from against the proxy's maxDials and the
+// client's share of it, or refuses it at either cap.
+func (s *Server) takeDial(from netip.Addr) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.proxy.dials >= s.proxy.maxDials {
+	p := s.proxy
+	if p.dials >= p.maxDials || p.dialsBy[from] >= p.maxDialsPerClient {
 		return errTooManyDials
 	}
-	s.proxy.dials++
+	p.dials++
+	p.dialsBy[from]++
 	return nil
 }
 
-func (s *Server) releaseDial() {
+func (s *Server) releaseDial(from netip.Addr) {
 	s.mu.Lock()
 	s.proxy.dials--
+	release(s.proxy.dialsBy, from)
 	s.mu.Unlock()
 }
 

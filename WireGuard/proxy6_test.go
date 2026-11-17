@@ -383,3 +383,42 @@ func TestTheIPv6ListenerReadsTheHotspotsNetworkAgainAfterAFailure(t *testing.T) 
 		t.Fatalf("after one failed read, %s still refuses clients", at6)
 	}
 }
+
+// One device can't take every plain dial either: past its share, its next plain request gets 502 at
+// once, while another device's still goes through. The test's two devices are ::1 and 127.0.0.1.
+func TestOneClientCantTakeEveryPlainDial(t *testing.T) {
+	s, at4, at6, _ := proxyOn6(t, netip.IPv6Loopback(), "127.0.0.1/8", "::1/64")
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	var started atomic.Int32
+	s.mu.Lock()
+	s.proxy.maxDials, s.proxy.maxDialsPerClient = 4, 2
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if !slices.Contains([]string{"80", "81", "82"}, port(address)) {
+			return toLoopback(ctx, network, address)
+		}
+		started.Add(1)
+		<-release // a far end that never answers
+		return nil, errors.New("no answer")
+	}
+	s.mu.Unlock()
+	for i := range 2 {
+		conn, err := net.Dial("tcp", at4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		fmt.Fprintf(conn, "GET http://%s:%d/ HTTP/1.1\r\nHost: x\r\n\r\n", remote, 80+i)
+		if !waitFor(5*time.Second, func() bool { return started.Load() > int32(i) }) {
+			t.Fatal("the dial never started")
+		}
+	}
+	start := time.Now()
+	if status, _ := rawGet(t, at4, fmt.Sprintf("http://%s:82/", remote)); status != http.StatusBadGateway || time.Since(start) > time.Second {
+		t.Fatalf("past its share got %d after %v, want 502 at once", status, time.Since(start))
+	}
+	far, _ := pageAt(t)
+	if status, _ := rawGet(t, at6, "http://"+far+"/"); status != http.StatusOK {
+		t.Fatalf("the other device got %d", status)
+	}
+}
