@@ -79,7 +79,9 @@ func fuzzServer(f *testing.F) *Server {
 }
 
 // A device can put any bytes into the tunnel. The stack must take them without a panic, and what
-// it sends back must fit the MTU. Fuzz with: go test -run '^$' -fuzz '^FuzzTunWrite$'
+// it sends back must fit the MTU. wireguard-go reads the same channel, so this checks only the
+// packets it gets first, and a reply made later can show up in a later input. Fuzz with:
+// go test -run '^$' -fuzz '^FuzzTunWrite$'
 func FuzzTunWrite(f *testing.F) {
 	dev := netip.MustParseAddrPort("10.7.0.2:40000")
 	echo := header.ICMPv4(make([]byte, header.ICMPv4MinimumSize))

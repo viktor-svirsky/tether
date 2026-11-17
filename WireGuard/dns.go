@@ -84,8 +84,8 @@ func (s *Server) SetDNS(u *dnsUpstream) { s.upstream.Store(u) }
 
 // resolve answers one query a device sent to 10.7.0.1, over UDP or TCP, from the upstream set now:
 // the upstream's answer, SERVFAIL when it gave none, or FORMERR at once for questions that can't be
-// read. Nil when there's nothing to answer: no upstream, a message that isn't a query, or a closing
-// server.
+// read. Nil when there's nothing to answer: no upstream, a message that isn't a query, a closing
+// server, or a SERVFAIL too big to send, see servfail.
 func (s *Server) resolve(query []byte, overTCP bool) []byte {
 	if len(query) < dnsHeaderLen || query[2]&0x80 != 0 { // QR: an answer, not a query
 		return nil
@@ -432,6 +432,13 @@ func servfail(query []byte) []byte {
 	if err != nil {
 		return nil
 	}
+	size := dnsHeaderLen // at most what the questions take spelled out: a name, its type and class
+	for _, q := range questions {
+		size += int(q.Name.Length) + 1 + 4
+	}
+	if size > dnsMessageMax {
+		return nil // too big for a TCP frame's 2-byte length, so don't build it
+	}
 	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{
 		ID: h.ID, Response: true, OpCode: h.OpCode, RecursionDesired: h.RecursionDesired,
 		RecursionAvailable: true, RCode: dnsmessage.RCodeServerFailure,
@@ -443,8 +450,8 @@ func servfail(query []byte) []byte {
 		}
 	}
 	m, err := b.Finish()
-	if err != nil || len(m) > dnsMessageMax {
-		return nil // too big for a TCP frame's 2-byte length
+	if err != nil {
+		return nil
 	}
 	return m
 }

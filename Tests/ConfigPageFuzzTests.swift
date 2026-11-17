@@ -5,7 +5,8 @@ import XCTest
 /// sends (#157). Swift has no fuzzer, so this changes real requests at random from a fixed seed: a
 /// failure comes back on every run, and the iteration it names gives the input.
 final class ConfigPageFuzzTests: XCTestCase {
-    /// SplitMix64, so every run makes the same requests.
+    /// SplitMix64, so every run makes the same changes. A request that carries the token differs by
+    /// it, since the token is new each launch.
     private struct Seeded: RandomNumberGenerator {
         var state: UInt64
         mutating func next() -> UInt64 {
