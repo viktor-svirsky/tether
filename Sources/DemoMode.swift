@@ -238,22 +238,34 @@ struct DemoState {
         server.handshakes = ["10.7.0.3": clock.now.addingTimeInterval(-2 * 3600)]
         if connected.contains("10.7.0.2") { server.handshakes["10.7.0.2"] = clock.now.addingTimeInterval(-30) }
         if scenario == .staleConfig { server.stale = StaleConfig(kind: .device, at: clock.now) }
-        // The proxy's devices: two pages open and 85 MB this month on its screen, or one page through it
-        // since Add a device opened, see `Model.addDeviceProxyOpenedAt`.
+        // The proxy's devices: two pages open and 85 MB this month on its screen, or one page loading.
         if [.proxy, .proxyIPv6].contains(scenario) {
             server.proxyOpen = 2
             server.proxyTraffic = TrafficTotals(bytesUp: 5_000_000, bytesDown: 80_000_000)
         }
-        if scenario == .addDeviceProxyWorking {
-            server.proxyOpen = 1
-            server.proxyTraffic = TrafficTotals(bytesUp: 2_000, bytesDown: 60_000)
-        }
+        if scenario == .addDeviceProxyWorking { server.proxyOpen = 1 }
         if scenario == .proxyIPv6 { server.proxyAddresses = ["\(Hotspot.host):8118", "[\(ipv6)]:8118"] }
         session.sampleTraffic()
         clock.now = clock.now.addingTimeInterval(1)
         server.totals = TrafficTotals(bytesUp: UInt64(upSpeed / 8), bytesDown: UInt64(downSpeed / 8))
         session.sampleTraffic()
+        if scenario == .addDeviceProxyWorking { loadAPage(through: server, session) }
         return session
+    }
+
+    /// The `addDeviceProxyWorking` demo's page: its bytes come in each second, as the sampler would
+    /// read them, so they're through the proxy after Add a device opened whenever that is. A demo
+    /// has no sampler, so this reads them. It stops once the session is gone, as in a unit test.
+    @MainActor
+    private func loadAPage(through server: FakeServer, _ session: HotspotSession) {
+        Task { [weak session] in
+            for _ in 0..<60 {
+                try? await Task.sleep(for: .seconds(1))
+                guard let session else { return }
+                server.proxyTraffic += TrafficTotals(bytesUp: 1_000, bytesDown: 30_000)
+                session.sampleTraffic()
+            }
+        }
     }
 }
 

@@ -88,7 +88,7 @@ final class DemoScenarioTests: XCTestCase {
 
     /// The proxy demos (#78) have it on, with the iPad and the Windows PC, and only they do. `proxy`
     /// has two connections open and 85 MB this month, `proxyIPv6` listens at both addresses, and Add a
-    /// device's waits for the first page or has one through it.
+    /// device's waits for the first page or has one loading through it.
     func testTheProxyDemosHaveTheProxyOn() throws {
         let on: Set<DemoScenario> = [.proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
         for scenario in DemoScenario.allCases {
@@ -101,11 +101,7 @@ final class DemoScenarioTests: XCTestCase {
         XCTAssertEqual(DemoState(.proxyIPv6).makeSession().proxyStats.addresses,
                        ["172.20.10.1:8118", "[2001:db8:9e74:4eaa:459:5cd0:7ec7:f792]:8118"])
         XCTAssertEqual(DemoState(.addDeviceProxy).makeSession().proxyStats.open, 0)
-        let working = DemoState(.addDeviceProxyWorking).makeSession().proxyStats
-        XCTAssertEqual(working.open, 1)
-        var progress = ProxyProgress(at: ProxyStats()) // where Add a device opened, see `Model.addDeviceProxyOpenedAt`
-        progress.follow(working)
-        XCTAssertTrue(progress.working, "its page went through after the screen opened")
+        XCTAssertEqual(DemoState(.addDeviceProxyWorking).makeSession().proxyStats.open, 1)
     }
 
     /// A demo's log is its own, emptied at each launch, so the app's log never gets a demo's lines.
