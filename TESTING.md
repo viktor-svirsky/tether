@@ -34,14 +34,14 @@ go -C WireGuard test ./...
 go -C WireGuard test -race ./...
 ```
 
-CI also fuzzes the UDP replies for 30 s and checks for known vulnerabilities. Locally:
+CI also runs each fuzz target for 30 s and checks for known vulnerabilities. A failing fuzz input is kept as the run's `fuzz-input` artifact. Locally:
 
 ```sh
-go -C WireGuard test -run '^$' -fuzz FuzzReplyPackets -fuzztime 30s ./...
+go -C WireGuard test -run '^$' -fuzz '^FuzzReplyPackets$' -fuzztime 30s .
 go -C WireGuard run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 ```
 
-The fuzz test sends any payload from the internet through `replyPackets` and checks the fragments are valid IPv4 that put the datagram back together exactly. `govulncheck` fails only when Tether's code can reach a known vulnerability.
+There's a fuzz target for each input a device or the internet controls. In `fuzz_test.go`: `FuzzReplyPackets` (a payload from the internet cut into valid IPv4 fragments that put it back together exactly), `FuzzTunWrite` (any packet into the tunnel of a running server), `FuzzResolve`, `FuzzServeTCP` and `FuzzQuestions` (DNS queries and answers), `FuzzEchoReply` (ping replies) and `FuzzNAT64`. `FuzzFitUDP` in `dns_test.go` cuts DNS answers for UDP, and `FuzzProxyTarget` in `proxy_test.go` reads where a proxy request goes. Each checks for no panic and output within bounds. Run another one by swapping its name in the line above. `ConfigPageFuzzTests` does the same for the config page's request parser in Swift, with random changes from a fixed seed. `govulncheck` fails only when Tether's code can reach a known vulnerability.
 
 They run a real WireGuard client (wireguard-go with its own netstack) against the server over loopback: TCP and UDP through the tunnel, an unknown key getting nothing, sharing off, a removed device locked out and its connections closed, a paused device keeping its handshake and session while it gets no TCP, UDP or ping through, its connections closed on both sides, its count kept, the others untouched, a paused router's clients stopped too and a paused device never taking the router's role (`pause_test.go`), a router's clients sending from their own private addresses (and a plain device or a public address refused), Close during UDP traffic (a deadlock once), full-cone UDP (a reply from an address the device never contacted gets through, the way a call connects), replies bigger than the tunnel MTU arriving in IPv4 fragments, ping through the tunnel, TCP and UDP reaching IPv4 hosts through the carrier's NAT64, a cone's own socket holding its IPv4 port, and the iPhone's own addresses refused to TCP, UDP and ping while their neighbours go out, read again as they change, with the config page still opening through the tunnel, only where Swift says its page listens and nowhere before that, and a plain DNS server on one of them still answering for 10.7.0.1 (`own_test.go`, #27). `golog_test.go` covers the lines the server keeps for the shared log: only the ones that say something, a device named by its tunnel address and never by a piece of its key, a line that repeats counted once a minute, and the message Swift reads. The client's netstack refuses to send to 127.0.0.1, so the tests dial a documentation address (198.51.100.7) and swap the server's dialer to reach the local test listeners.
 
