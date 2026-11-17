@@ -50,6 +50,8 @@ struct LimitAlert: Equatable {
     let limit: UInt64
     /// The running count, which ends when the count starts over, see `HotspotSession.period`.
     let period: DateInterval
+    /// The proxy's notice says it works again, not connects again, like its screen, see `ProxyStatus.detail`.
+    var proxy = false
 
     var resets: Date { period.end }
 
@@ -64,7 +66,7 @@ struct LimitAlert: Equatable {
                    body: "It used \(Format.bytes(used)) of its \(Format.bytes(limit)) \(counted).")
         case .reached:
             Notice(kind: .limit, id: "limit-\(device)", title: "\(name) paused at its limit",
-                   body: "It used \(Format.bytes(limit)) \(counted). It connects again on \(Self.day(resets, calendar: calendar, locale: locale)), or when you resume it.")
+                   body: "It used \(Format.bytes(limit)) \(counted). It \(proxy ? "works" : "connects") again on \(Self.day(resets, calendar: calendar, locale: locale)), or when you resume it.")
         }
     }
 
@@ -291,7 +293,7 @@ struct ClosedAlarm {
     static let delay: TimeInterval = 3 * 60
     static let pushBackEvery: TimeInterval = 60
     static let notice = Notice(kind: .closed, id: "closed", title: "Tether stopped sharing",
-                               body: "Devices on the hotspot have no data until Tether runs again.")
+                               body: "Devices using Tether have no data until Tether runs again.")
 
     enum Action: Equatable {
         /// Show it after this long, in place of any waiting one, and take away one that showed.

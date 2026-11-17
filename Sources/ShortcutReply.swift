@@ -7,6 +7,8 @@ enum ShortcutReply {
         var running: Bool
         var connected: Int
         var problem: String?
+        /// A connection is open on the proxy. Its devices can't be told apart, so they aren't in `connected`.
+        var proxyInUse = false
         /// Sharing stopped after a time with no device connected, see `IdleStop`.
         var idleStopped = false
         /// The silent sound plays while the hotspot is on. Without it iOS suspends Tether as soon as
@@ -31,10 +33,13 @@ enum ShortcutReply {
         if state.idleStopped { return "Tether stopped sharing while idle. Open it, or run Start Tether, to share again." }
         // iOS makes the hotspot's network only while a device is on it, so no device and the hotspot off look the same.
         guard state.running else { return "Tether is waiting for a device to join Personal Hotspot." }
-        switch state.connected {
-        case 0: return "Tether is sharing. No device is using it yet."
-        case 1: return "Tether is sharing with 1 device."
-        case let n: return "Tether is sharing with \(n) devices."
+        switch (state.connected, state.proxyInUse) {
+        case (0, false): return "Tether is sharing. No device is using it yet."
+        case (0, true): return "Tether is sharing. The proxy is in use."
+        case (1, false): return "Tether is sharing with 1 device."
+        case (1, true): return "Tether is sharing with 1 device and the proxy."
+        case let (n, false): return "Tether is sharing with \(n) devices."
+        case let (n, true): return "Tether is sharing with \(n) devices and the proxy."
         }
     }
 }

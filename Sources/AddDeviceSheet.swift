@@ -553,7 +553,7 @@ struct AddDeviceSheet: View {
                             if working {
                                 note("Working")
                             } else if paused {
-                                note("The proxy is paused. Resume it on its screen, under Devices.")
+                                note("The proxy is paused at its data limit. To use it anyway, close this, tap Proxy under Devices and turn off Pause.")
                             } else {
                                 note("Waiting for the first page")
                             }
@@ -599,6 +599,11 @@ struct AddDeviceSheet: View {
             addressRow(ProxyAddress.port, caption: "Port", name: "Port", copyLabel: "Copy the port", id: "add.proxy.port",
                        copyID: "add.proxy.copyPort")
             ProxyPlaces()
+            // A Mac sets it for its Wi-Fi, not for one network, and Windows for every network.
+            Text("A Mac or Windows keeps the proxy on other networks too. Turn it off there when you leave this hotspot.")
+                .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("add.proxy.turnOff")
         }
     }
 
@@ -677,9 +682,9 @@ struct ProxyPlaces: View {
     static let places = [
         ("iPhone, iPad", "Wi-Fi > (i) > Configure Proxy > Manual"),
         ("Mac", "Wi-Fi > Details > Proxies > Web and Secure Web"),
-        ("Windows", "Settings > Proxy > Use a proxy server"),
+        ("Windows", "Settings > Network & internet > Proxy > Manual proxy setup"),
         ("Android", "Wi-Fi > network > Edit > Proxy > Manual"),
-        ("PlayStation, Xbox, TV", "In the network settings, Proxy"),
+        ("PlayStation, Switch, TV", "In the network settings, Proxy"),
     ]
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 

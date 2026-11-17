@@ -475,10 +475,14 @@ final class HotspotSession {
     /// For the Shortcuts actions. Off screen the sampler doesn't run, so the connected devices are read now.
     func shortcutState() -> ShortcutReply.State {
         var connected = wireGuardConnected
+        var proxyStats = proxyStats
         if running, server.running {
-            connected = unpaused(server.snapshot().connected)
+            let snapshot = server.snapshot()
+            connected = unpaused(snapshot.connected)
+            proxyStats = snapshot.proxy
         }
-        return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem,
+        let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running).inUse } ?? false
+        return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem, proxyInUse: proxyInUse,
                                    idleStopped: idleStopped != nil, keptAlive: !running || keepAlive.sounding)
     }
 
@@ -984,7 +988,8 @@ final class HotspotSession {
     }
 
     private func alert(_ id: WireGuardSetup.Peer.ID, _ name: String, _ kind: LimitAlert.Kind, used: UInt64, limit: UInt64, now: Date) {
-        let alert = LimitAlert(device: id, name: name, kind: kind, used: used, limit: limit, period: period)
+        let alert = LimitAlert(device: id, name: name, kind: kind, used: used, limit: limit, period: period,
+                               proxy: id == devices.setup.proxy?.id)
         limitAlerts = Array((limitAlerts + [alert]).suffix(20))
     }
 

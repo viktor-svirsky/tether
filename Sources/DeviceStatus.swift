@@ -114,6 +114,9 @@ struct ProxyStatus: Equatable {
         }
     }
 
+    /// A device on it has a connection open, so it counts as using Tether, see `UsingTether`.
+    var inUse: Bool { look == .connected }
+
     /// The line under the title on its screen, while it's paused, see `DeviceStatus.detail`.
     func detail(resets: String, period: String) -> String? {
         switch state {
@@ -134,5 +137,20 @@ enum ProxyAddress {
     static func servers(_ addresses: [String]) -> [String] {
         let servers = addresses.compactMap { PeerStats.address($0) }
         return servers.isEmpty ? [Hotspot.host] : servers
+    }
+}
+
+/// The status card's line under Sharing: the WireGuard devices connected, and the proxy while a
+/// connection is open on it. The proxy's devices can't be told apart, so it's named, not counted.
+enum UsingTether {
+    static func headline(devices: Int, proxy: Bool) -> String {
+        switch (devices, proxy) {
+        case (0, false): "No device is using Tether yet"
+        case (0, true): "The proxy is in use"
+        case (1, false): "1 device connected"
+        case (1, true): "1 device connected and the proxy in use"
+        case let (n, false): "\(n) devices connected"
+        case let (n, true): "\(n) devices connected and the proxy in use"
+        }
     }
 }

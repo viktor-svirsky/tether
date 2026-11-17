@@ -66,13 +66,15 @@ final class ProxyTests: TetherUITestCase {
         let places = [
             "iPhone, iPad, Wi-Fi > (i) > Configure Proxy > Manual",
             "Mac, Wi-Fi > Details > Proxies > Web and Secure Web",
-            "Windows, Settings > Proxy > Use a proxy server",
+            "Windows, Settings > Network & internet > Proxy > Manual proxy setup",
             "Android, Wi-Fi > network > Edit > Proxy > Manual",
-            "PlayStation, Xbox, TV, In the network settings, Proxy",
+            "PlayStation, Switch, TV, In the network settings, Proxy",
         ]
         for (i, place) in places.enumerated() {
             XCTAssertEqual(reveal(element("add.proxy.where\(i + 1)")).label, place)
         }
+        XCTAssertEqual(reveal(element("add.proxy.turnOff")).label,
+                       "A Mac or Windows keeps the proxy on other networks too. Turn it off there when you leave this hotspot.")
         XCTAssertEqual(label(of: "add.proxy.step3"), "Step 3 of 3, Open a page on it")
         XCTAssertEqual(value(of: element("add.proxy.step3")), "Waiting")
         XCTAssertEqual(reveal(element("add.proxy.result")).label, "Waiting for the first page")
@@ -151,6 +153,8 @@ final class ProxyTests: TetherUITestCase {
         XCTAssertTrue(row.label.contains("2 open"), row.label)
         XCTAssertTrue(row.label.contains("85 MB this month"), row.label)
         XCTAssertGreaterThan(row.frame.minY, element("device.Windows PC").frame.minY, "under the devices")
+        // Its open connections count as using Tether, next to the iPad.
+        XCTAssertEqual(label(of: "status.headline"), "1 device connected and the proxy in use")
     }
 
     func testTheProxysScreenShowsWhatADevicesDoes() {

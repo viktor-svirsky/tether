@@ -247,11 +247,8 @@ struct StatusCard: View {
     }
 
     private var headline: String {
-        switch model.wireGuardConnected.count {
-        case 0: return "No device is using Tether yet"
-        case 1: return "1 device connected"
-        case let n: return "\(n) devices connected"
-        }
+        let proxy = model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running).inUse } ?? false
+        return UsingTether.headline(devices: model.wireGuardConnected.count, proxy: proxy)
     }
 
     /// The orb sits left of the text. At the accessibility text sizes a row would squeeze the text

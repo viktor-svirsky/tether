@@ -45,5 +45,5 @@ body:
   - type: input
     id: device
     attributes:
-      label: The device you share with, and its WireGuard client
-      placeholder: iPad with the WireGuard app, GL.iNet router, Windows laptop
+      label: The device you share with, and its WireGuard client or the proxy
+      placeholder: iPad with the WireGuard app, GL.iNet router, Windows laptop on the proxy
