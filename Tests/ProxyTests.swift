@@ -291,8 +291,8 @@ final class ProxyTests: XCTestCase {
         XCTAssertNil(ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(), hotspotOn: true).detail(resets: "", period: ""))
     }
 
-    /// Add a device's last step ticks off once the proxy carries something after the screen opened,
-    /// or a device has a connection open to it.
+    /// Add a device's last step ticks off once the proxy carries something after the screen opened.
+    /// An open connection alone doesn't: it may still be waiting for a lookup that fails.
     func testTheProxyPathWorksOnceSomethingGoesThrough() {
         let opened = ProxyStats(traffic: TrafficTotals(bytesUp: 10, bytesDown: 100))
         var progress = ProxyProgress(at: opened)
@@ -305,6 +305,6 @@ final class ProxyTests: XCTestCase {
         XCTAssertTrue(progress.working, "once it works it stays ticked")
         var open = ProxyProgress(at: ProxyStats())
         open.follow(ProxyStats(open: 1))
-        XCTAssertTrue(open.working)
+        XCTAssertFalse(open.working, "a connection let in, with nothing through it yet")
     }
 }

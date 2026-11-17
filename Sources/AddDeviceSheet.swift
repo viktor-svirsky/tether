@@ -573,7 +573,8 @@ struct AddDeviceSheet: View {
         .toolbar { closeButton }
         .onAppear {
             if !model.proxyOn || model.proxy?.paused == .byYou { model.setProxy(on: true) }
-            proxyProgress = ProxyProgress(at: model.proxyStats)
+            proxyProgress = ProxyProgress(at: model.addDeviceProxyOpenedAt ?? model.proxyStats)
+            proxyProgress?.follow(model.proxyStats) // a demo's page went through before it showed
         }
         .onChange(of: model.proxyStats) { _, stats in
             let was = proxyProgress?.working

@@ -96,7 +96,8 @@ enum AddDeviceWay: Hashable {
 }
 
 /// Add a device's proxy path (#78): its last step ticks off once the proxy carries something after
-/// the screen opened, or a device has a connection open to it, and stays ticked.
+/// the screen opened, and stays ticked. A connection open to it isn't enough: Go counts one as soon
+/// as it lets it in, while its lookup may still fail and no page load.
 struct ProxyProgress: Equatable {
     /// The proxy's bytes when the screen opened.
     private let opened: TrafficTotals
@@ -108,6 +109,6 @@ struct ProxyProgress: Equatable {
     }
 
     mutating func follow(_ stats: ProxyStats) {
-        if stats.open > 0 || stats.traffic.total > opened.total { working = true }
+        if stats.traffic.total > opened.total { working = true }
     }
 }

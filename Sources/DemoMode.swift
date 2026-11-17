@@ -238,12 +238,16 @@ struct DemoState {
         server.handshakes = ["10.7.0.3": clock.now.addingTimeInterval(-2 * 3600)]
         if connected.contains("10.7.0.2") { server.handshakes["10.7.0.2"] = clock.now.addingTimeInterval(-30) }
         if scenario == .staleConfig { server.stale = StaleConfig(kind: .device, at: clock.now) }
-        // The proxy's devices: two pages open and 85 MB this month on its screen, or one page through it.
+        // The proxy's devices: two pages open and 85 MB this month on its screen, or one page through it
+        // since Add a device opened, see `Model.addDeviceProxyOpenedAt`.
         if [.proxy, .proxyIPv6].contains(scenario) {
             server.proxyOpen = 2
             server.proxyTraffic = TrafficTotals(bytesUp: 5_000_000, bytesDown: 80_000_000)
         }
-        if scenario == .addDeviceProxyWorking { server.proxyOpen = 1 }
+        if scenario == .addDeviceProxyWorking {
+            server.proxyOpen = 1
+            server.proxyTraffic = TrafficTotals(bytesUp: 2_000, bytesDown: 60_000)
+        }
         if scenario == .proxyIPv6 { server.proxyAddresses = ["\(Hotspot.host):8118", "[\(ipv6)]:8118"] }
         session.sampleTraffic()
         clock.now = clock.now.addingTimeInterval(1)

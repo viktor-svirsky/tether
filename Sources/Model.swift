@@ -147,11 +147,15 @@ final class Model: ObservableObject {
         }
         return wireGuardPeers.first { $0.name == name }?.id
     }
+    /// In the `addDeviceProxyWorking` demo the proxy path opened before its page went through, with
+    /// nothing through the proxy yet, so the page's bytes tick its last step.
+    var addDeviceProxyOpenedAt: ProxyStats? { demo?.scenario == .addDeviceProxyWorking ? ProxyStats() : nil }
     #else
     var opensSettings: Bool { false }
     var opensAddDevice: Bool { false }
     var addDeviceOpensOn: AddDeviceWay? { nil }
     var addDeviceFollows: WireGuardSetup.Peer.ID? { nil }
+    var addDeviceProxyOpenedAt: ProxyStats? { nil }
     var addDeviceStartsOnComputer: Bool { false }
     #endif
 
