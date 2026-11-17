@@ -141,7 +141,7 @@ func (s *Server) cone(device netip.AddrPort) *cone {
 		return nil
 	}
 	c = &cone{device: device, owner: owner, conn: conn, out: make(chan outgoing, 256), done: make(chan struct{}), lock: &s.mu}
-	c.last.Store(time.Now().UnixNano())
+	c.last.Store(s.now().UnixNano())
 	c.dnsOnly.Store(true) // until handleUDP's sentTo sees a packet to another port, the first one included
 	s.mu.Lock()
 	if other := s.cones[device]; other != nil || s.ownerLocked(device.Addr()) != owner || s.conesOf[owner] >= s.maxCones || s.closed {
@@ -203,7 +203,7 @@ func (s *Server) send(c *cone) {
 			}
 		}
 		if err == nil {
-			c.last.Store(time.Now().UnixNano())
+			c.last.Store(s.now().UnixNano())
 		}
 	}
 }
@@ -244,16 +244,26 @@ func (s *Server) openNAT64(c *cone) *net.UDPConn {
 
 // receive hands replies from anyone to the device, until the cone's idle time passes without the
 // device sending. The cone's NAT64 socket has a loop of its own, which ends when the cone closes.
+// The idle time goes by the server's clock: s.after wakes the read when it's up, and the read
+// looks again, since the device may have sent meanwhile. One timer per wait, not per packet.
 func (s *Server) receive(c *cone) {
 	buf := make([]byte, 65535)
 	for {
-		c.conn.SetReadDeadline(time.Unix(0, c.last.Load()).Add(c.idle()))
-		if err := s.reply(c, c.conn, buf); err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() && time.Since(time.Unix(0, c.last.Load())) < c.idle() {
-				continue // quiet this way, but the device is still sending
-			}
+		left := time.Unix(0, c.last.Load()).Add(c.idle()).Sub(s.now())
+		if left <= 0 {
 			return
 		}
+		c.conn.SetReadDeadline(time.Time{})
+		stop := s.after(left, func() { c.conn.SetReadDeadline(time.Now()) })
+		var err error
+		for err == nil {
+			err = s.reply(c, c.conn, buf)
+		}
+		stop()
+		if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
+			return
+		}
+		// A timeout is the wait ending, or a test waking the read: quiet this way, so look again.
 	}
 }
 

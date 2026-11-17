@@ -187,7 +187,10 @@ type Server struct {
 	// up and down are the byte totals. Atomic, since every read and write of every connection
 	// adds to them, and a lock there would make them all take turns.
 	up, down atomic.Uint64
-	now      func() time.Time // tests move the clock to age a handshake
+	now      func() time.Time // tests move the clock to age a handshake or a cone
+	// after runs f once d has passed on the clock, unless the func it returns stops it first. Tests
+	// give one that runs as they move their clock.
+	after func(d time.Duration, f func()) func() bool
 
 	// The handshake refresher, and SetPeers, read wireguard-go's status. Nothing on the packet path
 	// does, since that would wait on wireguard-go's config lock, which Close and SetPeers hold
@@ -321,6 +324,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 		knocks:    newKnocks(),
 		traffic:   map[netip.Addr]*traffic{},
 		now:       time.Now,
+		after:     afterFunc,
 		flows:     map[netip.Addr]map[io.Closer]struct{}{},
 		tcpTo:     map[io.Closer]netip.Addr{},
 		cones:     map[netip.AddrPort]*cone{},
@@ -418,6 +422,9 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 // on the iPhone's side: the open ones are closed here, the ones being made are refused and waited
 // for, and their dials end at once. Calling it again does nothing.
 func (s *Server) Close() { s.closeOnce.Do(s.close) }
+
+// afterFunc is the real clock's after.
+func afterFunc(d time.Duration, f func()) func() bool { return time.AfterFunc(d, f).Stop }
 
 func (s *Server) close() {
 	close(s.stop)
@@ -565,7 +572,7 @@ func (s *Server) noticeHandshake(format string) {
 	if !strings.Contains(format, "Sending handshake response") {
 		return
 	}
-	time.AfterFunc(time.Second, func() {
+	s.after(time.Second, func() {
 		select {
 		case s.shake <- struct{}{}:
 		default:

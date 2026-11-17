@@ -575,7 +575,7 @@ func TestARemovedDeviceIsNotConnected(t *testing.T) {
 }
 
 func TestOneWayUDPOutlivesTheQuietDirection(t *testing.T) {
-	s := &Server{fromNet: func(a netip.AddrPort) netip.AddrPort { return a }}
+	s := &Server{now: time.Now, after: afterFunc, fromNet: func(a netip.AddrPort) netip.AddrPort { return a }}
 	conn, err := net.ListenUDP("udp4", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -597,7 +597,7 @@ func TestOneWayUDPOutlivesTheQuietDirection(t *testing.T) {
 // A DNS lookup uses a new port every time, so its cone goes after dnsIdle, not a minute later.
 func TestALookupFlowEndsSooner(t *testing.T) {
 	ended := func(dnsOnly bool) bool {
-		s := &Server{fromNet: func(a netip.AddrPort) netip.AddrPort { return a }}
+		s := &Server{now: time.Now, after: afterFunc, fromNet: func(a netip.AddrPort) netip.AddrPort { return a }}
 		conn, err := net.ListenUDP("udp4", nil)
 		if err != nil {
 			t.Fatal(err)
@@ -638,6 +638,99 @@ func TestAPortThatSendsElsewhereKeepsTheMinute(t *testing.T) {
 	c.sentTo(netip.MustParseAddrPort("1.1.1.1:53"))
 	if c.idle() != udpIdle {
 		t.Fatalf("idle %v after other traffic, want %v", c.idle(), udpIdle)
+	}
+}
+
+// A cone ages by the server's clock, so moving the clock past udpIdle ends it without waiting.
+func TestAConeIdlesOutByTheServersClock(t *testing.T) {
+	s, _ := setup(t)
+	k := newFakeClock()
+	s.mu.Lock()
+	s.now, s.after = k.now, k.after
+	s.mu.Unlock()
+	start := k.now()
+	c := s.cone(netip.MustParseAddrPort("10.7.0.2:5000"))
+	if c == nil {
+		t.Fatal("no cone")
+	}
+	c.sentTo(netip.MustParseAddrPort("1.1.1.1:443"))
+	// The read may have started waiting for dnsIdle, before sentTo. Then it wakes, sees time left,
+	// and waits for the rest of udpIdle.
+	k.advance(udpIdle - time.Second)
+	for due := (time.Time{}); !due.Equal(start.Add(udpIdle)); {
+		select {
+		case due = <-k.armed:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the cone's read never waited for the rest of udpIdle")
+		}
+	}
+	if c.closed() {
+		t.Fatal("the cone closed before udpIdle")
+	}
+	k.advance(time.Second)
+	select {
+	case <-c.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the cone outlived udpIdle")
+	}
+}
+
+// fakeClock is a clock a test moves by hand. Its timers run when it passes their time, and armed
+// gets each one's time as it's set.
+type fakeClock struct {
+	mu     sync.Mutex
+	at     time.Time
+	timers map[*fakeTimer]bool
+	armed  chan time.Time
+}
+
+type fakeTimer struct {
+	at time.Time
+	f  func()
+}
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{at: time.Now(), timers: map[*fakeTimer]bool{}, armed: make(chan time.Time, 100)}
+}
+
+func (k *fakeClock) now() time.Time {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.at
+}
+
+func (k *fakeClock) after(d time.Duration, f func()) func() bool {
+	k.mu.Lock()
+	t := &fakeTimer{at: k.at.Add(d), f: f}
+	k.timers[t] = true
+	k.mu.Unlock()
+	select {
+	case k.armed <- t.at:
+	default:
+	}
+	return func() bool {
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		pending := k.timers[t]
+		delete(k.timers, t)
+		return pending
+	}
+}
+
+// advance moves the clock on by d and runs the timers that came due.
+func (k *fakeClock) advance(d time.Duration) {
+	k.mu.Lock()
+	k.at = k.at.Add(d)
+	var due []*fakeTimer
+	for t := range k.timers {
+		if !t.at.After(k.at) {
+			due = append(due, t)
+			delete(k.timers, t)
+		}
+	}
+	k.mu.Unlock()
+	for _, t := range due {
+		t.f()
 	}
 }
 
@@ -1414,7 +1507,7 @@ func TestADeviceAtItsConeCapLeavesOthersTheirs(t *testing.T) {
 // Only the device's own packets keep a cone open. A host that keeps sending to the port can't hold
 // one of the device's cones forever.
 func TestRepliesAloneDontKeepAConeOpen(t *testing.T) {
-	s := &Server{fromNet: func(a netip.AddrPort) netip.AddrPort { return a }, tun: newStackTun()}
+	s := &Server{now: time.Now, after: afterFunc, fromNet: func(a netip.AddrPort) netip.AddrPort { return a }, tun: newStackTun()}
 	defer s.tun.Close()
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {

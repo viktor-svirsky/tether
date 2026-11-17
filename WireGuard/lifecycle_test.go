@@ -177,7 +177,7 @@ func drained(t *testing.T, s *Server, addr netip.Addr, why string) {
 }
 
 // expireCones ages a device's UDP cones past their idle time, as if it had sent nothing for a
-// minute, and wakes each one's reader so it notices without waiting for its deadline.
+// minute, and wakes each one's reader so it notices without waiting for its timer.
 func (s *Server) expireCones(addr netip.Addr) {
 	s.mu.Lock()
 	var cones []*cone
@@ -188,7 +188,7 @@ func (s *Server) expireCones(addr netip.Addr) {
 	}
 	s.mu.Unlock()
 	for _, c := range cones {
-		c.last.Store(time.Now().Add(-udpIdle - time.Second).UnixNano())
+		c.last.Store(s.now().Add(-udpIdle - time.Second).UnixNano())
 		c.conn.SetReadDeadline(time.Now())
 	}
 }
