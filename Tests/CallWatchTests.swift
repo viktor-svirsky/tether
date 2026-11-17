@@ -6,17 +6,22 @@ import XCTest
 final class CallWatchTests: XCTestCase {
     private final class FakeCalls: CallObserving {
         var calls: [CallState] = []
-        var onChange: @MainActor () -> Void = {}
+        var onChange: @MainActor (CallState) -> Void = { _ in }
 
-        func set(_ calls: [CallState]) {
-            self.calls = calls
-            onChange()
+        /// Like CallKit: the changed call goes to the delegate, and `calls` may no longer have it.
+        func change(_ call: CallState, listed: Bool = true) {
+            calls = listed ? [call] : []
+            onChange(call)
         }
     }
 
-    private struct FakeRadio: RadioReading {
+    private final class FakeRadio: RadioReading {
         var dataLine: String?
         var radios: [String: String]
+        init(dataLine: String?, radios: [String: String]) {
+            self.dataLine = dataLine
+            self.radios = radios
+        }
     }
 
     private let first = "0000000100000001"
@@ -29,17 +34,16 @@ final class CallWatchTests: XCTestCase {
     private func makeWatch(_ radio: FakeRadio) {
         calls = FakeCalls()
         logged = []
-        watch = CallWatch(calls: calls, radio: radio, log: { [unowned self] in logged.append($0) })
+        watch = CallWatch(calls: calls, cellular: Cellular(radio: radio), log: { [unowned self] in logged.append($0) })
     }
 
     private var oneLine: FakeRadio { FakeRadio(dataLine: first, radios: [first: "CTRadioAccessTechnologyLTE"]) }
 
     func testAnAnsweredCallLogsRingingConnectedAndEnded() {
         makeWatch(oneLine)
-        calls.set([CallState(id: call, outgoing: false, connected: false, ended: false)])
-        calls.set([CallState(id: call, outgoing: false, connected: true, ended: false)])
-        calls.set([CallState(id: call, outgoing: false, connected: true, ended: true)])
-        calls.set([])
+        calls.change(CallState(id: call, outgoing: false, connected: false, ended: false))
+        calls.change(CallState(id: call, outgoing: false, connected: true, ended: false))
+        calls.change(CallState(id: call, outgoing: false, connected: true, ended: true))
         XCTAssertEqual(logged, [
             "call: incoming, ringing (data line: LTE)",
             "call: connected (data line: LTE)",
@@ -49,8 +53,8 @@ final class CallWatchTests: XCTestCase {
 
     func testAnOutgoingCallThatNeverConnects() {
         makeWatch(oneLine)
-        calls.set([CallState(id: call, outgoing: true, connected: false, ended: false)])
-        calls.set([CallState(id: call, outgoing: true, connected: false, ended: true)])
+        calls.change(CallState(id: call, outgoing: true, connected: false, ended: false))
+        calls.change(CallState(id: call, outgoing: true, connected: false, ended: true))
         XCTAssertEqual(logged, [
             "call: outgoing, dialing (data line: LTE)",
             "call: ended, never connected (data line: LTE)",
@@ -61,9 +65,17 @@ final class CallWatchTests: XCTestCase {
     func testTheSameStageIsLoggedOnce() {
         makeWatch(oneLine)
         let connected = CallState(id: call, outgoing: false, connected: true, ended: false)
-        for _ in 0..<5 { calls.set([connected]) }
+        for _ in 0..<5 { calls.change(connected) }
         let ended = CallState(id: call, outgoing: false, connected: true, ended: true)
-        for _ in 0..<3 { calls.set([ended]) }
+        for _ in 0..<3 { calls.change(ended, listed: false) }
+        XCTAssertEqual(logged, ["call: connected (data line: LTE)", "call: ended (data line: LTE)"])
+    }
+
+    /// iOS may drop an ended call from its list before the delegate hears of it: the end is still a line.
+    func testAnEndedCallNoLongerListedIsLogged() {
+        makeWatch(oneLine)
+        calls.change(CallState(id: call, outgoing: false, connected: true, ended: false))
+        calls.change(CallState(id: call, outgoing: false, connected: true, ended: true), listed: false)
         XCTAssertEqual(logged, ["call: connected (data line: LTE)", "call: ended (data line: LTE)"])
     }
 
@@ -71,7 +83,7 @@ final class CallWatchTests: XCTestCase {
     func testACallAlreadyConnectedAtLaunch() {
         calls = FakeCalls()
         calls.calls = [CallState(id: call, outgoing: false, connected: true, ended: false)]
-        watch = CallWatch(calls: calls, radio: oneLine, log: { [unowned self] in logged.append($0) })
+        watch = CallWatch(calls: calls, cellular: Cellular(radio: oneLine), log: { [unowned self] in logged.append($0) })
         XCTAssertEqual(logged, ["call: connected (data line: LTE)"])
     }
 
@@ -79,11 +91,10 @@ final class CallWatchTests: XCTestCase {
     func testTwoCalls() {
         makeWatch(oneLine)
         let other = UUID()
-        calls.set([CallState(id: call, outgoing: false, connected: true, ended: false)])
-        calls.set([CallState(id: call, outgoing: false, connected: true, ended: false),
-                   CallState(id: other, outgoing: false, connected: false, ended: false)])
-        calls.set([CallState(id: call, outgoing: false, connected: true, ended: true),
-                   CallState(id: other, outgoing: false, connected: true, ended: false)])
+        calls.change(CallState(id: call, outgoing: false, connected: true, ended: false))
+        calls.change(CallState(id: other, outgoing: false, connected: false, ended: false))
+        calls.change(CallState(id: call, outgoing: false, connected: true, ended: true))
+        calls.change(CallState(id: other, outgoing: false, connected: true, ended: false))
         XCTAssertEqual(logged, [
             "call: connected (data line: LTE)",
             "call: incoming, ringing (data line: LTE)",
@@ -95,8 +106,8 @@ final class CallWatchTests: XCTestCase {
     /// The log goes into public bug reports: no call ID, no service identifier, nothing but the radio's name.
     func testNothingPrivateIsLogged() {
         makeWatch(FakeRadio(dataLine: second, radios: [first: "CTRadioAccessTechnologyNR", second: "something 0000000100000002"]))
-        calls.set([CallState(id: call, outgoing: true, connected: false, ended: false)])
-        calls.set([CallState(id: call, outgoing: true, connected: true, ended: true)])
+        calls.change(CallState(id: call, outgoing: true, connected: false, ended: false))
+        calls.change(CallState(id: call, outgoing: true, connected: true, ended: true))
         XCTAssertEqual(logged.count, 2)
         for line in logged {
             XCTAssertFalse(line.contains(call.uuidString), line)
@@ -115,22 +126,34 @@ final class CallWatchTests: XCTestCase {
             (oneLine, "data line: LTE", #line),
             (FakeRadio(dataLine: first, radios: [first: "CTRadioAccessTechnologyNRNSA"]), "data line: NRNSA", #line),
             (FakeRadio(dataLine: nil, radios: [:]), "data line: no radio", #line),
-            (FakeRadio(dataLine: first, radios: [:]), "data line: no radio", #line),
             // Dual SIM: the lines in the order of their identifiers.
             (FakeRadio(dataLine: first, radios: [first: "CTRadioAccessTechnologyNR", second: "CTRadioAccessTechnologyLTE"]),
              "data line: NR on line 1, line 2: LTE", #line),
             (FakeRadio(dataLine: second, radios: [first: "CTRadioAccessTechnologyNR", second: "CTRadioAccessTechnologyLTE"]),
              "data line: LTE on line 2, line 1: NR", #line),
+            (FakeRadio(dataLine: first, radios: [:]), "data line: no service", #line),
             // The data line has no radio now, as on a call on the other line without data switching.
-            (FakeRadio(dataLine: second, radios: [first: "CTRadioAccessTechnologyLTE"]), "data line: none, line 1: LTE", #line),
+            (FakeRadio(dataLine: second, radios: [first: "CTRadioAccessTechnologyLTE"]),
+             "data line: no service on line 2, line 1: LTE", #line),
             (FakeRadio(dataLine: nil, radios: [first: "CTRadioAccessTechnologyLTE", second: "CTRadioAccessTechnologyWCDMA"]),
              "data line: unknown, line 1: LTE, line 2: WCDMA", #line),
             // Anything that isn't a radio's name is left out.
             (FakeRadio(dataLine: first, radios: [first: "0000000100000001"]), "data line: other", #line),
         ]
         for c in cases {
-            XCTAssertEqual(Cellular.dataLine(c.radio), c.said, line: c.line)
+            XCTAssertEqual(Cellular(radio: c.radio).dataLine(), c.said, line: c.line)
         }
+    }
+
+    /// A line that loses its service keeps its number, so the other line isn't renumbered.
+    func testALineWithNoServiceKeepsItsNumber() {
+        let radio = FakeRadio(dataLine: second, radios: [first: "CTRadioAccessTechnologyLTE", second: "CTRadioAccessTechnologyNR"])
+        let cellular = Cellular(radio: radio)
+        XCTAssertEqual(cellular.dataLine(), "data line: NR on line 2, line 1: LTE")
+        radio.radios = [second: "CTRadioAccessTechnologyNR"]
+        XCTAssertEqual(cellular.dataLine(), "data line: NR on line 2, line 1: no service")
+        radio.radios = [:]
+        XCTAssertEqual(cellular.dataLine(), "data line: no service on line 2, line 1: no service")
     }
 
     // MARK: pdp_ip0

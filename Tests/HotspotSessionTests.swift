@@ -742,6 +742,17 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(reads, 1)
     }
 
+    /// With nothing to say about the cellular data, as in a demo, the line has no empty brackets.
+    func testTheHotspotGoingAwayWithNoCellularText() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertEqual(logged.filter { $0.hasPrefix("hotspot address gone") }, ["hotspot address gone or changed, stopping"])
+    }
+
     func testAProblemIsLoggedOnceNotEveryRound() {
         var logged: [String] = []
         makeSession(log: { logged.append($0) })

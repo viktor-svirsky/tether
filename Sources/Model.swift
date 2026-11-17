@@ -189,7 +189,7 @@ final class Model: ObservableObject {
         }
         #endif
         refreshExpiryWarning()
-        callWatch = CallWatch(calls: SystemCalls(), radio: Self.radio, log: Self.append)
+        callWatch = CallWatch(calls: SystemCalls(), cellular: Self.cellular, log: Self.append)
         observeScene()
         localNetwork.onChange = { [weak self] denied in
             self?.localNetworkDenied = denied
@@ -231,7 +231,7 @@ final class Model: ObservableObject {
                            return !LocalNetworks.allowed(in: settings)
                        }, usageDefaults: settings,
                        resetDay: { ResetDay.saved(in: settings) },
-                       cellular: { "\(Interfaces.pdpIp0(in: Interfaces.addresses())), \(Cellular.dataLine(radio))" },
+                       cellular: { "\(Interfaces.pdpIp0(in: Interfaces.addresses())), \(cellular.dataLine())" },
                        log: Self.append)
     }
 
@@ -259,7 +259,8 @@ final class Model: ObservableObject {
     private var watcher: Task<Void, Never>?
     /// Logs the calls, see `CallWatch`.
     private var callWatch: CallWatch?
-    private static let radio = SystemRadio()
+    /// Shared, so the call lines and the hotspot line number the lines the same way.
+    private static let cellular = Cellular(radio: SystemRadio())
     private var sampler: Task<Void, Never>?
 
     /// After each watcher round: what to tell, see `Notifier`. In the background the round has just

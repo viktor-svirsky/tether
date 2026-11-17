@@ -234,7 +234,8 @@ final class HotspotSession {
         if ipv6Only != onIPv6OnlyCarrier { onIPv6OnlyCarrier = ipv6Only }
         let hotspot = hotspotAddress()
         if running, hotspot != boundHost, !listenToo(on: hotspot) {
-            log("hotspot address gone or changed, stopping (\(cellular()))")
+            let cellular = cellular()
+            log("hotspot address gone or changed, stopping" + (cellular.isEmpty ? "" : " (\(cellular))"))
             stopSharing()
         }
         // A WireGuard start that failed (keys locked after a restart, say) is tried again here.
