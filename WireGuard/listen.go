@@ -15,13 +15,15 @@ func (s *Server) ListenOn(hosts []netip.Addr) error {
 		return errors.New("no address to listen on")
 	}
 	s.bind.mu.Lock()
-	old, port := s.bind.hosts, s.bind.port
+	old, port, broken := s.bind.hosts, s.bind.port, s.bind.broken
 	s.bind.hosts = hosts
 	s.bind.mu.Unlock()
 	// A listen_port line closes the sockets and opens them again on that port, as reopen does.
 	err := s.dev.IpcSet(fmt.Sprintf("listen_port=%d\n", port))
 	if err == nil {
-		s.wakeProxy() // the proxy follows the hotspot's addresses, which may be back
+		// The proxy follows the hotspot's addresses, which may be back. If iOS had closed the
+		// sockets, reopen won't see it now, so the proxy listens again here.
+		s.wakeProxy(broken)
 		return nil
 	}
 	s.bind.mu.Lock()

@@ -34,6 +34,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -59,6 +60,9 @@ const (
 	// proxyRetry is the first wait before listening again after iOS closed the socket, doubling up
 	// to proxyRetryMax while it keeps failing, so a hotspot that's gone doesn't spin.
 	proxyRetry, proxyRetryMax = time.Second, 30 * time.Second
+	// proxyGoneCheck is how often a tunnel whose client half-closed asks whether the client is still
+	// there, see relay. Keepalive takes two minutes to give up anyway.
+	proxyGoneCheck = 15 * time.Second
 )
 
 // hotspotNet is the hotspot's network, Wi-Fi, USB and Bluetooth alike. The proxy serves only
@@ -85,6 +89,7 @@ type proxy struct {
 	clients           netip.Prefix   // whom it serves on IPv4. On IPv6 it's the hotspot's network, see hotspotNet6
 	systemLookup      func(ctx context.Context, host string) ([]netip.Addr, error)
 	retry             time.Duration
+	goneCheck         time.Duration
 	maxConns          int
 	handshake         time.Duration
 	maxLookups        int // the proxy's name lookups at once, for all its devices, like a device's maxLookups
@@ -114,6 +119,7 @@ func newProxy() *proxy {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
 		retry:             proxyRetry,
+		goneCheck:         proxyGoneCheck,
 		maxConns:          maxProxyConns,
 		maxPerClient:      maxProxyPerClient,
 		maxLookups:        maxLookups,
@@ -143,6 +149,7 @@ type proxyRun struct {
 	systemLookup func(ctx context.Context, host string) ([]netip.Addr, error)
 	listen       func(ctx context.Context, address string) (net.Listener, error)
 	retry        time.Duration
+	goneCheck    time.Duration
 	socks        [2]*proxySocket // IPv4's, then IPv6's
 	// Under s.mu.
 	stopped  bool
@@ -160,12 +167,14 @@ type proxySocket struct {
 	working, down bool
 	// Under s.mu. host is the hotspot address it listens on, or tries to, invalid when there's
 	// none. at is where, with the port it got once it listened. clients is whom it serves on IPv6,
-	// read each time it listens. moving says wakeProxy closed ln because host is no longer the hotspot's.
+	// read each time it listens. moving says wakeProxy closed ln, see there.
 	host    netip.Addr
 	at      netip.AddrPort
 	clients netip.Prefix
 	ln      net.Listener // nil while not listening
 	moving  bool
+
+	cantListen bool // under s.mu too: its last try to listen on host failed
 }
 
 // hotspotHost is the hotspot's IPv4 address among the server's hosts.
@@ -300,7 +309,7 @@ func (s *Server) stopProxy() {
 // newProxyRun makes a run. Runs with s.mu held.
 func (s *Server) newProxyRun() *proxyRun {
 	p := s.proxy
-	r := &proxyRun{s: s, p: p, systemLookup: p.systemLookup, listen: p.listen, retry: p.retry}
+	r := &proxyRun{s: s, p: p, systemLookup: p.systemLookup, listen: p.listen, retry: p.retry, goneCheck: p.goneCheck}
 	for i := range r.socks {
 		r.socks[i] = &proxySocket{r: r, v6: i == 1, done: make(chan struct{}), wake: make(chan struct{}, 1)}
 	}
@@ -369,6 +378,9 @@ func (k *proxySocket) serve() {
 		}
 		host, at := k.host, k.at // on the same address, the port it got before
 		k.moving = false
+		if !at.IsValid() {
+			k.cantListen = false // nowhere to listen is no failure
+		}
 		list := s.listAddrs
 		s.mu.Unlock()
 		if !at.IsValid() {
@@ -408,7 +420,7 @@ func (k *proxySocket) serve() {
 			}
 			bound := ln.Addr().(*net.TCPAddr).AddrPort()
 			k.at = netip.AddrPortFrom(bound.Addr().Unmap(), bound.Port()) // the port too, for listening again
-			k.ln, k.clients = ln, clients
+			k.ln, k.clients, k.cantListen = ln, clients, false
 			s.mu.Unlock()
 			// The address may have moved while it listened, before wakeProxy could see ln.
 			if s.proxyWant(k.v6).Addr() != host {
@@ -443,6 +455,9 @@ func (k *proxySocket) serve() {
 			}
 			k.failed(fmt.Sprintf("proxy: its socket failed, listening again: %v", err))
 		} else if r.ctx.Err() == nil {
+			s.mu.Lock()
+			k.cantListen = true
+			s.mu.Unlock()
 			k.failed(fmt.Sprintf("proxy: can't listen on %v: %v", at, err))
 		}
 		select {
@@ -479,8 +494,10 @@ func (k *proxySocket) accepted() {
 
 // wakeProxy has the proxy follow the hotspot's addresses after the server listens again, see
 // ListenOn: a socket whose address is gone or changed stops listening there, and each tries to
-// listen now on its family's address, which may be back.
-func (s *Server) wakeProxy() {
+// listen now on its family's address, which may be back. closed says iOS closed the app's sockets,
+// see reopen: then each listener is closed and listened on again, even on the same address. Accept
+// on a listener iOS closed waits for good, so serve can't see it, while the devices are refused.
+func (s *Server) wakeProxy(closed bool) {
 	s.mu.Lock()
 	r := s.proxy.run
 	s.mu.Unlock()
@@ -489,16 +506,21 @@ func (s *Server) wakeProxy() {
 	}
 	for _, k := range r.socks {
 		want := s.proxyWant(k.v6)
-		var moved net.Listener
+		var old net.Listener
 		var from netip.AddrPort
 		s.mu.Lock()
-		if k.ln != nil && want.Addr() != k.host {
-			moved, from, k.moving = k.ln, k.at, true
+		moved := want.Addr() != k.host
+		if k.ln != nil && (moved || closed) {
+			old, from, k.moving = k.ln, k.at, true
 		}
 		s.mu.Unlock()
-		if moved != nil {
-			serverLog.add(time.Now(), fmt.Sprintf("proxy stopped listening on %v: the hotspot's address changed", from))
-			moved.Close()
+		if old != nil {
+			if moved {
+				serverLog.add(time.Now(), fmt.Sprintf("proxy stopped listening on %v: the hotspot's address changed", from))
+			} else {
+				serverLog.add(time.Now(), fmt.Sprintf("proxy: its socket was closed, listening again on %v", from))
+			}
+			old.Close()
 		}
 		select {
 		case k.wake <- struct{}{}:
@@ -1014,7 +1036,9 @@ func addressesIn(m []byte) []netip.Addr {
 
 // relay moves a CONNECT tunnel's bytes both ways and counts them to the proxy, the way forwardTCP
 // does a device's: a clean end passes on as a half close, and a failure ends both sides, the other
-// one after what's already on its way to it.
+// one after what's already on its way to it. A client that half-closed and then left, asleep say,
+// would leave only the far end's direction, which waits on the far end, so its socket's error,
+// from keepalive giving up or a reset, is asked for now and then.
 func (r *proxyRun) relay(client *proxyConn, in io.Reader, out *outConn) {
 	s, counts := r.s, &r.p.counts
 	var failed atomic.Bool
@@ -1039,15 +1063,30 @@ func (r *proxyRun) relay(client *proxyConn, in io.Reader, out *outConn) {
 			client.reset()
 		}
 	}
+	farEndRead := make(chan struct{}) // closed once the far end's direction has ended
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		if err, writing := s.copy(out, in, counts, true, nil); err != io.EOF {
 			fail(!writing)
-		} else {
-			out.CloseWrite()
+			return
+		}
+		out.CloseWrite()
+		tick := time.NewTicker(r.goneCheck)
+		defer tick.Stop()
+		for {
+			select {
+			case <-farEndRead:
+				return
+			case <-tick.C:
+				if socketError(client.Conn) != nil {
+					fail(true)
+					return
+				}
+			}
 		}
 	})
 	wg.Go(func() {
+		defer close(farEndRead)
 		if err, writing := s.copy(client, out, counts, false, nil); err != io.EOF {
 			fail(writing)
 		} else {
@@ -1059,16 +1098,41 @@ func (r *proxyRun) relay(client *proxyConn, in io.Reader, out *outConn) {
 	out.Close()
 }
 
+// socketError is the error c's socket holds, from a reset or keepalive giving up, which a read
+// would return. Nil while there's none.
+func socketError(c net.Conn) error {
+	t, ok := c.(*net.TCPConn)
+	if !ok {
+		return nil
+	}
+	rc, err := t.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var sockErr error
+	if err := rc.Control(func(fd uintptr) {
+		if n, err := syscall.GetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_ERROR); err != nil {
+			sockErr = err
+		} else if n != 0 {
+			sockErr = syscall.Errno(n)
+		}
+	}); err != nil {
+		return err
+	}
+	return sockErr
+}
+
 // proxyStats is the proxy's part of the stats, see statsMessage. Addresses is where it listens,
 // IPv4 first as ip:port, then IPv6 as [ip]:port, and empty while it doesn't: off, or no hotspot
-// address yet. Open is its client connections. Up and Down are its bytes in this run, the same
-// bytes as the totals.
+// address yet. CantListen says it listens nowhere though it has an address to, its port taken say.
+// Open is its client connections. Up and Down are its bytes in this run, the same bytes as the totals.
 type proxyStats struct {
-	Addresses []string `json:"addresses"`
-	Paused    bool     `json:"paused"`
-	Open      int      `json:"open"`
-	Up        uint64   `json:"up"`
-	Down      uint64   `json:"down"`
+	Addresses  []string `json:"addresses"`
+	Paused     bool     `json:"paused"`
+	Open       int      `json:"open"`
+	CantListen bool     `json:"cantListen"`
+	Up         uint64   `json:"up"`
+	Down       uint64   `json:"down"`
 }
 
 // proxyStatsLocked runs with s.mu held.
@@ -1076,11 +1140,14 @@ func (s *Server) proxyStatsLocked() proxyStats {
 	p := s.proxy
 	st := proxyStats{Addresses: []string{}, Paused: p.paused, Open: p.open, Up: p.counts.up.Load(), Down: p.counts.down.Load()}
 	if p.run != nil {
+		var cant bool
 		for _, k := range p.run.socks {
 			if k.ln != nil {
 				st.Addresses = append(st.Addresses, k.at.String())
 			}
+			cant = cant || k.cantListen
 		}
+		st.CantListen = cant && len(st.Addresses) == 0 // devices still get in on the other family's
 	}
 	return st
 }

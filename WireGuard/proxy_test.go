@@ -12,10 +12,13 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -770,8 +773,8 @@ func TestASlowClientThatNeverSendsARequestIsClosed(t *testing.T) {
 	}
 }
 
-// iOS closes a suspended app's sockets. The proxy listens again on the same address, so the devices'
-// settings keep working.
+// A listener whose Accept fails is listened on again, on the same address, so the devices' settings
+// keep working.
 func TestTheProxyListensAgainAfterIOSClosesItsSocket(t *testing.T) {
 	s := proxyReady(t)
 	s.mu.Lock()
@@ -800,6 +803,113 @@ func TestTheProxyListensAgainAfterIOSClosesItsSocket(t *testing.T) {
 	}
 	if at := s.statsMessage().Proxy.Addresses; len(at) != 1 || at[0] != proxy {
 		t.Fatalf("listening on %q, want %s again", at, proxy)
+	}
+}
+
+// iOS shuts a suspended app's sockets down with pid_shutdown_sockets, during a phone call say. A
+// listener's Accept then blocks for good, unlike above, while new connections to it are refused,
+// so the proxy itself sees nothing. The WireGuard socket's reads fail, and the server listens again
+// on both. It runs in a process of its own, since the call ends every socket of the process.
+func TestTheProxyListensAgainAfterIOSShutsTheSocketsDown(t *testing.T) {
+	if os.Getenv("TETHER_OWN_PROCESS") == "" {
+		inOwnProcess(t)
+		return
+	}
+	s := proxyReady(t)
+	s.SetProxy(true, false)
+	proxy := proxyListening(t, s)
+	if conn, r, status := tunnel(t, proxy, echoFarEnd(t)); status != http.StatusOK || !echoes(conn, r) {
+		t.Fatalf("before: status %d", status)
+	}
+	if _, _, e := syscall.Syscall(syscall.SYS_PID_SHUTDOWN_SOCKETS, uintptr(os.Getpid()), 2, 0); e != 0 {
+		t.Fatalf("pid_shutdown_sockets: %v", e)
+	}
+	echo := echoFarEnd(t) // the first one's socket is gone too
+	var conn net.Conn
+	var r *bufio.Reader
+	var status int
+	if !waitFor(5*time.Second, func() bool {
+		c, err := net.DialTimeout("tcp", proxy, time.Second)
+		if err != nil {
+			return false // refused until it listens again
+		}
+		c.Close()
+		conn, r, status = tunnel(t, proxy, echo)
+		return status == http.StatusOK
+	}) || !echoes(conn, r) {
+		t.Fatalf("the proxy didn't listen again on %s: status %d", proxy, status)
+	}
+}
+
+// inOwnProcess runs the test that calls it again in a new process, with TETHER_OWN_PROCESS set,
+// and fails it if that run fails.
+func inOwnProcess(t *testing.T) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
+	cmd.Env = append(os.Environ(), "TETHER_OWN_PROCESS=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+}
+
+// A client that half-closes a CONNECT and then leaves, asleep say, ends its tunnel, though the far
+// end stays silent: its own direction ended, so nothing read its socket to see it go. The reset
+// stands for keepalive giving up, which leaves the same error on the socket.
+func TestAClientThatHalfClosedAndLeftEndsItsTunnel(t *testing.T) {
+	s := proxyReady(t)
+	s.mu.Lock()
+	s.proxy.goneCheck = 50 * time.Millisecond
+	s.mu.Unlock()
+	s.SetProxy(true, false)
+	proxy := proxyListening(t, s)
+	finished := make(chan struct{})
+	silent := make(chan struct{})
+	t.Cleanup(func() { close(silent) })
+	far := farEnd(t, func(conn *net.TCPConn) {
+		io.Copy(io.Discard, conn) // to the client's FIN
+		close(finished)
+		<-silent
+	})
+	conn, _, status := tunnel(t, proxy, far)
+	if status != http.StatusOK {
+		t.Fatalf("status %d", status)
+	}
+	conn.(*net.TCPConn).CloseWrite()
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the client's FIN didn't reach the far end")
+	}
+	resetTCP(conn)
+	if !waitFor(5*time.Second, func() bool { return s.statsMessage().Proxy.Open == 0 && s.proxyFlowsLeft() == 0 }) {
+		t.Fatalf("still open: %d connections, %d sockets", s.statsMessage().Proxy.Open, s.proxyFlowsLeft())
+	}
+}
+
+// A proxy that can't listen, its port taken say, says so in the stats, so the screen doesn't look
+// fine. Once the port is free it listens, and stops saying so.
+func TestAProxyThatCantListenSaysSo(t *testing.T) {
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	s := proxyReady(t)
+	s.mu.Lock()
+	s.proxy.at = netip.MustParseAddrPort(taken.Addr().String())
+	s.proxy.retry = 50 * time.Millisecond
+	s.mu.Unlock()
+	s.SetProxy(true, false)
+	if !waitFor(5*time.Second, func() bool { return s.statsMessage().Proxy.CantListen }) {
+		t.Fatal("the stats don't say it can't listen")
+	}
+	if at := s.statsMessage().Proxy.Addresses; len(at) != 0 {
+		t.Fatalf("listening on %q", at)
+	}
+	taken.Close()
+	proxyListening(t, s)
+	if s.statsMessage().Proxy.CantListen {
+		t.Fatal("listening, and the stats still say it can't")
 	}
 }
 
