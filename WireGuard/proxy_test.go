@@ -529,7 +529,8 @@ func TestBlockTurningOnEndsAnOpenProxyConnectionToALocalAddress(t *testing.T) {
 	}
 }
 
-// Paused, the proxy refuses new connections and ends the open ones, and resumed it serves again.
+// Paused, the proxy ends the open connections, answers a new CONNECT with 403, and resumed it
+// serves again.
 func TestPauseRefusesNewProxyConnectionsAndEndsOpenOnes(t *testing.T) {
 	s, proxy := proxyOn(t)
 	echo := echoFarEnd(t)
@@ -539,12 +540,16 @@ func TestPauseRefusesNewProxyConnectionsAndEndsOpenOnes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer idle.Close()
+	// Admitted first: paused, admit keeps a new connection to answer its request.
+	if !waitFor(5*time.Second, func() bool { return s.statsMessage().Proxy.Open == 2 }) {
+		t.Fatal("the idle connection wasn't admitted")
+	}
 	s.SetProxy(true, true)
 	if !ended(conn, r) || !ended(idle, bufio.NewReader(idle)) {
 		t.Fatal("pause left a connection open")
 	}
-	if _, _, status := tunnel(t, proxy, echo); status == http.StatusOK {
-		t.Fatal("a paused proxy made a new connection")
+	if _, _, status := tunnel(t, proxy, echo); status != http.StatusForbidden {
+		t.Fatalf("paused, CONNECT got %d, want 403", status)
 	}
 	if !s.statsMessage().Proxy.Paused {
 		t.Fatal("the stats don't say it's paused")
@@ -1286,8 +1291,8 @@ func TestThePlainPathFollowsTheRules(t *testing.T) {
 	}
 }
 
-// Pause ends the plain path's pooled connections to the far ends too, refuses requests while
-// paused, and resumed the path works again.
+// Pause ends the plain path's pooled connections to the far ends too, answers a request while
+// paused with a 403 page that says Tether paused it, and resumed the path works again.
 func TestPauseEndsThePlainPathsPooledConnections(t *testing.T) {
 	s, proxy := proxyOn(t)
 	far, closed := pageAt(t)
@@ -1301,8 +1306,8 @@ func TestPauseEndsThePlainPathsPooledConnections(t *testing.T) {
 	if !waitFor(5*time.Second, func() bool { return closed.Load() == 1 && s.proxyFlowsLeft() == 0 }) {
 		t.Fatalf("pause left the pooled connection open: %d closed, %d kept", closed.Load(), s.proxyFlowsLeft())
 	}
-	if status, _ := rawGet(t, proxy, "http://"+far+"/"); status == http.StatusOK {
-		t.Fatal("a paused proxy forwarded a request")
+	if status, body := rawGet(t, proxy, "http://"+far+"/"); status != http.StatusForbidden || !strings.Contains(body, "Tether paused") {
+		t.Fatalf("paused, got %d %q, want 403 saying Tether paused it", status, body)
 	}
 	s.SetProxy(true, false)
 	if status, _ := rawGet(t, proxy, "http://"+far+"/"); status != http.StatusOK {

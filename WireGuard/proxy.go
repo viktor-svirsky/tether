@@ -220,8 +220,8 @@ func (s *Server) proxyWant(v6 bool) netip.AddrPort {
 }
 
 // SetProxy turns the proxy on or off and pauses or resumes it. Swift sends it with every config,
-// so only a change does anything. Paused, it refuses new connections and ends the open ones, as a
-// paused device's are. Off ends them too, and stops listening.
+// so only a change does anything. Paused, it ends the open connections, as a paused device's are,
+// and answers new requests with 403. Off ends them too, and stops listening.
 func (s *Server) SetProxy(on, paused bool) {
 	s.bind.mu.Lock()
 	hosts := s.bind.hosts
@@ -526,9 +526,9 @@ func (l *proxyListener) Accept() (net.Conn, error) {
 	}
 }
 
-// admit keeps a new client connection to k, or closes it: one from off the hotspot, while paused or
-// off, and past the cap or the client's share of it. A refusal from off the hotspot is logged once a
-// minute at most.
+// admit keeps a new client connection to k, or closes it: one from off the hotspot, while off, and
+// past the cap or the client's share of it. Paused, it keeps the connection, so ServeHTTP can say
+// why nothing loads. A refusal from off the hotspot is logged once a minute at most.
 func (r *proxyRun) admit(c net.Conn, k *proxySocket) (*proxyConn, bool) {
 	s, p := r.s, r.p
 	var from netip.Addr
@@ -541,7 +541,7 @@ func (r *proxyRun) admit(c net.Conn, k *proxySocket) (*proxyConn, bool) {
 	if k.v6 {
 		onHotspot = inHotspotNet6(k.clients, from)
 	}
-	ok := !r.stopped && !s.closed && !p.paused && onHotspot && p.open < p.maxConns &&
+	ok := !r.stopped && !s.closed && onHotspot && p.open < p.maxConns &&
 		p.openBy[from] < p.maxPerClient
 	if !onHotspot && time.Since(p.refusedAt) > time.Minute {
 		p.refusedAt = time.Now()
@@ -647,6 +647,11 @@ func (r *proxyRun) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer r.handlers.Done()
+	if r.paused() {
+		w.Header().Set("Connection", "close")
+		http.Error(w, "Tether paused this proxy. Resume it in Tether on the iPhone.", http.StatusForbidden)
+		return
+	}
 	host, port, ok := proxyTarget(req)
 	if !ok {
 		http.Error(w, "Tether's proxy takes CONNECT host:port and http:// URLs", http.StatusBadRequest)
@@ -703,6 +708,13 @@ func (r *proxyRun) enter() bool {
 	}
 	r.handlers.Add(1)
 	return true
+}
+
+// paused is whether the proxy is paused.
+func (r *proxyRun) paused() bool {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	return r.p.paused
 }
 
 // statusFor is the client's answer to a failed connection: 403 for a destination Tether refuses,
