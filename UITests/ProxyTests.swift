@@ -74,7 +74,7 @@ final class ProxyTests: TetherUITestCase {
             XCTAssertEqual(reveal(element("add.proxy.where\(i + 1)")).label, place)
         }
         XCTAssertEqual(reveal(element("add.proxy.turnOff")).label,
-                       "A Mac or Windows keeps the proxy on other networks too. Turn it off there when you leave this hotspot.")
+                       "A Mac or a Windows PC keeps the proxy on other networks too. Turn it off on that device when you leave this hotspot.")
         XCTAssertEqual(label(of: "add.proxy.step3"), "Step 3 of 3, Open a page on it")
         XCTAssertEqual(value(of: element("add.proxy.step3")), "Waiting")
         XCTAssertEqual(reveal(element("add.proxy.result")).label, "Waiting for the first page")

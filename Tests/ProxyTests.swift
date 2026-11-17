@@ -269,6 +269,21 @@ final class ProxyTests: XCTestCase {
         XCTAssertNotNil(session.idleStopped, "nobody on it any more")
     }
 
+    /// Paused, the proxy still takes a connection to answer it with 403, so a device that keeps
+    /// retrying must not hold off the idle stop while the status card says no device uses Tether.
+    func testAPausedProxysConnectionsDontKeepSharing() throws {
+        sceneActive = false
+        idleAfter = .tenMinutes
+        let proxy = try proxyOn()
+        session.pauseWireGuardDevice(proxy.id)
+        session.wake()
+        server.proxyOpen = 1
+        session.watch()
+        now = now.addingTimeInterval(11 * 60)
+        session.watch()
+        XCTAssertNotNil(session.idleStopped, "nothing goes through a paused proxy")
+    }
+
     // MARK: What the screens say
 
     func testWhereToSetTheProxy() {

@@ -22,7 +22,7 @@ struct StartTetherIntent: AppIntent {
 struct TetherStatusIntent: AppIntent {
     static var title: LocalizedStringResource = "Is Tether Sharing?"
     static var description = IntentDescription(
-        "True while Tether is sharing Personal Hotspot, for an If in a shortcut. It also says how many devices are connected.")
+        "True while Tether is sharing Personal Hotspot, for an If in a shortcut. It also says how many devices are connected, and whether the proxy is in use.")
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> & ProvidesDialog {

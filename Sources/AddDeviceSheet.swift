@@ -600,7 +600,7 @@ struct AddDeviceSheet: View {
                        copyID: "add.proxy.copyPort")
             ProxyPlaces()
             // A Mac sets it for its Wi-Fi, not for one network, and Windows for every network.
-            Text("A Mac or Windows keeps the proxy on other networks too. Turn it off there when you leave this hotspot.")
+            Text("A Mac or a Windows PC keeps the proxy on other networks too. Turn it off on that device when you leave this hotspot.")
                 .font(.subheadline)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("add.proxy.turnOff")

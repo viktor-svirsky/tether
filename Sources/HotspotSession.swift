@@ -295,8 +295,9 @@ final class HotspotSession {
     private func stopWhenIdle() {
         let after = idleStopAfter()
         let now = self.now()
-        // A device on the proxy is using Tether too.
-        let connected = !connectedNow.isEmpty || proxyStats.open > 0
+        // A device on the proxy is using Tether too, but not one a paused proxy answers with 403.
+        let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running).inUse } ?? false
+        let connected = !connectedNow.isEmpty || proxyInUse
         guard idleStop.check(sharing: sharing, connected: connected, onScreen: sceneActive, after: after, now: now) else {
             return
         }
