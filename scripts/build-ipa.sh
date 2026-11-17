@@ -2,7 +2,8 @@
 # Builds an unsigned Tether.ipa for people who sign it themselves (SideStore, AltStore, Feather, a paid
 # certificate). The release workflow runs it, and it works the same on any Mac with Xcode:
 #   scripts/build-ipa.sh 1.2.0 out/
-# Writes out/Tether.ipa and out/LICENSES.txt, the licenses of the code inside it (also in the app).
+# Writes out/Tether.ipa and out/LICENSES.txt, the licenses of the code inside it (also in the app),
+# and out/xcodebuild.log.
 # The build number is the commit count (see project.yml), so it needs the full git history.
 set -euo pipefail
 
@@ -25,10 +26,18 @@ if [[ -f $shallow ]] && grep -qxFf "$shallow" <(git rev-list HEAD); then
 fi
 
 xcodegen generate --quiet
-xcodebuild archive -project Tether.xcodeproj -scheme Tether -configuration Release \
+# The whole log goes to out/xcodebuild.log, and a failed build prints its errors and its end (#146).
+log=$out/xcodebuild.log
+if ! xcodebuild archive -project Tether.xcodeproj -scheme Tether -configuration Release \
     -destination generic/platform=iOS -archivePath "$work/Tether.xcarchive" -derivedDataPath "$work/dd" \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= MARKETING_VERSION="$version" \
-    | tail -3
+    > "$log" 2>&1; then
+    awk '/(^| )error: / && n++ < 20' "$log" >&2
+    tail -20 "$log" >&2
+    echo "xcodebuild failed, the whole log is $log" >&2
+    exit 1
+fi
+tail -3 "$log"
 
 app=$work/Tether.xcarchive/Products/Applications/Tether.app
 [[ $(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Info.plist") == "$version" ]] \
