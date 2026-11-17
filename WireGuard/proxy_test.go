@@ -116,8 +116,9 @@ func viaProxy(proxy string) *http.Client {
 type namesDoH struct {
 	*httptest.Server
 	asked atomic.Int32
-	// While held, every answer waits for free or for its request to end.
+	// While held, every answer waits for free or for its request to end. holdAAAA holds only AAAA ones.
 	held     atomic.Bool
+	holdAAAA atomic.Bool
 	free     chan struct{}
 	freeOnce sync.Once
 }
@@ -147,6 +148,13 @@ func newNamesDoH(t *testing.T, names map[string][]string) *namesDoH {
 		if err != nil || len(qs) != 1 {
 			http.Error(w, "not one question", http.StatusBadRequest)
 			return
+		}
+		if qs[0].Type == dnsmessage.TypeAAAA && d.holdAAAA.Load() {
+			select {
+			case <-d.free:
+			case <-r.Context().Done():
+				return
+			}
 		}
 		b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: h.ID, Response: true, RecursionDesired: true, RecursionAvailable: true})
 		b.StartQuestions()
@@ -369,6 +377,20 @@ func TestANameWhoseIPv4FarEndRefusesIsReachedOverIPv6(t *testing.T) {
 	conn, r, status := tunnel(t, proxy, "both.example:"+port(echoFarEnd(t)))
 	if status != http.StatusOK || !echoes(conn, r) {
 		t.Fatalf("CONNECT both.example got %d, want its IPv6 address tried", status)
+	}
+}
+
+// A DNS server that answers A but never AAAA doesn't hold the connection up: once one family has
+// addresses, the other gets a short grace, as in Happy Eyeballs, not the lookup's whole timeout.
+func TestAnAAAAThatNeverAnswersDoesntHoldTheConnection(t *testing.T) {
+	s, proxy := proxyOn(t)
+	d := newNamesDoH(t, map[string][]string{"slow.example": {remote}})
+	d.holdAAAA.Store(true)
+	viaNames(s, d)
+	start := time.Now()
+	conn, r, status := tunnel(t, proxy, "slow.example:"+port(echoFarEnd(t)))
+	if took := time.Since(start); status != http.StatusOK || !echoes(conn, r) || took > time.Second {
+		t.Fatalf("CONNECT slow.example got %d after %v, want 200 well under a second", status, took)
 	}
 }
 

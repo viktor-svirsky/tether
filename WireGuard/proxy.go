@@ -836,8 +836,8 @@ func (r *proxyRun) lookup(ctx context.Context, host string) ([]netip.Addr, error
 }
 
 // lookupName asks Tether's DNS for host's IPv4 and IPv6 addresses, IPv4 first, so dial can try
-// the other family when one doesn't answer. A lookup that fails leaves the other's addresses, and
-// it's an error only when neither has any. dialTCP reaches an IPv4 one through NAT64 when the
+// the other family when one doesn't answer. A lookup that fails, or is still out lookupGrace after
+// the other found addresses, leaves the other's, and it's an error only when neither has any. dialTCP reaches an IPv4 one through NAT64 when the
 // iPhone has no IPv4 route.
 func (s *Server) lookupName(ctx context.Context, host string) ([]netip.Addr, error) {
 	name, err := dnsmessage.NewName(strings.TrimSuffix(host, ".") + ".")
@@ -855,22 +855,47 @@ func (s *Server) lookupName(ctx context.Context, host string) ([]netip.Addr, err
 			return nil, err
 		}
 	}
-	// Both at once, so the second family costs no extra round trip.
+	// Both at once, so the second family costs no extra round trip. Once one has addresses, the
+	// other gets lookupGrace and no more: a server that never answers AAAA can't hold every name
+	// up for the lookup's whole timeout. Ending ctx gives up the one still out.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type answer struct {
+		i     int
+		addrs []netip.Addr
+		err   error
+	}
+	answered := make(chan answer, len(queries))
+	for i, q := range queries {
+		go func() {
+			a, err := s.resolveCtx(ctx, q)
+			answered <- answer{i, addressesIn(a), err}
+		}()
+	}
 	var addrs [2][]netip.Addr
 	var errs [2]error
-	var wg sync.WaitGroup
-	for i, q := range queries {
-		wg.Go(func() {
-			answer, err := s.resolveCtx(ctx, q)
-			addrs[i], errs[i] = addressesIn(answer), err
-		})
+	var grace <-chan time.Time // nil, so never, until one family has addresses
+wait:
+	for range queries {
+		select {
+		case a := <-answered:
+			addrs[a.i], errs[a.i] = a.addrs, a.err
+			if len(a.addrs) > 0 && grace == nil {
+				grace = time.After(lookupGrace)
+			}
+		case <-grace:
+			break wait
+		}
 	}
-	wg.Wait()
 	if all := slices.Concat(addrs[0], addrs[1]); len(all) > 0 {
 		return all, nil
 	}
 	return nil, errors.Join(errs[0], errs[1])
 }
+
+// lookupGrace is how long lookupName waits for the other family once one has addresses: Happy
+// Eyeballs' resolution delay, RFC 8305.
+const lookupGrace = 50 * time.Millisecond
 
 // errTooManyLookups is a lookup past the proxy's maxLookups, which the client gets as 502.
 var errTooManyLookups = errors.New("too many lookups at once")
