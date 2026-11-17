@@ -57,7 +57,7 @@ The code works while Add a device is open and for 10 minutes after. Travel route
 
 - **Keep Tether running.** It plays silent audio so iOS doesn't suspend it. After 10 minutes with no device on the hotspot it stops to save battery, so open it again (or run the Start Tether shortcut) before you turn the hotspot back on.
 - **A device can't connect?** Check that Tether is allowed in Settings > Privacy & Security > Local Network. More fixes are in the [guide](docs/GUIDE.md#troubleshooting).
-- **Your carrier can still notice.** Tether hides where traffic comes from, not what it is. A VPN on the iPhone hides what it is too, but not that you use a VPN or how much data, see the [guide](docs/GUIDE.md#good-to-know). Check your contract. Using Tether is your call and your risk.
+- **Your carrier can still notice.** Tether hides where traffic comes from, not what it is. A VPN on the iPhone that carries all its traffic hides what it is too, but not that you use a VPN or how much data. See the [guide](docs/GUIDE.md#good-to-know). Check your contract. Using Tether is your call and your risk.
 - **Questions** go in [Discussions](https://github.com/viktor-svirsky/tether/discussions). Bugs go in a [bug report](https://github.com/viktor-svirsky/tether/issues/new?template=bug.yml), with the log from Settings > Share the log.
 
 The [guide](docs/GUIDE.md) has everything else: DNS, data limits, notifications, Shortcuts and how Tether works inside.
