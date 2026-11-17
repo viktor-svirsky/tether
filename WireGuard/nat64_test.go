@@ -305,6 +305,7 @@ func TestOnlyRepliesFromInsideTheNAT64PrefixAreMapped(t *testing.T) {
 // nat64Retry after a failed lookup.
 func TestTheNAT64PrefixExpiresByTheServersClock(t *testing.T) {
 	k := newFakeClock()
+	k.set(time.Now())
 	s := &Server{now: k.now}
 	var lookups atomic.Int32
 	var fail atomic.Bool

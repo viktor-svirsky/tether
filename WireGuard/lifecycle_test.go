@@ -365,10 +365,7 @@ func TestASleepingDeviceComesBackWhenItWakes(t *testing.T) {
 		t.Fatal("no handshake before sleeping")
 	}
 	// The clock moves on to onlineWithin after that handshake, and stays there.
-	asleep := shook.Add(onlineWithin)
-	s.mu.Lock()
-	s.now = func() time.Time { return asleep }
-	s.mu.Unlock()
+	clockOf(s).set(shook.Add(onlineWithin))
 	if st := s.Stats(); len(st.Connected) != 0 {
 		t.Fatalf("connected %v while asleep, want none", st.Connected)
 	}

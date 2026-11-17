@@ -187,9 +187,10 @@ type Server struct {
 	// up and down are the byte totals. Atomic, since every read and write of every connection
 	// adds to them, and a lock there would make them all take turns.
 	up, down atomic.Uint64
-	now      func() time.Time // tests move the clock to age a handshake or a cone
-	// after runs f once d has passed on the clock, unless the func it returns stops it first. Tests
-	// give one that runs as they move their clock.
+	// now is the server's clock, and after runs f once d has passed on it, unless the func it
+	// returns stops it first. Both are read without a lock, so start sets them and nothing changes
+	// them after. Tests that age a handshake or a cone give start a clock they move.
+	now   func() time.Time
 	after func(d time.Duration, f func()) func() bool
 
 	// The handshake refresher, and SetPeers, read wireguard-go's status. Nothing on the packet path
@@ -304,11 +305,12 @@ type arrival struct {
 // that can't be listened on fails it, and so does a failed first read of the iPhone's own
 // addresses. Peers come from SetPeers.
 func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
-	return start(hosts, port, privateKey, net.InterfaceAddrs)
+	return start(hosts, port, privateKey, net.InterfaceAddrs, time.Now, afterFunc)
 }
 
-// start is Start with the iPhone's own addresses read by listAddrs. Tests give one that fails.
-func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() ([]net.Addr, error)) (*Server, error) {
+// start is Start with the iPhone's own addresses read by listAddrs, and the clock now and after.
+// Tests give a listAddrs that fails, and a clock they move.
+func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() ([]net.Addr, error), now func() time.Time, after func(time.Duration, func()) func() bool) (*Server, error) {
 	// Go's default keepalive probes every idle connection every 15 s, which keeps the cellular
 	// radio awake. Probing is still needed: when the device closes first, forwardTCP half-closes
 	// and waits for the remote, so a remote that silently went away would hold it forever.
@@ -323,8 +325,8 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 		endpoints: map[netip.Addr]string{},
 		knocks:    newKnocks(),
 		traffic:   map[netip.Addr]*traffic{},
-		now:       time.Now,
-		after:     afterFunc,
+		now:       now,
+		after:     after,
 		flows:     map[netip.Addr]map[io.Closer]struct{}{},
 		tcpTo:     map[io.Closer]netip.Addr{},
 		cones:     map[netip.AddrPort]*cone{},

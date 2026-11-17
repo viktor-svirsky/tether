@@ -108,7 +108,7 @@ func setup(t *testing.T) (*Server, *client) { return setupWithMTU(t, MTU) }
 func setupWithMTU(t *testing.T, mtu int) (*Server, *client) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
-	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
+	s, err := startWithClock([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,9 +553,7 @@ func TestADeviceIsConnectedUntilItsHandshakeIsOld(t *testing.T) {
 	if st := s.Stats(); len(st.Connected) != 1 || st.Connected[0] != "10.7.0.2" {
 		t.Fatalf("connected %v, want the device's tunnel address", st.Connected)
 	}
-	s.mu.Lock()
-	s.now = func() time.Time { return time.Now().Add(onlineWithin) }
-	s.mu.Unlock()
+	clockOf(s).ahead(onlineWithin)
 	st := s.Stats()
 	if len(st.Connected) != 0 {
 		t.Fatalf("connected %v after the handshake aged, want none", st.Connected)
@@ -644,26 +642,31 @@ func TestAPortThatSendsElsewhereKeepsTheMinute(t *testing.T) {
 // A cone ages by the server's clock, so moving the clock past udpIdle ends it without waiting.
 func TestAConeIdlesOutByTheServersClock(t *testing.T) {
 	s, _ := setup(t)
-	k := newFakeClock()
-	s.mu.Lock()
-	s.now, s.after = k.now, k.after
-	s.mu.Unlock()
-	start := k.now()
+	k := clockOf(s)
+	start := time.Now()
+	k.set(start)
+	k.manualTimers()
+	// waited waits until the cone's read waits until at. Other timers, a handshake's say, are skipped.
+	waited := func(at time.Time) {
+		t.Helper()
+		for due := (time.Time{}); !due.Equal(at); {
+			select {
+			case due = <-k.armed:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("the cone's read never waited until %v", at.Sub(start))
+			}
+		}
+	}
 	c := s.cone(netip.MustParseAddrPort("10.7.0.2:5000"))
 	if c == nil {
 		t.Fatal("no cone")
 	}
+	// A new cone counts as a lookup's until its first packet goes elsewhere, as handleUDP's does
+	// right after. Its read wakes after dnsIdle, sees time left, and waits for the rest of udpIdle.
+	waited(start.Add(dnsIdle))
 	c.sentTo(netip.MustParseAddrPort("1.1.1.1:443"))
-	// The read may have started waiting for dnsIdle, before sentTo. Then it wakes, sees time left,
-	// and waits for the rest of udpIdle.
 	k.advance(udpIdle - time.Second)
-	for due := (time.Time{}); !due.Equal(start.Add(udpIdle)); {
-		select {
-		case due = <-k.armed:
-		case <-time.After(10 * time.Second):
-			t.Fatal("the cone's read never waited for the rest of udpIdle")
-		}
-	}
+	waited(start.Add(udpIdle))
 	if c.closed() {
 		t.Fatal("the cone closed before udpIdle")
 	}
@@ -675,11 +678,33 @@ func TestAConeIdlesOutByTheServersClock(t *testing.T) {
 	}
 }
 
-// fakeClock is a clock a test moves by hand. Its timers run when it passes their time, and armed
-// gets each one's time as it's set.
+// startWithClock is Start with a clock the test can move, see clockOf.
+func startWithClock(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
+	k := newFakeClock()
+	s, err := start(hosts, port, privateKey, net.InterfaceAddrs, k.now, k.after)
+	if err == nil {
+		clocks.Store(s, k)
+	}
+	return s, err
+}
+
+// clocks holds the clock of each server startWithClock started.
+var clocks sync.Map
+
+// clockOf is the clock startWithClock gave the server.
+func clockOf(s *Server) *fakeClock {
+	k, _ := clocks.Load(s)
+	return k.(*fakeClock)
+}
+
+// fakeClock is a clock a test moves. It follows the real one, ahead by shift, until set stops it.
+// Its timers are real ones until manualTimers. Then they run as advance passes their time, and
+// armed gets each one's time as it's set.
 type fakeClock struct {
 	mu     sync.Mutex
-	at     time.Time
+	shift  time.Duration
+	at     time.Time // where set stopped it, zero while it follows the real clock
+	manual bool
 	timers map[*fakeTimer]bool
 	armed  chan time.Time
 }
@@ -690,17 +715,45 @@ type fakeTimer struct {
 }
 
 func newFakeClock() *fakeClock {
-	return &fakeClock{at: time.Now(), timers: map[*fakeTimer]bool{}, armed: make(chan time.Time, 100)}
+	return &fakeClock{timers: map[*fakeTimer]bool{}, armed: make(chan time.Time, 100)}
 }
 
 func (k *fakeClock) now() time.Time {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if k.at.IsZero() {
+		return time.Now().Add(k.shift)
+	}
 	return k.at
+}
+
+// set stops the clock at t.
+func (k *fakeClock) set(t time.Time) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.at = t
+}
+
+// ahead has the clock follow the real one, d ahead.
+func (k *fakeClock) ahead(d time.Duration) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.at, k.shift = time.Time{}, d
+}
+
+// manualTimers has the timers set from now on run only as advance passes their time.
+func (k *fakeClock) manualTimers() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.manual = true
 }
 
 func (k *fakeClock) after(d time.Duration, f func()) func() bool {
 	k.mu.Lock()
+	if !k.manual {
+		k.mu.Unlock()
+		return afterFunc(d, f)
+	}
 	t := &fakeTimer{at: k.at.Add(d), f: f}
 	k.timers[t] = true
 	k.mu.Unlock()
@@ -717,7 +770,7 @@ func (k *fakeClock) after(d time.Duration, f func()) func() bool {
 	}
 }
 
-// advance moves the clock on by d and runs the timers that came due.
+// advance moves the stopped clock on by d and runs the timers that came due.
 func (k *fakeClock) advance(d time.Duration) {
 	k.mu.Lock()
 	k.at = k.at.Add(d)
@@ -1020,7 +1073,7 @@ func twoRouters(t *testing.T) (s *Server, a, b netip.Addr, cb *client, target st
 	sPriv, sPub := keyPair(t)
 	aPriv, aPub := keyPair(t)
 	bPriv, bPub := keyPair(t)
-	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
+	s, err := startWithClock([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1058,9 +1111,7 @@ func TestAnOnlineRouterKeepsItsRole(t *testing.T) {
 
 func TestTheRoleMovesOnceTheRouterIsOffline(t *testing.T) {
 	s, _, b, cb, target := twoRouters(t)
-	s.mu.Lock()
-	s.now = func() time.Time { return time.Now().Add(onlineWithin) }
-	s.mu.Unlock()
+	clockOf(s).ahead(onlineWithin)
 	if _, err := fetch(t, cb, target); err != nil {
 		t.Fatal(err)
 	}

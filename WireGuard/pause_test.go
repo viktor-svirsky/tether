@@ -236,10 +236,7 @@ func TestAResumedRouterGetsTheRoleBackByItsNextPacketForAClient(t *testing.T) {
 func TestARouterKeptOutTakesOverOnceTheRouterIsPaused(t *testing.T) {
 	s, a, b, cb, target := twoRouters(t)
 	// The clock stops, so a refusal never wears off by itself.
-	now := time.Now()
-	s.mu.Lock()
-	s.now = func() time.Time { return now }
-	s.mu.Unlock()
+	clockOf(s).set(time.Now())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if _, err := cb.net.DialContext(ctx, "tcp", target); err == nil {

@@ -99,7 +99,7 @@ func TestTheOwnAddressesFollowTheIPhone(t *testing.T) {
 func TestAFailedFirstReadOfTheOwnAddressesStopsTheStart(t *testing.T) {
 	priv, _ := keyPair(t)
 	failing := func() ([]net.Addr, error) { return nil, errors.New("no addresses for you") }
-	s, err := start([]netip.Addr{loopback}, 0, priv, failing)
+	s, err := start([]netip.Addr{loopback}, 0, priv, failing, time.Now, afterFunc)
 	if err == nil {
 		s.Close()
 		t.Fatal("started without knowing the iPhone's own addresses")

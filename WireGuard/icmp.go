@@ -242,10 +242,13 @@ func (s *Server) receivePings() {
 // reopenPings opens a new ping socket after a read failed. False once the server is closing.
 func (s *Server) reopenPings() bool {
 	for {
+		wait := make(chan struct{})
+		stop := s.after(s.pings.reopened.Add(time.Second).Sub(s.now()), func() { close(wait) })
 		select {
 		case <-s.ctx.Done():
+			stop()
 			return false
-		case <-time.After(s.pings.reopened.Add(time.Second).Sub(s.now())):
+		case <-wait:
 		}
 		s.pings.reopened = s.now()
 		conn, err := icmp.ListenPacket("udp4", "0.0.0.0")
