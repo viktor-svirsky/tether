@@ -35,7 +35,7 @@ func ownAre(s *Server, addrs ...string) {
 }
 
 // startAlone starts a server with no devices, for what needs no traffic.
-func startAlone(t *testing.T) *Server {
+func startAlone(t testing.TB) *Server {
 	priv, _ := keyPair(t)
 	s, err := Start([]netip.Addr{loopback}, 0, priv)
 	if err != nil {
