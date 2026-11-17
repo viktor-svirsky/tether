@@ -26,7 +26,7 @@ protocol RadioReading {
     var radios: [String: String] { get }
 }
 
-/// Writes a line to the shared log when a call rings or dials, connects and ends, with the data
+/// Writes a line to the shared log when a call rings or dials, connects and ends, numbered and with the data
 /// line's radio, so a log shows whether the hotspot went away during a call and whether the call
 /// moved the data to another radio or line (#191). Never a number, a contact or an identifier.
 /// Foundation only.
@@ -44,6 +44,9 @@ final class CallWatch {
     /// The last stage logged for each call, kept for the app's life: a few a day, and CallKit may
     /// report an ended call again.
     private var stages: [UUID: Stage] = [:]
+    /// Each call's number in the log, in the order Tether first saw it since launch, so two calls at
+    /// once (call waiting) can be told apart. The UUID itself never goes in the log.
+    private var numbers: [UUID: Int] = [:]
 
     init(calls: CallObserving, cellular: Cellular, log: @escaping @MainActor (String) -> Void) {
         self.calls = calls
@@ -58,12 +61,14 @@ final class CallWatch {
         let stage: Stage = call.ended ? .ended : call.connected ? .connected : .started
         if let logged = stages[call.id], stage <= logged { return }
         stages[call.id] = stage
+        let number = numbers[call.id] ?? numbers.count + 1
+        numbers[call.id] = number
         let what = switch stage {
         case .started: call.outgoing ? "outgoing, dialing" : "incoming, ringing"
         case .connected: "connected"
         case .ended: call.connected ? "ended" : "ended, never connected"
         }
-        log("call: \(what) (\(cellular.dataLine()))")
+        log("call \(number): \(what) (\(cellular.dataLine()))")
     }
 }
 

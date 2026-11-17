@@ -45,9 +45,9 @@ final class CallWatchTests: XCTestCase {
         calls.change(CallState(id: call, outgoing: false, connected: true, ended: false))
         calls.change(CallState(id: call, outgoing: false, connected: true, ended: true))
         XCTAssertEqual(logged, [
-            "call: incoming, ringing (data line: LTE)",
-            "call: connected (data line: LTE)",
-            "call: ended (data line: LTE)",
+            "call 1: incoming, ringing (data line: LTE)",
+            "call 1: connected (data line: LTE)",
+            "call 1: ended (data line: LTE)",
         ])
     }
 
@@ -56,8 +56,8 @@ final class CallWatchTests: XCTestCase {
         calls.change(CallState(id: call, outgoing: true, connected: false, ended: false))
         calls.change(CallState(id: call, outgoing: true, connected: false, ended: true))
         XCTAssertEqual(logged, [
-            "call: outgoing, dialing (data line: LTE)",
-            "call: ended, never connected (data line: LTE)",
+            "call 1: outgoing, dialing (data line: LTE)",
+            "call 1: ended, never connected (data line: LTE)",
         ])
     }
 
@@ -68,7 +68,7 @@ final class CallWatchTests: XCTestCase {
         for _ in 0..<5 { calls.change(connected) }
         let ended = CallState(id: call, outgoing: false, connected: true, ended: true)
         for _ in 0..<3 { calls.change(ended, listed: false) }
-        XCTAssertEqual(logged, ["call: connected (data line: LTE)", "call: ended (data line: LTE)"])
+        XCTAssertEqual(logged, ["call 1: connected (data line: LTE)", "call 1: ended (data line: LTE)"])
     }
 
     /// iOS may drop an ended call from its list before the delegate hears of it: the end is still a line.
@@ -76,7 +76,7 @@ final class CallWatchTests: XCTestCase {
         makeWatch(oneLine)
         calls.change(CallState(id: call, outgoing: false, connected: true, ended: false))
         calls.change(CallState(id: call, outgoing: false, connected: true, ended: true), listed: false)
-        XCTAssertEqual(logged, ["call: connected (data line: LTE)", "call: ended (data line: LTE)"])
+        XCTAssertEqual(logged, ["call 1: connected (data line: LTE)", "call 1: ended (data line: LTE)"])
     }
 
     /// Tether opened during a call: it starts at the stage it finds.
@@ -84,7 +84,7 @@ final class CallWatchTests: XCTestCase {
         calls = FakeCalls()
         calls.calls = [CallState(id: call, outgoing: false, connected: true, ended: false)]
         watch = CallWatch(calls: calls, cellular: Cellular(radio: oneLine), log: { [unowned self] in logged.append($0) })
-        XCTAssertEqual(logged, ["call: connected (data line: LTE)"])
+        XCTAssertEqual(logged, ["call 1: connected (data line: LTE)"])
     }
 
     /// A second call while the first goes on (call waiting) has its own lines.
@@ -96,10 +96,34 @@ final class CallWatchTests: XCTestCase {
         calls.change(CallState(id: call, outgoing: false, connected: true, ended: true))
         calls.change(CallState(id: other, outgoing: false, connected: true, ended: false))
         XCTAssertEqual(logged, [
-            "call: connected (data line: LTE)",
-            "call: incoming, ringing (data line: LTE)",
-            "call: ended (data line: LTE)",
-            "call: connected (data line: LTE)",
+            "call 1: connected (data line: LTE)",
+            "call 2: incoming, ringing (data line: LTE)",
+            "call 1: ended (data line: LTE)",
+            "call 2: connected (data line: LTE)",
+        ])
+    }
+
+    /// The device log that asked for numbers: an outgoing call, then a call waiting that ends the
+    /// first. A third call after both ended gets a new number.
+    func testOverlappingCallsAreNumberedInTheOrderSeen() {
+        makeWatch(oneLine)
+        let waiting = UUID()
+        let later = UUID()
+        calls.change(CallState(id: call, outgoing: true, connected: false, ended: false))
+        calls.change(CallState(id: call, outgoing: true, connected: true, ended: false))
+        calls.change(CallState(id: waiting, outgoing: false, connected: false, ended: false))
+        calls.change(CallState(id: call, outgoing: true, connected: true, ended: true), listed: false)
+        calls.change(CallState(id: waiting, outgoing: false, connected: true, ended: false))
+        calls.change(CallState(id: waiting, outgoing: false, connected: true, ended: true), listed: false)
+        calls.change(CallState(id: later, outgoing: false, connected: false, ended: false))
+        XCTAssertEqual(logged, [
+            "call 1: outgoing, dialing (data line: LTE)",
+            "call 1: connected (data line: LTE)",
+            "call 2: incoming, ringing (data line: LTE)",
+            "call 1: ended (data line: LTE)",
+            "call 2: connected (data line: LTE)",
+            "call 2: ended (data line: LTE)",
+            "call 3: incoming, ringing (data line: LTE)",
         ])
     }
 
