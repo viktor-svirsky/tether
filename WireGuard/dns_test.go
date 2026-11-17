@@ -1456,6 +1456,27 @@ func TestAServerFailureAnswersTheQuery(t *testing.T) {
 	}
 }
 
+// A query fits in 64 KiB, but its questions can point back at one long name, so a SERVFAIL that
+// spells each one out could pass the 2-byte length of a TCP frame. Then there's no SERVFAIL.
+func TestAServerFailureTooBigForAFrameIsDropped(t *testing.T) {
+	q := []byte{0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0} // ID 1, RD, its question count below
+	// A name of 193 bytes, under the 255 a name may take.
+	for range 3 {
+		q = append(q, 63)
+		q = append(q, bytes.Repeat([]byte("a"), 63)...)
+	}
+	q = append(q, 0, 0, 1, 0, 1) // the root, then A IN
+	n := 1
+	for len(q)+6 <= dnsMessageMax {
+		q = append(q, 0xc0, 12, 0, 1, 0, 1) // the same name again, by pointer
+		n++
+	}
+	binary.BigEndian.PutUint16(q[4:], uint16(n))
+	if got := servfail(q); got != nil {
+		t.Fatalf("a %d byte SERVFAIL", len(got))
+	}
+}
+
 func TestUDPSizeAndCutting(t *testing.T) {
 	for _, c := range []struct {
 		size, want int

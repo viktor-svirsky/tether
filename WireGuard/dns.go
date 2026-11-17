@@ -420,7 +420,8 @@ func formerr(query []byte) []byte {
 }
 
 // servfail is SERVFAIL for the query (RFC 1035 4.1.1): its ID, opcode and questions, QR set and RCODE
-// 2, so the device's resolver stops waiting. Nil for a message that isn't a query.
+// 2, so the device's resolver stops waiting. Nil for a message that isn't a query, and for one
+// whose SERVFAIL wouldn't fit in 64 KiB.
 func servfail(query []byte) []byte {
 	var p dnsmessage.Parser
 	h, err := p.Start(query)
@@ -442,8 +443,8 @@ func servfail(query []byte) []byte {
 		}
 	}
 	m, err := b.Finish()
-	if err != nil {
-		return nil
+	if err != nil || len(m) > dnsMessageMax {
+		return nil // too big for a TCP frame's 2-byte length
 	}
 	return m
 }
