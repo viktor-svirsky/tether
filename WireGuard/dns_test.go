@@ -1458,6 +1458,19 @@ func TestAServerFailureAnswersTheQuery(t *testing.T) {
 
 // A query fits in 64 KiB, but its questions can point back at one long name, so a SERVFAIL that
 // spells each one out could pass the 2-byte length of a TCP frame. Then there's no SERVFAIL.
+// The root name takes one byte, so 11,000 questions for it fit in a 55,012 byte SERVFAIL, and it's
+// sent.
+func TestAServerFailureForManyRootQuestionsFits(t *testing.T) {
+	q := []byte{0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	for range 11000 {
+		q = append(q, 0, 0, 1, 0, 1) // the root, A IN
+	}
+	binary.BigEndian.PutUint16(q[4:], 11000)
+	if got := servfail(q); len(got) != dnsHeaderLen+11000*5 {
+		t.Fatalf("a %d byte SERVFAIL, want %d", len(got), dnsHeaderLen+11000*5)
+	}
+}
+
 func TestAServerFailureTooBigForAFrameIsDropped(t *testing.T) {
 	q := []byte{0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0} // ID 1, RD, its question count below
 	// A name of 193 bytes, under the 255 a name may take.

@@ -432,9 +432,12 @@ func servfail(query []byte) []byte {
 	if err != nil {
 		return nil
 	}
-	size := dnsHeaderLen // at most what the questions take spelled out: a name, its type and class
+	size := dnsHeaderLen // what the questions take spelled out: a name, its type and class
 	for _, q := range questions {
-		size += int(q.Name.Length) + 1 + 4
+		size += int(q.Name.Length) + 1 + 4 // "a.b." is 1a1b0, one byte more than its text
+		if q.Name.Length == 1 {
+			size-- // the root "." is the 0 alone
+		}
 	}
 	if size > dnsMessageMax {
 		return nil // too big for a TCP frame's 2-byte length, so don't build it
