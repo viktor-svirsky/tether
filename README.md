@@ -53,7 +53,7 @@ Other ways to install (Feather, a paid certificate, building it on a Mac) are in
 
 The code works while Add a device is open and for 10 minutes after. Travel routers, IPv6-only carriers and per-device settings are in the [guide](docs/GUIDE.md#connect-a-device).
 
-A game console, TV or streaming stick can't run WireGuard. A travel router with WireGuard covers it, and every device behind the router. A Windows laptop can too: turn its tunnel on, then share it in Network Connections (the WireGuard tunnel's adapter > Properties > Sharing) with the console's Ethernet port, or with Mobile hotspot. If the console gets no internet, edit the tunnel in WireGuard and untick Block untunneled traffic. The console's traffic goes through the laptop, so the laptop has to stay on.
+A game console, TV or streaming stick can't run WireGuard. A travel router with WireGuard covers it, and every device behind the router. A Windows laptop can too: turn its tunnel on, then share it in Network Connections (the WireGuard tunnel's adapter > Properties > Sharing, tick Allow other network users to connect) with the console's Ethernet port, or with Mobile hotspot while it's on. If the console gets no internet, edit the tunnel in WireGuard and untick Block untunneled traffic. The console's traffic goes through the laptop, so the laptop has to stay on.
 
 ## Good to know
 
