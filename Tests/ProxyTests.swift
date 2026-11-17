@@ -321,6 +321,19 @@ final class ProxyTests: XCTestCase {
         XCTAssertNil(ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(), hotspotOn: true).detail(resets: "", period: ""))
     }
 
+    /// Add a device's last step when the proxy can't carry a page. Opening the steps turns it on and
+    /// resumes a pause by you, but either can fail to be saved, so each case says what's wrong.
+    func testWhatTheLastStepSaysWhenTheProxyCantCarryAPage() {
+        XCTAssertNil(ProxyStatus.blocked(WireGuardSetup.Proxy()), "on and not paused")
+        XCTAssertEqual(ProxyStatus.blocked(nil), "The proxy is off. Close this and pick No, use the proxy again to turn it on.")
+        XCTAssertEqual(ProxyStatus.blocked(WireGuardSetup.Proxy(on: false, paused: .atLimit)),
+                       "The proxy is off. Close this and pick No, use the proxy again to turn it on.", "off comes first: there's no row")
+        XCTAssertEqual(ProxyStatus.blocked(WireGuardSetup.Proxy(paused: .byYou)),
+                       "The proxy is paused. To resume it, close this, tap Proxy under Devices and turn off Pause.")
+        XCTAssertEqual(ProxyStatus.blocked(WireGuardSetup.Proxy(paused: .atLimit)),
+                       "The proxy is paused at its data limit. To use it anyway, close this, tap Proxy under Devices and turn off Pause.")
+    }
+
     /// The status card counts the WireGuard devices, and names the proxy while a connection is open on it.
     func testTheStatusCardCountsTheProxyToo() {
         var proxy = WireGuardSetup.Proxy()

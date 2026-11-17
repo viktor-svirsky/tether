@@ -516,7 +516,7 @@ struct AddDeviceSheet: View {
     private var proxySteps: some View {
         let working = proxyProgress?.working == true
         let hotspot = model.running
-        let paused = model.proxy?.paused != nil
+        let blocked = ProxyStatus.blocked(model.proxy)
         return ScrollView {
             VStack(spacing: 24) {
                 if model.localNetworkDenied && !working {
@@ -547,13 +547,13 @@ struct AddDeviceSheet: View {
                             title: "In its Wi-Fi settings, set the proxy", id: "add.proxy.step2") {
                         proxySettings(ProxyAddress.servers(model.proxyStats.addresses))
                     }
-                    StepRow(number: 3, mark: working ? .done : hotspot && !paused ? .waiting : .later, lineDone: nil,
+                    StepRow(number: 3, mark: working ? .done : hotspot && blocked == nil ? .waiting : .later, lineDone: nil,
                             title: "Open a page on it", id: "add.proxy.step3") {
                         Group {
                             if working {
                                 note("Working")
-                            } else if paused {
-                                note("The proxy is paused at its data limit. To use it anyway, close this, tap Proxy under Devices and turn off Pause.")
+                            } else if let blocked {
+                                note(blocked)
                             } else {
                                 note("Waiting for the first page")
                             }

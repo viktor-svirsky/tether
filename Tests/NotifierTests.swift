@@ -574,7 +574,7 @@ final class ClosedAlarmPostingTests: XCTestCase {
     func testItsWordsSayWhatHappened() {
         XCTAssertEqual(ClosedAlarm.notice.kind, .closed)
         XCTAssertEqual(ClosedAlarm.notice.title, "Tether stopped sharing")
-        XCTAssertEqual(ClosedAlarm.notice.body, "Devices using Tether have no data until Tether runs again.")
+        XCTAssertEqual(ClosedAlarm.notice.body, "Connections through Tether stop until it runs again.")
         XCTAssertEqual(NoticeKind.closed.label, "iOS stops Tether in the background")
     }
 }

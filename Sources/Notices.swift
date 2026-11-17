@@ -293,7 +293,7 @@ struct ClosedAlarm {
     static let delay: TimeInterval = 3 * 60
     static let pushBackEvery: TimeInterval = 60
     static let notice = Notice(kind: .closed, id: "closed", title: "Tether stopped sharing",
-                               body: "Devices using Tether have no data until Tether runs again.")
+                               body: "Connections through Tether stop until it runs again.")
 
     enum Action: Equatable {
         /// Show it after this long, in place of any waiting one, and take away one that showed.

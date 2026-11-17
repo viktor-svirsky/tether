@@ -114,6 +114,18 @@ struct ProxyStatus: Equatable {
         }
     }
 
+    /// Add a device's last step when the proxy can't carry a page, or nil when it can. Opening the
+    /// steps turns it on and resumes a pause by you, but either can fail to be saved. Off, it has no
+    /// row under Devices, so that comes first.
+    static func blocked(_ proxy: WireGuardSetup.Proxy?) -> String? {
+        guard let proxy, proxy.on else { return "The proxy is off. Close this and pick No, use the proxy again to turn it on." }
+        return switch proxy.paused {
+        case .byYou?: "The proxy is paused. To resume it, close this, tap Proxy under Devices and turn off Pause."
+        case .atLimit?: "The proxy is paused at its data limit. To use it anyway, close this, tap Proxy under Devices and turn off Pause."
+        case nil: nil
+        }
+    }
+
     /// A device on it has a connection open, so it counts as using Tether, see `UsingTether`.
     var inUse: Bool { look == .connected }
 
