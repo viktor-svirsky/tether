@@ -53,7 +53,10 @@ final class MDNSHostName: HostNamePublishing {
     static let lastRetry: TimeInterval = 600
 
     private(set) var published: HostNameRecord?
+    /// Kept through a new address until it's confirmed, so a device on the name stays told meanwhile.
     private(set) var failure: String?
+    /// The last failure in the log, so each is said once for each address.
+    private var said: String?
     private var asked: HostNameRecord?
     private var retryAt: Date?
     private var wait: TimeInterval = 0
@@ -82,7 +85,8 @@ final class MDNSHostName: HostNamePublishing {
             guard let retryAt, now() >= retryAt else { return }
         } else {
             if asked != nil, record == nil { log("mDNS: \(name) withdrawn") }
-            failure = nil
+            if record == nil { failure = nil }
+            said = nil
             wait = 0
         }
         close()
@@ -131,6 +135,7 @@ final class MDNSHostName: HostNamePublishing {
         if error == DNSServiceErrorType(kDNSServiceErr_NoError) {
             published = asked
             failure = nil
+            said = nil
             wait = 0
             log("mDNS: \(asked.name) is \(asked.address)")
         } else if error == DNSServiceErrorType(kDNSServiceErr_NameConflict) {
@@ -143,7 +148,8 @@ final class MDNSHostName: HostNamePublishing {
     /// Not answered: said once for each reason, and tried again later, a little later each time.
     private func fail(_ why: String) {
         published = nil
-        if why != failure, let asked { log("mDNS: \(asked.name): \(why), tries again later") }
+        if why != said, let asked { log("mDNS: \(asked.name): \(why), tries again later") }
+        said = why
         failure = why
         wait = min(max(wait * 2, Self.firstRetry), Self.lastRetry)
         retryAt = now().addingTimeInterval(wait)

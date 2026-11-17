@@ -115,9 +115,11 @@ struct DeviceView: View {
                     }
                     .id("problem")
                 }
-                if model.needsNewConfig(current) {
+                if let reason = model.newConfig(current) {
                     Section {
-                        WarningLabel("Its config points at an old address of this iPhone, so it can't connect. Remove it, then add it again.")
+                        WarningLabel(reason == .nameNotAnswered
+                                     ? "Its config uses this iPhone's name, which isn't answering on the hotspot, so it can't connect. Remove it, then add it again."
+                                     : "Its config points at an old address of this iPhone, so it can't connect. Remove it, then add it again.")
                             .accessibilityIdentifier("device.oldAddress")
                     }
                 }
@@ -322,9 +324,12 @@ extension DeviceView {
 /// see `HotspotSession.needsNewConfig`. The text keeps the label colour, since orange or grey text on
 /// the grouped background fails the contrast audit. The icon carries the orange.
 struct OldAddressLabel: View {
+    var reason = HotspotSession.NewConfig.oldAddress
+
     var body: some View {
         Label {
-            Text("Its config points at an old address. Add it again.")
+            Text(reason == .nameNotAnswered ? "Its config uses this iPhone's name, which isn't answering. Add it again."
+                 : "Its config points at an old address. Add it again.")
         } icon: {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)

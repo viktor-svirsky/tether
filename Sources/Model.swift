@@ -415,6 +415,11 @@ final class Model: ObservableObject {
         session.needsNewConfig(peer)
     }
 
+    /// See `HotspotSession.newConfig`.
+    func newConfig(_ peer: WireGuardSetup.Peer) -> HotspotSession.NewConfig? {
+        session.newConfig(peer)
+    }
+
     func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String? {
         session.wireGuardConfig(for: ready)
     }

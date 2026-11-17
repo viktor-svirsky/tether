@@ -56,10 +56,14 @@ final class HostNameTests: XCTestCase {
         let name = "tether-test-\(UUID().uuidString.prefix(8).lowercased()).local"
         var lines: [String] = []
         let mdns = MDNSHostName(interfaces: { ["lo0: ::1"] }, log: { lines.append($0) })
+        mdns.publish(name, at: "2001:db8::1") // on no interface here
+        XCTAssertNotNil(mdns.failure)
         mdns.publish(name, at: "::1")
+        XCTAssertNotNil(mdns.failure, "kept until the new address is confirmed, so a device on the name stays told")
         let deadline = Date().addingTimeInterval(10)
-        while mdns.published == nil, mdns.failure == nil, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+        while mdns.published == nil, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
         XCTAssertEqual(mdns.published, HostNameRecord(name: name, address: "::1"), "\(lines)")
+        XCTAssertNil(mdns.failure)
         XCTAssertEqual(lookUp(name, type: kDNSServiceType_AAAA), [Data(repeating: 0, count: 15) + [1]])
         XCTAssertEqual(lookUp(name, type: kDNSServiceType_A), [])
         mdns.publish(name, at: nil)

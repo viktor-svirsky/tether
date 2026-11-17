@@ -736,14 +736,24 @@ final class HotspotSession {
     /// with the iPhone's name follows a new IPv6 address. It needs a new one once the carrier gives
     /// IPv4 again, since the name has IPv6 only (see `MDNSHostName`), and while mDNS can't answer the
     /// name: taken by another device, or refused. A new config from the page then has the address.
-    func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {
-        guard running, let host = peer.host, !connectedNow.contains(peer.address) else { return false }
+    func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool { newConfig(peer) != nil }
+
+    /// Why a device needs a new config, which its row and screen say, see `needsNewConfig`.
+    enum NewConfig: Equatable {
+        /// Its config points at an address, or a name, this iPhone doesn't have now.
+        case oldAddress
+        /// Its config uses this iPhone's name, which mDNS isn't answering on the hotspot.
+        case nameNotAnswered
+    }
+
+    func newConfig(_ peer: WireGuardSetup.Peer) -> NewConfig? {
+        guard running, let host = peer.host, !connectedNow.contains(peer.address) else { return nil }
         if HostName.isName(host) {
-            guard host == name else { return true }
-            guard listeningIPv6 != nil else { return !onIPv6OnlyCarrier }
-            return hostName.map { $0.failure != nil } ?? true
+            guard host == name else { return .oldAddress }
+            guard listeningIPv6 != nil else { return onIPv6OnlyCarrier ? nil : .nameNotAnswered }
+            return hostName.map { $0.failure == nil } == true ? nil : .nameNotAnswered
         }
-        return !boundHosts.contains(host)
+        return boundHosts.contains(host) ? nil : .oldAddress
     }
 
     /// The QR code's config. None while there's no `deviceHost`, so no config is made that can't connect.
@@ -793,7 +803,7 @@ final class HotspotSession {
             wireGuardPeersChanged()
             let name = devices.setup.peers.first { $0.id == ready.id }?.name ?? ""
             let response = ConfigPage.config(config, fileName: WireGuardSetup.fileName(for: name))
-            pageHandler.downloaded(response, by: client, at: now)
+            pageHandler.downloaded(response, by: client, forMac: request == .macConfig, at: now)
             return response
         }
     }

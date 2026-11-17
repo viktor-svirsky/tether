@@ -10,7 +10,7 @@ final class DemoScenarioTests: XCTestCase {
     private let waiting: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro]
     /// The list shows both states: the iPad connected, the Windows PC not.
     private let iPadConnected: Set<DemoScenario> = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying,
-                                                    .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .staleConfig,
+                                                    .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .nameNotAnswered, .staleConfig,
                                                     .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
     private let noSpeed: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro, .noDevices, .wireGuardUnsaved,
                                               .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6]
@@ -83,7 +83,15 @@ final class DemoScenarioTests: XCTestCase {
     func testTheOldAddressDemoNeedsTheWindowsPCAddedAgain() throws {
         let session = DemoState(.oldAddress).makeSession()
         let pc = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "Windows PC" })
-        XCTAssertTrue(session.needsNewConfig(pc))
+        XCTAssertEqual(session.newConfig(pc), .oldAddress)
+    }
+
+    /// The Windows PC's config uses the iPhone's name, which the demo never answers (#65).
+    func testTheNameNotAnsweredDemoSaysSoForTheWindowsPC() throws {
+        let session = DemoState(.nameNotAnswered).makeSession()
+        let pc = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "Windows PC" })
+        XCTAssertEqual(session.newConfig(pc), .nameNotAnswered)
+        XCTAssertNil(session.newConfig(try XCTUnwrap(session.wireGuardPeers.first { $0.name == "iPad" })))
     }
 
     /// The proxy demos (#78) have it on, with the iPad and the Windows PC, and only they do. `proxy`

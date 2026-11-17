@@ -38,7 +38,8 @@ struct ConfigPageHandler {
     /// key (#160).
     static let repeatWithin: TimeInterval = 5
 
-    private var lastDownload: (client: String, at: Date, response: ConfigPage.Response)?
+    /// `mac`: the Mac link's config, see `ConfigPage.macConfigPath`. The usual one right after it isn't a repeat.
+    private var lastDownload: (client: String, mac: Bool, at: Date, response: ConfigPage.Response)?
     /// Why the page last failed, so a page that fails every round is logged once.
     private var problem: String?
 
@@ -52,8 +53,9 @@ struct ConfigPageHandler {
             : knocks.contains { $0.kind == .server } ? .oldKeys : nil
         // Only while a download could happen anyway: a closed window or Tether off screen hands out
         // no key, a repeated one neither (#160).
+        let mac = request == .macConfig || request == .macConfigHead
         let repeated = state != .ready ? nil : lastDownload.flatMap {
-            $0.client == client && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil
+            $0.client == client && $0.mac == mac && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil
         }
         let name = inputs.nameConfig == nil ? nil : inputs.name
         switch request {
@@ -91,8 +93,8 @@ struct ConfigPageHandler {
     }
 
     /// The session saved the device and answers with `response`.
-    mutating func downloaded(_ response: ConfigPage.Response, by client: String, at now: Date) {
-        lastDownload = (client, now, response)
+    mutating func downloaded(_ response: ConfigPage.Response, by client: String, forMac mac: Bool = false, at now: Date) {
+        lastDownload = (client, mac, now, response)
     }
 
     /// That config mustn't be handed out again: the hotspot went, the keys started over, or a device was removed.

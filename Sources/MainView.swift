@@ -92,7 +92,7 @@ struct MainView: View {
                                     // The label colour: grey text on the card fails the contrast audit.
                                     Text(Format.used(model.usage(of: peer.id).thisMonth.total, model.usagePeriod))
                                         .font(.subheadline)
-                                    if model.needsNewConfig(peer) { OldAddressLabel().font(.footnote) }
+                                    if let reason = model.newConfig(peer) { OldAddressLabel(reason: reason).font(.footnote) }
                                 }
                             }
                             .accessibilityIdentifier("device.\(peer.name)")

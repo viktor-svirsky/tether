@@ -772,8 +772,8 @@ final class HotspotSessionTests: XCTestCase {
             address = round.address
             ipv6Only = round.ipv6Only
             session.syncWithHotspot()
-            XCTAssertEqual(session.needsNewConfig(onAddress), round.onAddress, line: round.line)
-            XCTAssertEqual(session.needsNewConfig(onName), round.onName, line: round.line)
+            XCTAssertEqual(session.newConfig(onAddress), round.onAddress ? .oldAddress : nil, line: round.line)
+            XCTAssertEqual(session.newConfig(onName), round.onName ? .nameNotAnswered : nil, line: round.line)
         }
     }
 
@@ -788,15 +788,31 @@ final class HotspotSessionTests: XCTestCase {
         session.openAddWindow()
         _ = page.ask(.macConfig, from: "2607:fb91:88a2:e822::99")
         let peer = try XCTUnwrap(session.wireGuardPeers.first)
-        XCTAssertFalse(session.needsNewConfig(peer))
+        XCTAssertNil(session.newConfig(peer))
         names?.confirms = false
-        XCTAssertFalse(session.needsNewConfig(peer), "still being checked")
+        XCTAssertNil(session.newConfig(peer), "still being checked")
         names?.refuses = "taken by another device on the hotspot"
+        XCTAssertEqual(session.newConfig(peer), .nameNotAnswered, "its own words, not an old address")
         XCTAssertTrue(session.needsNewConfig(peer))
         XCTAssertFalse(offersMac(page.ask(.page, from: "2607:fb91:88a2:e822::99")))
         names?.refuses = nil
         names?.confirms = true
         XCTAssertFalse(session.needsNewConfig(peer), "answered again")
+    }
+
+    /// The usual download and then the Mac link from one Mac within seconds are two configs, two
+    /// devices: the second isn't a repeat of the first.
+    func testTheMacLinkRightAfterTheUsualDownloadGivesTheName() throws {
+        names = FakeHostName()
+        makeSession()
+        let a = "2607:fb91:88a2:e822::a"
+        address = a
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let mac = "2607:fb91:88a2:e822::99"
+        XCTAssertTrue(body(page.ask(.config, from: mac)).contains("Endpoint = [\(a)]:51820\n"))
+        XCTAssertTrue(body(page.ask(.macConfig, from: mac)).contains("Endpoint = \(name()):51820\n"))
+        XCTAssertEqual(session.wireGuardPeers.map(\.host), [a, name()])
     }
 
     /// A device on the name that connects over IPv6 keeps the name: its config has it, not the address

@@ -202,6 +202,19 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(element("device.oldAddress"))
     }
 
+    /// A device whose config uses this iPhone's name, while the name isn't answered (taken by another
+    /// device, say), says that, not that its address is old (#65).
+    func testADeviceOnANameThatIsntAnsweredSaysSo() {
+        launch(.nameNotAnswered)
+        let pc = reveal(element("device.Windows PC"))
+        XCTAssertTrue(pc.label.contains("Its config uses this iPhone's name, which isn't answering. Add it again."), pc.label)
+        XCTAssertFalse(pc.label.contains("old address"), pc.label)
+        openDevice("Windows PC")
+        let warning = staticText("device.oldAddress")
+        XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertEqual(warning.label, "Its config uses this iPhone's name, which isn't answering on the hotspot, so it can't connect. Remove it, then add it again.")
+    }
+
     /// A usual carrier's address never changes, so nothing says it did.
     func testNoDevicePointsAtAnOldAddressOnAUsualCarrier() {
         launch(.sharing)

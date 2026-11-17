@@ -82,6 +82,24 @@ final class ConfigPageHandlerTests: XCTestCase {
                        .download(ready, host: "172.20.10.1", config: config))
     }
 
+    /// The Mac link right after the usual download, or the other way round, is another config, not a
+    /// repeat: each is kept apart (#65).
+    func testTheMacLinkIsntARepeatOfTheUsualDownload() {
+        var handler = ConfigPageHandler()
+        var named = inputs(at: start.addingTimeInterval(1))
+        named.name = "tether-2a9a.local"
+        named.nameConfig = "[Interface]\nName\n"
+        let usual = ConfigPage.config(config, fileName: "Tether-Device.conf")
+        handler.downloaded(usual, by: "172.20.10.3", at: start)
+        XCTAssertEqual(handler.answer(.macConfig, from: "172.20.10.3", named),
+                       .download(ready, host: "tether-2a9a.local", config: "[Interface]\nName\n"))
+        let mac = ConfigPage.config("[Interface]\nName\n", fileName: "Tether-Device.conf")
+        handler.downloaded(mac, by: "172.20.10.3", forMac: true, at: start)
+        XCTAssertEqual(handler.answer(.macConfig, from: "172.20.10.3", named), .answer(mac))
+        XCTAssertEqual(handler.answer(.macConfigHead, from: "172.20.10.3", named), .answer(mac.forHead))
+        XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", named), .download(ready, host: "172.20.10.1", config: config))
+    }
+
     /// The hotspot going, a reset or a removal: that config mustn't be handed out again.
     func testAForgottenDownloadIsntRepeated() {
         var handler = ConfigPageHandler()
