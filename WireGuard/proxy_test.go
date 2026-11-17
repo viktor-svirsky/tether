@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1083,15 +1084,20 @@ func TestTheProxysLookupsStopAtTheCap(t *testing.T) {
 
 // A plain request's dial goes on after its client leaves, since the transport keeps what it makes
 // for its pool. Those dials are capped too, so a client that asks for a far end that never answers
-// and leaves, again and again, can't pile them up past its slot.
+// and leaves, again and again, can't pile them up past its slot. Once they end, their slots are free.
 func TestTheProxysPlainDialsStopAtTheCap(t *testing.T) {
 	s := proxyReady(t)
 	var started atomic.Int32
 	release := make(chan struct{})
-	t.Cleanup(func() { close(release) }) // before the server's Close, which doesn't wait for them
+	var once sync.Once
+	free := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(free) // before the server's Close, which doesn't wait for them
 	s.mu.Lock()
 	s.proxy.maxDials = 2
 	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if !slices.Contains([]string{"80", "81", "82"}, port(address)) {
+			return toLoopback(ctx, network, address)
+		}
 		started.Add(1)
 		<-release // a far end that never answers, even after the client left
 		return nil, errors.New("no answer")
@@ -1119,6 +1125,11 @@ func TestTheProxysPlainDialsStopAtTheCap(t *testing.T) {
 	}
 	if n := started.Load(); n != 2 {
 		t.Fatalf("%d dials started past a cap of 2", n)
+	}
+	free()
+	far, _ := pageAt(t)
+	if !waitFor(5*time.Second, func() bool { status, _ := rawGet(t, proxy, "http://"+far+"/"); return status == http.StatusOK }) {
+		t.Fatal("the dials that ended didn't free their slots")
 	}
 }
 
