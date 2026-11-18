@@ -89,7 +89,7 @@ A TV, a game console, a work laptop or any device that can't install apps can us
 
 Browsers and most apps use the proxy, and that traffic leaves from the iPhone like a WireGuard device's. Games, calls, pings and apps that ignore the system's proxy still go out as hotspot traffic, which the carrier can see and count. For those, use WireGuard on that device.
 
-The proxy has one row under Devices for every device on it, with how many connections are open and what it used this month. Its screen has the server and the port again, Pause, a data limit that works like a device's, and Turn off the proxy. Its data counts into the month like a device's. There's no password: any device on the hotspot can use it, and the hotspot's own password keeps others out.
+The proxy has one row under Devices for every device on it, with how many connections are open and what it used this month. Its screen has the server and the port again, Pause, a data limit that works like a device's, and Turn off the proxy. Its data counts into the month like a device's. There's no password: any device on the hotspot can use it, and the hotspot's own password keeps others out. If the proxy can't listen, its screen says Not listening, and Tether tries again by itself. With Stop sharing when idle on, a device on the proxy counts as connected while it loads something, so one that sits idle for the set time lets Tether stop.
 
 ## Start it from Shortcuts
 
