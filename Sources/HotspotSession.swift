@@ -324,7 +324,7 @@ final class HotspotSession {
         // A call can take the hotspot away for as long as it lasts, so the 10 minutes run from its
         // end too. Before, a long call left Tether suspended and its devices cut off until someone
         // opened it (#191). Not after an idle stop, which means to stop.
-        let call = (keepAlive.takeInterruption() || callOn()) && idleStopped == nil
+        let call = (keepAlive.takeInterruption() || keepAlive.playing && callOn()) && idleStopped == nil
         if hotspot { waitingSince = nil } else if sceneActive || call || waitingSince == nil { waitingSince = now }
         let plays = KeepAlivePolicy.plays(waitingSince: waitingSince, now: now)
         if plays { keepAlive.start() } else if keepAlive.playing {

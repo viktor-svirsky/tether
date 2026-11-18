@@ -1507,6 +1507,15 @@ final class HotspotSessionTests: XCTestCase {
         ])
     }
 
+    /// "Is Tether Sharing?" during a call only reports. The call keeps a sound that plays going, it
+    /// doesn't start one.
+    func testACallDoesntStartTheSoundOnABackgroundLaunch() {
+        run([
+            SoundRound(minute: 0, onScreen: false, callOn: true, plays: false),
+            SoundRound(minute: 1, onScreen: false, callOn: true, plays: false),
+        ])
+    }
+
     /// A call that started and ended with no watcher round in between, while iOS held Tether back
     /// say, still counts: the 10 minutes run from the first round after it.
     func testACallBetweenTwoRoundsStillCounts() {
