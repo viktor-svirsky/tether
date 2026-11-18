@@ -76,24 +76,26 @@ final class CallWatch {
 @MainActor
 final class Cellular {
     private let radio: RadioReading
-    /// Every line's identifier seen so far, kept for the app's life, so a line that loses its
-    /// service keeps its number and doesn't renumber the other.
-    private var seen: Set<String> = []
+    /// Each line's number by identifier, given the first time it's seen and kept for the app's life,
+    /// so a line never changes number when another loses its service or shows up later.
+    private var numbers: [String: Int] = [:]
 
     init(radio: RadioReading) {
         self.radio = radio
     }
 
     /// Like "data line: LTE", and on Dual SIM "data line: NR on line 1, line 2: LTE". The lines are
-    /// numbered in the order of their identifiers, which are left out, and so is anything that
-    /// isn't a radio's name. A line seen before with no radio now says "no service".
+    /// numbered in the order Tether first sees them (by identifier when two show up at once), the
+    /// identifiers are left out, and so is anything that isn't a radio's name. A line seen before
+    /// with no radio now says "no service".
     func dataLine() -> String {
         let radios = radio.radios
         let dataLine = radio.dataLine
-        seen.formUnion(radios.keys)
-        if let dataLine { seen.insert(dataLine) }
-        guard !seen.isEmpty else { return "data line: no radio" }
-        let lines = seen.sorted().enumerated().map { (number: $0.offset + 1, id: $0.element) }
+        for id in (Array(radios.keys) + [dataLine].compactMap { $0 }).sorted() where numbers[id] == nil {
+            numbers[id] = numbers.count + 1
+        }
+        guard !numbers.isEmpty else { return "data line: no radio" }
+        let lines = numbers.sorted { $0.value < $1.value }.map { (number: $0.value, id: $0.key) }
         let name = { (id: String) in radios[id].map(Self.name) ?? "no service" }
         if let data = lines.first(where: { $0.id == dataLine }) {
             let head = lines.count == 1 ? "data line: \(name(data.id))" : "data line: \(name(data.id)) on line \(data.number)"

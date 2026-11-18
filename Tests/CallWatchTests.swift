@@ -169,6 +169,17 @@ final class CallWatchTests: XCTestCase {
         }
     }
 
+    /// A line keeps the number it got when first seen, also when a line that sorts before it shows up later.
+    func testALineSeenLaterGetsTheNextNumber() {
+        let radio = FakeRadio(dataLine: nil, radios: [second: "CTRadioAccessTechnologyLTE"])
+        let cellular = Cellular(radio: radio)
+        XCTAssertEqual(cellular.dataLine(), "data line: unknown, line 1: LTE")
+        radio.radios = [first: "CTRadioAccessTechnologyNR", second: "CTRadioAccessTechnologyLTE"]
+        XCTAssertEqual(cellular.dataLine(), "data line: unknown, line 1: LTE, line 2: NR")
+        radio.dataLine = first
+        XCTAssertEqual(cellular.dataLine(), "data line: NR on line 2, line 1: LTE")
+    }
+
     /// A line that loses its service keeps its number, so the other line isn't renumbered.
     func testALineWithNoServiceKeepsItsNumber() {
         let radio = FakeRadio(dataLine: second, radios: [first: "CTRadioAccessTechnologyLTE", second: "CTRadioAccessTechnologyNR"])
