@@ -70,6 +70,8 @@ struct ProxyStatus: Equatable {
         case open(Int)
         /// It doesn't listen yet: no device is on the hotspot, which iOS makes look like the hotspot off.
         case waiting
+        /// It has an address to listen on and can't, so no device gets through.
+        case cantListen
     }
 
     let state: State
@@ -80,6 +82,8 @@ struct ProxyStatus: Equatable {
             state = .paused(pause)
         } else if !hotspotOn {
             state = .waiting
+        } else if stats.cantListen {
+            state = .cantListen
         } else {
             state = .open(stats.open)
         }
@@ -90,6 +94,7 @@ struct ProxyStatus: Equatable {
         switch state {
         case .paused: "Paused"
         case let .open(n) where n > 0: "\(n) open"
+        case .cantListen: "Not listening"
         default: "Idle"
         }
     }
@@ -102,6 +107,7 @@ struct ProxyStatus: Equatable {
         case .open(1): "1 connection open"
         case let .open(n): "\(n) connections open"
         case .waiting: "Waiting for a device to join Personal Hotspot"
+        case .cantListen: "Not listening"
         }
     }
 
@@ -129,11 +135,12 @@ struct ProxyStatus: Equatable {
     /// A device on it has a connection open, so it counts as using Tether, see `UsingTether`.
     var inUse: Bool { look == .connected }
 
-    /// The line under the title on its screen, while it's paused, see `DeviceStatus.detail`.
+    /// The line under the title on its screen, while it's paused or can't listen, see `DeviceStatus.detail`.
     func detail(resets: String, period: String) -> String? {
         switch state {
         case .paused(.byYou): "Nothing goes through it until you resume it."
         case .paused(.atLimit): "It used its data \(period). It works again on \(resets), or when you resume it."
+        case .cantListen: "Devices on it can't load anything. Tether tries again by itself."
         default: nil
         }
     }

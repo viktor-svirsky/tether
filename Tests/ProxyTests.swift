@@ -134,6 +134,8 @@ final class ProxyTests: XCTestCase {
         let proxy = try WireGuardServer.Stats.read(Data(json.utf8)).proxy
         XCTAssertEqual(proxy, ProxyStats(addresses: ["172.20.10.1:8118", "[2001:db8::1]:8118"], paused: true, open: 2,
                                          traffic: TrafficTotals(bytesUp: 3, bytesDown: 40)))
+        let cantListen = #"{"v":1,"up":0,"down":0,"peers":[],"proxy":{"addresses":[],"cantListen":true,"paused":false,"open":0,"up":0,"down":0}}"#
+        XCTAssertEqual(try WireGuardServer.Stats.read(Data(cantListen.utf8)).proxy, ProxyStats(cantListen: true))
         let off = #"{"v":1,"up":0,"down":0,"peers":[],"proxy":{"addresses":[],"paused":false,"open":0,"up":0,"down":0}}"#
         XCTAssertEqual(try WireGuardServer.Stats.read(Data(off.utf8)).proxy, ProxyStats())
         let older = #"{"v":1,"up":0,"down":0,"peers":[]}"#
@@ -284,6 +286,31 @@ final class ProxyTests: XCTestCase {
         XCTAssertNotNil(session.idleStopped, "nothing goes through a paused proxy")
     }
 
+    /// A device on the proxy opens connections only while it loads something, so one that loaded a
+    /// page since the last check keeps Tether sharing too, though no round saw a connection open.
+    func testDataThroughTheProxyKeepsSharingFromAnIdleStop() throws {
+        sceneActive = false
+        idleAfter = .tenMinutes
+        _ = try proxyOn()
+        session.wake()
+        session.watch()
+        for minute in 1 ... 30 {
+            now = now.addingTimeInterval(60)
+            if minute % 5 == 0 { server.proxyTraffic.bytesDown += 1000 }
+            session.watch()
+        }
+        XCTAssertTrue(session.sharing, "a page every 5 minutes")
+        XCTAssertNil(session.idleStopped)
+        now = now.addingTimeInterval(60) // the first round with nothing through it
+        session.watch()
+        now = now.addingTimeInterval(9 * 60)
+        session.watch()
+        XCTAssertTrue(session.sharing)
+        now = now.addingTimeInterval(60)
+        session.watch()
+        XCTAssertNotNil(session.idleStopped, "10 minutes with nothing through it")
+    }
+
     // MARK: What the screens say
 
     func testWhereToSetTheProxy() {
@@ -319,6 +346,13 @@ final class ProxyTests: XCTestCase {
         XCTAssertEqual(status(0).detail(resets: "December 1", period: "this month"),
                        "It used its data this month. It works again on December 1, or when you resume it.")
         XCTAssertNil(ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(), hotspotOn: true).detail(resets: "", period: ""))
+        // Go has an address to listen on and can't: the screen says so, not "No connections open".
+        let cantListen = ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(cantListen: true), hotspotOn: true)
+        XCTAssertEqual(cantListen.label, "Not listening")
+        XCTAssertEqual(cantListen.title, "Not listening")
+        XCTAssertEqual(cantListen.look, .notConnected)
+        XCTAssertEqual(cantListen.detail(resets: "", period: ""), "Devices on it can't load anything. Tether tries again by itself.")
+        XCTAssertEqual(ProxyStatus(.init(paused: .byYou), stats: ProxyStats(cantListen: true), hotspotOn: true).title, "Paused", "a pause comes first")
     }
 
     /// Add a device's last step when the proxy can't carry a page. Opening the steps turns it on and
