@@ -126,6 +126,38 @@ These need another person or a game account, so they aren't scripted.
 | Proxy paused | On the Proxy screen turn on Pause, then reload both pages on the laptop | The http page says "Tether paused this proxy. Resume it in Tether on the iPhone." The https page shows the browser's own connection error. The status card no longer counts the proxy. Turn off Pause: both load again |
 | Proxy limit | Give the proxy a limit just above what it used this month, then load pages until it passes it, with Tether in the background | A notification says Proxy paused at its limit and that it works again on the reset day. The Proxy row says Paused, and pages stop as with Pause |
 
+## Releases
+
+### Check a minor release before it's public
+
+Not run for real yet: the first X.Y.0 after this change is the test (#143).
+
+The Release workflow makes X.Y.0 as a draft. Nobody else sees a draft, it has no tag yet, and `releases/latest` still points at the last release. Check the exact file people will get, then publish it:
+
+1. Download the draft's files: `gh release download vX.Y.0 -R viktor-svirsky/tether -p Tether.ipa -p source.json`. `gh` finds drafts for the repo's owner.
+2. Check the SHA-256 against the notes (`shasum -a 256 Tether.ipa`) and `gh attestation verify Tether.ipa -R viktor-svirsky/tether --signer-workflow viktor-svirsky/tether/.github/workflows/release.yml`.
+3. Install it over the installed Tether with the same signer (SideStore, AltStore), so it keeps the bundle ID and the WireGuard keys. Version in Tether's Settings says X.Y.0, a device connects and pages load.
+4. Approve the publish job: the workflow run > Review deployments > release. That publishes the draft and creates the tag.
+
+If it's bad, reject the publish job and delete the draft: `gh release delete vX.Y.0 -R viktor-svirsky/tether --yes`. There's no tag to clean up. A patch (X.Y.Z) skips the draft and goes out at once.
+
+### Pull a bad release
+
+Untested. Try it once on a fork before it's needed (#143).
+
+The tag can't be deleted (the tag ruleset), and doesn't need to be. Marking the release a prerelease takes it out of `releases/latest`, so `releases/latest/download/source.json` serves the release before it again:
+
+```sh
+repo=viktor-svirsky/tether    # OWNER/REPO, the fork's for the rehearsal below
+gh release edit vX.Y.Z -R "$repo" --prerelease
+gh api "repos/$repo/releases/latest" --jq .tag_name    # the release before it
+curl -sL "https://github.com/$repo/releases/latest/download/source.json" | jq -r '.apps[0].versions[0].version'
+```
+
+People who already updated stay on the bad build: SideStore and AltStore don't go back a version. Ship the fix as the next patch, which counts from the pulled tag, and say what happened in Discussions.
+
+To try it on a fork, set `repo` to the fork and make two releases there, each with a source.json like `{"apps":[{"versions":[{"version":"0.0.1"}]}]}` (`gh release create v0.0.1 source.json -R "$repo"`, then the same for 0.0.2). Mark v0.0.2 a prerelease: the API should print v0.0.1 and the source.json 0.0.1. Then delete the fork's releases and tags.
+
 ## Things we learned the hard way
 
 - **A test build replaces the installed Tether.** Build it with the same bundle ID as the installed copy, or it installs next to it with new WireGuard keys, and every device has to be added again.
