@@ -82,6 +82,8 @@ struct ProxyStats: Equatable {
     /// Where it listens, "ip:port": 172.20.10.1 first, then "[ip]:port" on a hotspot that gives Apple
     /// devices IPv6 only. Empty while it doesn't listen: off, or not listening yet. Paused, it listens.
     var addresses: [String] = []
+    /// It has an address to listen on and can't, its port taken say. It tries again by itself.
+    var cantListen = false
     var paused = false
     /// The client connections it has open, from every device on it.
     var open = 0
