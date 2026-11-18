@@ -46,11 +46,11 @@ type nat64 struct {
 	lookup func(context.Context) (netip.Prefix, error)
 }
 
-// prefix is the carrier's NAT64 prefix, looked up when there's none or it's old.
-func (n *nat64) prefix(ctx context.Context) netip.Prefix {
+// prefix is the carrier's NAT64 prefix, looked up when there's none or it's old by now.
+func (n *nat64) prefix(ctx context.Context, now func() time.Time) netip.Prefix {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if p := n.found.Load(); p != nil && time.Now().Before(n.expiry) {
+	if p := n.found.Load(); p != nil && now().Before(n.expiry) {
 		return *p
 	}
 	lookup := n.lookup
@@ -67,9 +67,9 @@ func (n *nat64) prefix(ctx context.Context) netip.Prefix {
 		if old := n.found.Load(); old != nil {
 			p = *old
 		}
-		n.expiry = time.Now().Add(nat64Retry)
+		n.expiry = now().Add(nat64Retry)
 	} else {
-		n.expiry = time.Now().Add(nat64Keep)
+		n.expiry = now().Add(nat64Keep)
 	}
 	n.found.Store(&p)
 	return p
@@ -114,7 +114,7 @@ func (s *Server) viaNAT64(ctx context.Context, dst netip.AddrPort) (via netip.Ad
 	if !dst.Addr().Is4() {
 		return dst, false
 	}
-	p := s.nat64.prefix(ctx).Addr().As16()
+	p := s.nat64.prefix(ctx, s.now).Addr().As16()
 	v4 := dst.Addr().As4()
 	copy(p[12:], v4[:])
 	return netip.AddrPortFrom(netip.AddrFrom16(p), dst.Port()), true

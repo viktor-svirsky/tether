@@ -27,11 +27,11 @@ func (s *Server) reopen() {
 	if !broken {
 		return // listening again already: a notice, or a retry, from before it did
 	}
-	if wait := time.Until(s.reopened.Add(time.Second)); wait > 0 {
+	if wait := s.reopened.Add(time.Second).Sub(s.now()); wait > 0 {
 		s.retryIn(wait)
 		return
 	}
-	s.reopened = time.Now()
+	s.reopened = s.now()
 	// A listen_port line closes the sockets and opens them again on that port. BindUpdate alone
 	// would lose the port after a try that fails.
 	if err := s.dev.IpcSet(fmt.Sprintf("listen_port=%d\n", port)); err != nil {
@@ -46,9 +46,9 @@ func (s *Server) reopen() {
 // retryIn has reopen run again after d, unless a retry is coming already: every failed send
 // asks, and one retry is enough. After Close nobody reads the notice, so the tries end.
 func (s *Server) retryIn(d time.Duration) {
-	if time.Now().Before(s.retryAt) {
+	if s.now().Before(s.retryAt) {
 		return
 	}
-	s.retryAt = time.Now().Add(d)
-	time.AfterFunc(d, s.socketDied)
+	s.retryAt = s.now().Add(d)
+	s.after(d, s.socketDied)
 }

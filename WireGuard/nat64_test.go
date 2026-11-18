@@ -220,7 +220,7 @@ func TestTheNAT64PrefixIsLookedUpOnceAndKept(t *testing.T) {
 	var wg sync.WaitGroup
 	got := make([]netip.Prefix, 50)
 	for i := range got {
-		wg.Go(func() { got[i] = n.prefix(context.Background()) })
+		wg.Go(func() { got[i] = n.prefix(context.Background(), time.Now) })
 	}
 	wg.Wait()
 	if lookups.Load() != 1 || slices.ContainsFunc(got, func(p netip.Prefix) bool { return p != carrierNAT64 }) {
@@ -235,7 +235,7 @@ func TestAFailedLookupUsesTheWellKnownPrefixForAWhile(t *testing.T) {
 		return netip.Prefix{}, errors.New("no DNS64")
 	}}
 	for range 3 {
-		if p := n.prefix(context.Background()); p != wellKnownNAT64 {
+		if p := n.prefix(context.Background(), time.Now); p != wellKnownNAT64 {
 			t.Fatalf("got %v", p)
 		}
 	}
@@ -243,7 +243,7 @@ func TestAFailedLookupUsesTheWellKnownPrefixForAWhile(t *testing.T) {
 		t.Fatalf("%d lookups, want 1", lookups.Load())
 	}
 	n.expiry = time.Now() // a minute on
-	n.prefix(context.Background())
+	n.prefix(context.Background(), time.Now)
 	if lookups.Load() != 2 {
 		t.Fatal("the lookup wasn't tried again")
 	}
@@ -252,7 +252,7 @@ func TestAFailedLookupUsesTheWellKnownPrefixForAWhile(t *testing.T) {
 // A failed lookup after a good one keeps the carrier's prefix: the well-known one may not route on
 // that carrier, and replies from the real NAT64 would stop being mapped back (#150).
 func TestAFailedLookupKeepsTheCarriersPrefix(t *testing.T) {
-	s := &Server{}
+	s := &Server{now: time.Now}
 	var fail atomic.Bool
 	s.nat64.lookup = func(context.Context) (netip.Prefix, error) {
 		if fail.Load() {
@@ -260,12 +260,12 @@ func TestAFailedLookupKeepsTheCarriersPrefix(t *testing.T) {
 		}
 		return carrierNAT64, nil
 	}
-	if p := s.nat64.prefix(context.Background()); p != carrierNAT64 {
+	if p := s.nat64.prefix(context.Background(), s.now); p != carrierNAT64 {
 		t.Fatalf("got %v", p)
 	}
 	fail.Store(true)
 	s.nat64.expiry = time.Now() // ten minutes on
-	if p := s.nat64.prefix(context.Background()); p != carrierNAT64 {
+	if p := s.nat64.prefix(context.Background(), s.now); p != carrierNAT64 {
 		t.Fatalf("a failed lookup gave %v", p)
 	}
 	from := netip.MustParseAddrPort("[2001:db8:64::c633:6407]:53")
@@ -278,7 +278,7 @@ func TestAFailedLookupKeepsTheCarriersPrefix(t *testing.T) {
 }
 
 func TestOnlyRepliesFromInsideTheNAT64PrefixAreMapped(t *testing.T) {
-	s := &Server{}
+	s := &Server{now: time.Now}
 	from := netip.MustParseAddrPort("[2001:db8:64::c633:6407]:53")
 	if got := s.fromNAT64(from); got != from {
 		t.Fatalf("mapped %v to %v before any prefix was found", from, got)
@@ -299,4 +299,38 @@ func TestOnlyRepliesFromInsideTheNAT64PrefixAreMapped(t *testing.T) {
 	if _, ok := s.viaNAT64(context.Background(), from); ok {
 		t.Error("an IPv6 address went through the NAT64")
 	}
+}
+
+// The prefix is kept by the server's clock: moving it past nat64Keep looks it up again, and past
+// nat64Retry after a failed lookup.
+func TestTheNAT64PrefixExpiresByTheServersClock(t *testing.T) {
+	k := newFakeClock()
+	k.set(time.Now())
+	s := &Server{now: k.now}
+	var lookups atomic.Int32
+	var fail atomic.Bool
+	s.nat64.lookup = func(context.Context) (netip.Prefix, error) {
+		lookups.Add(1)
+		if fail.Load() {
+			return netip.Prefix{}, errors.New("timed out")
+		}
+		return carrierNAT64, nil
+	}
+	look := func(want int32) {
+		t.Helper()
+		s.viaNAT64(context.Background(), netip.MustParseAddrPort("198.51.100.7:53"))
+		if n := lookups.Load(); n != want {
+			t.Fatalf("%d lookups, want %d", n, want)
+		}
+	}
+	look(1)
+	k.advance(nat64Keep - time.Second)
+	look(1)
+	k.advance(time.Second)
+	fail.Store(true)
+	look(2)
+	k.advance(nat64Retry - time.Second)
+	look(2)
+	k.advance(time.Second)
+	look(3)
 }

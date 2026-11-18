@@ -177,7 +177,7 @@ func drained(t *testing.T, s *Server, addr netip.Addr, why string) {
 }
 
 // expireCones ages a device's UDP cones past their idle time, as if it had sent nothing for a
-// minute, and wakes each one's reader so it notices without waiting for its deadline.
+// minute, and wakes each one's reader so it notices without waiting for its timer.
 func (s *Server) expireCones(addr netip.Addr) {
 	s.mu.Lock()
 	var cones []*cone
@@ -188,7 +188,7 @@ func (s *Server) expireCones(addr netip.Addr) {
 	}
 	s.mu.Unlock()
 	for _, c := range cones {
-		c.last.Store(time.Now().Add(-udpIdle - time.Second).UnixNano())
+		c.last.Store(s.now().Add(-udpIdle - time.Second).UnixNano())
 		c.conn.SetReadDeadline(time.Now())
 	}
 }
@@ -365,10 +365,7 @@ func TestASleepingDeviceComesBackWhenItWakes(t *testing.T) {
 		t.Fatal("no handshake before sleeping")
 	}
 	// The clock moves on to onlineWithin after that handshake, and stays there.
-	asleep := shook.Add(onlineWithin)
-	s.mu.Lock()
-	s.now = func() time.Time { return asleep }
-	s.mu.Unlock()
+	clockOf(s).set(shook.Add(onlineWithin))
 	if st := s.Stats(); len(st.Connected) != 0 {
 		t.Fatalf("connected %v while asleep, want none", st.Connected)
 	}

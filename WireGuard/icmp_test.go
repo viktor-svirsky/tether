@@ -253,13 +253,13 @@ func TestAReplyFromAnotherHostIsntTaken(t *testing.T) {
 	p.waiting, p.of = map[uint16]waitingPing{}, map[netip.Addr]int{}
 	dst := netip.MustParseAddr(remote)
 	id, _ := p.add(waitingPing{owner: netip.MustParseAddr("10.7.0.2"), dst: dst, at: time.Now()}, 2)
-	if _, ok := p.take(id, netip.MustParseAddr("198.51.100.8")); ok {
+	if _, ok := p.take(id, netip.MustParseAddr("198.51.100.8"), time.Now()); ok {
 		t.Fatal("taken by another host's reply")
 	}
-	if _, ok := p.take(id, dst); !ok {
+	if _, ok := p.take(id, dst, time.Now()); !ok {
 		t.Fatal("not taken by its own reply")
 	}
-	if _, ok := p.take(id, dst); ok {
+	if _, ok := p.take(id, dst, time.Now()); ok {
 		t.Fatal("taken twice")
 	}
 }

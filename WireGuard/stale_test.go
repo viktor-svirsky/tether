@@ -29,7 +29,7 @@ func startOneDevice(t *testing.T) (*Server, [32]byte) {
 	t.Helper()
 	sPriv, sPub := keyPair(t)
 	_, cPub := keyPair(t)
-	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
+	s, err := startWithClock([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,9 +179,7 @@ func TestADeviceThatConnectsFromWhereItKnockedIsNoLongerNamed(t *testing.T) {
 	}
 	// Once that device is gone, a knock from there names it again.
 	later := shook.Add(onlineWithin + time.Minute)
-	s.mu.Lock()
-	s.now = func() time.Time { return later }
-	s.mu.Unlock()
+	clockOf(s).set(later)
 	knockTwice(s, old, later)
 	if st := s.statsMessage().Stale; st.Kind != staleDevice || st.From != old {
 		t.Fatalf("stale %+v, want a stale device from %s", st, old)
@@ -216,12 +214,8 @@ func TestAKnockCountsOnlyTowardItsOwnAddress(t *testing.T) {
 	}
 }
 
-// setNow sets the server's clock, under s.mu as the stats read it.
-func setNow(s *Server, now time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.now = func() time.Time { return now }
-}
+// setNow stops the server's clock at now.
+func setNow(s *Server, now time.Time) { clockOf(s).set(now) }
 
 // Two removed devices that keep trying each keep their own stale config for a minute, so each
 // one's page tells it, while the main screen says the latest (#63).
