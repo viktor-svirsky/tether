@@ -136,7 +136,7 @@ final class KeepAlive {
         // session is back.
         if lost { player = nil }
         guard holdingOn == .invalid else { return }
-        holdingOn = UIApplication.shared.beginBackgroundTask(withName: lost ? "Media services reset" : "Interruption over") { [weak self] in
+        holdingOn = UIApplication.shared.beginBackgroundTask(withName: lost ? "Media services reset" : "Interruption") { [weak self] in
             if lost {
                 self?.log("media services still gone when the background time ran out")
                 // The dead player isn't nil and may still say it plays, which would stop the next
