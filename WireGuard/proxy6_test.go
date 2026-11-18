@@ -28,7 +28,7 @@ func hotspotIs(s *Server, hosts ...netip.Addr) {
 	s.bind.mu.Lock()
 	s.bind.hosts = hosts
 	s.bind.mu.Unlock()
-	s.wakeProxy()
+	s.wakeProxy(false)
 }
 
 // proxyOn6 starts a server whose proxy listens on loopback for IPv4 and on host6 for IPv6, with
