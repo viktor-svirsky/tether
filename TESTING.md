@@ -140,14 +140,15 @@ Untested. Try it once on a fork before it's needed (#143).
 The tag can't be deleted (the tag ruleset), and doesn't need to be. Marking the release a prerelease takes it out of `releases/latest`, so `releases/latest/download/source.json` serves the release before it again:
 
 ```sh
-gh release edit vX.Y.Z -R viktor-svirsky/tether --prerelease
-gh api repos/viktor-svirsky/tether/releases/latest --jq .tag_name    # the release before it
-curl -sL https://github.com/viktor-svirsky/tether/releases/latest/download/source.json | jq -r '.apps[0].versions[0].version'
+repo=viktor-svirsky/tether    # OWNER/REPO, the fork's for the rehearsal below
+gh release edit vX.Y.Z -R "$repo" --prerelease
+gh api "repos/$repo/releases/latest" --jq .tag_name    # the release before it
+curl -sL "https://github.com/$repo/releases/latest/download/source.json" | jq -r '.apps[0].versions[0].version'
 ```
 
 People who already updated stay on the bad build: SideStore and AltStore don't go back a version. Ship the fix as the next patch, which counts from the pulled tag, and say what happened in Discussions.
 
-To try it on a fork, make two releases there with a small source.json each (`gh release create v0.0.1 source.json -R <you>/tether`, then v0.0.2), mark v0.0.2 a prerelease, and check both commands above name v0.0.1. Then delete the fork's releases and tags.
+To try it on a fork, set `repo` to the fork and make two releases there, each with a source.json like `{"apps":[{"versions":[{"version":"0.0.1"}]}]}` (`gh release create v0.0.1 source.json -R "$repo"`, then the same for 0.0.2). Mark v0.0.2 a prerelease: the API should print v0.0.1 and the source.json 0.0.1. Then delete the fork's releases and tags.
 
 ## Things we learned the hard way
 

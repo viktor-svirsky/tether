@@ -236,6 +236,10 @@ jobs:
   publish:
     needs: release
     if: needs.release.outputs.draft == 'true'
+    # The release job's lock, so no other version goes out while this one waits.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment: release # the second approval, see the top
     timeout-minutes: 5
@@ -246,4 +250,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.release.outputs.version }}
-        run: gh release edit "v$VERSION" -R "$GITHUB_REPOSITORY" --draft=false --latest
+        # Latest only when no published release has a higher version, so releases/latest and
+        # source.json never go back to an older one.
+        run: |
+          highest=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1000 \
+            --json tagName --jq '.[].tagName' | { cat; echo "v$VERSION"; } | sort -V | tail -1)
+          if [[ $highest == "v$VERSION" ]]; then latest=true; else latest=false; fi
+          echo "v$VERSION latest: $latest (highest: $highest)"
+          gh release edit "v$VERSION" -R "$GITHUB_REPOSITORY" --draft=false --latest="$latest"
