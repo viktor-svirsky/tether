@@ -30,7 +30,7 @@ final class HotspotSessionTests: XCTestCase {
 
     /// `saved` is a setup already in the Keychain at launch.
     private func makeSession(sceneActive: Bool = true, locked: Bool = false, saved: WireGuardSetup? = nil,
-                             log: @escaping @MainActor (String) -> Void = { _ in }) {
+                             cellular: @escaping () -> String = { "" }, log: @escaping @MainActor (String) -> Void = { _ in }) {
         server = FakeServer()
         sound = FakeSound()
         page = FakePage()
@@ -42,7 +42,7 @@ final class HotspotSessionTests: XCTestCase {
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
                                  carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
                                  dns: { [unowned self] in dns }, blockLocal: { [unowned self] in blockLocal }, usageDefaults: usageDefaults,
-                                 now: { [unowned self] in now }, log: log)
+                                 now: { [unowned self] in now }, cellular: cellular, log: log)
     }
 
     private func minutes(_ m: Double) -> Date { start.addingTimeInterval(m * 60) }
@@ -726,6 +726,31 @@ final class HotspotSessionTests: XCTestCase {
         session.leftScreen()
         session.cameOnScreen()
         XCTAssertEqual(logged.filter { $0.hasPrefix("Tether ") }, ["Tether left the screen", "Tether on screen"])
+    }
+
+    /// Whether the cellular data went with the hotspot, read only in the round it goes (#191).
+    func testTheHotspotGoingAwaySaysWhatTheCellularDataHas() {
+        var logged: [String] = []
+        var reads = 0
+        makeSession(cellular: { reads += 1; return "pdp_ip0: no address, data line: LTE" }, log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        address = nil
+        for _ in 0..<3 { session.syncWithHotspot() }
+        XCTAssertEqual(logged.filter { $0.hasPrefix("hotspot address gone") },
+                       ["hotspot address gone or changed, stopping (pdp_ip0: no address, data line: LTE)"])
+        XCTAssertEqual(reads, 1)
+    }
+
+    /// With nothing to say about the cellular data, as in a demo, the line has no empty brackets.
+    func testTheHotspotGoingAwayWithNoCellularText() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertEqual(logged.filter { $0.hasPrefix("hotspot address gone") }, ["hotspot address gone or changed, stopping"])
     }
 
     func testAProblemIsLoggedOnceNotEveryRound() {

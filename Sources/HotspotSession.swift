@@ -139,6 +139,9 @@ final class HotspotSession {
     private var usageSavedAt: Date?
     private var usageUnsaved = false
     private let now: () -> Date
+    /// What the cellular data has, like "pdp_ip0: IPv6, data line: LTE", read for the log when the
+    /// hotspot goes away (#191).
+    private let cellular: @MainActor () -> String
     private let log: @MainActor (String) -> Void
 
     /// When the hotspot went away, or Tether was last on screen since. Nil while the hotspot is on.
@@ -179,7 +182,7 @@ final class HotspotSession {
          idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> DNSChoice.Upstream = { DNSChoice.defaultUpstream },
          blockLocal: @escaping () -> Bool = { false },
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
-         resetDay: @escaping () -> ResetDay = { .default },
+         resetDay: @escaping () -> ResetDay = { .default }, cellular: @escaping @MainActor () -> String = { "" },
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -197,6 +200,7 @@ final class HotspotSession {
         monthlyUsage = usageDefaults.map { MonthlyUsage.load(from: $0, resetDay: resetDay()) } ?? MonthlyUsage(resetDay: resetDay())
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
+        self.cellular = cellular
         self.log = log
         publishSetup()
         showSetupProblem() // from launch, before any device joins the hotspot
@@ -232,7 +236,8 @@ final class HotspotSession {
         if ipv6Only != onIPv6OnlyCarrier { onIPv6OnlyCarrier = ipv6Only }
         let hotspot = hotspotAddress()
         if running, hotspot != boundHost, !listenToo(on: hotspot) {
-            log("hotspot address gone or changed, stopping")
+            let cellular = cellular()
+            log("hotspot address gone or changed, stopping" + (cellular.isEmpty ? "" : " (\(cellular))"))
             stopSharing()
         }
         // A WireGuard start that failed (keys locked after a restart, say) is tried again here.
@@ -1084,6 +1089,14 @@ enum Interfaces {
 
     private static func carrierIPv4(_ lines: [(name: String, address: String)]) -> Bool {
         lines.contains { $0.name == "pdp_ip0" && !$0.address.contains(":") && !isCLAT($0.address) }
+    }
+
+    /// What pdp_ip0, the cellular data's interface, has, for the log: "pdp_ip0: IPv6", say, or
+    /// "pdp_ip0: no address". Never the address itself.
+    static func pdpIp0(in interfaces: [String]) -> String {
+        let lines = parse(interfaces).filter { $0.name == "pdp_ip0" && !$0.address.contains("%") }
+        let has = [carrierIPv4(lines) ? "IPv4" : nil, lines.contains { $0.address.contains(":") } ? "IPv6" : nil].compactMap { $0 }
+        return "pdp_ip0: " + (has.isEmpty ? "no address" : has.joined(separator: " and "))
     }
 
     private static func isCLAT(_ address: String) -> Bool {
