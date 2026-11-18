@@ -3,7 +3,7 @@ import XCTest
 /// The fake app states a test can launch (`-TetherDemo <name>`, see Sources/DemoMode.swift).
 /// Their fixed values are described there.
 enum Scenario: String {
-    case waiting, localNetworkIntro, wireGuardLockedWaiting, noDevices, sharing, wireGuardLocked, wireGuardNeedsReset, wireGuardUnsaved, qrCodeUnsaved, expiring, notificationsOff, notifying, notificationsScreen, addDeviceScreen, addDeviceComputer, addDeviceComputerIPv6, addDeviceWaiting, addDeviceDone, addDeviceDoneUnsaved, localNetworkDenied, staleConfig, oldAddress, paused, proxy, proxyIPv6, addDeviceProxy, addDeviceProxyWorking
+    case waiting, localNetworkIntro, wireGuardLockedWaiting, noDevices, sharing, wireGuardLocked, wireGuardNeedsReset, wireGuardUnsaved, qrCodeUnsaved, expiring, notificationsOff, notifying, notificationsScreen, addDeviceScreen, addDeviceComputer, addDeviceComputerIPv6, addDeviceWaiting, addDeviceDone, addDeviceDoneUnsaved, localNetworkDenied, staleConfig, oldAddress, nameNotAnswered, paused, proxy, proxyIPv6, addDeviceProxy, addDeviceProxyWorking
 }
 
 /// Base class for the screen tests: launching, finding things by identifier, scrolling a List.
