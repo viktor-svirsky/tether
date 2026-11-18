@@ -191,7 +191,9 @@ final class Model: ObservableObject {
         }
         #endif
         refreshExpiryWarning()
-        callWatch = CallWatch(calls: SystemCalls(), cellular: Self.cellular, log: Self.append)
+        let calls = SystemCalls()
+        callWatch = CallWatch(calls: calls, cellular: Self.cellular, log: Self.append)
+        session.callOn = { calls.calls.contains { !$0.ended } }
         observeScene()
         localNetwork.onChange = { [weak self] denied in
             self?.localNetworkDenied = denied

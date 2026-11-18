@@ -24,6 +24,10 @@ enum KeepAlivePolicy {
 
     /// What the audio system tells `KeepAlive` that can leave the sound silent.
     enum AudioEvent {
+        /// A phone call, Siri or an alarm took the audio. With no sound iOS suspends Tether in the
+        /// background for the whole call, and it doesn't hear the call end either. A mixed sound
+        /// plays again as soon as the call has the audio, on iOS 27.2 at the first try (#191).
+        case interruptionBegan
         /// A phone call, Siri or an alarm is over. iOS does not resume the sound by itself. Right
         /// after a call the Phone app can still hold the audio, so one try to play can fail, and
         /// with no sound iOS suspends Tether again until it is opened (#106).
@@ -48,7 +52,7 @@ enum KeepAlivePolicy {
     static func restart(after event: AudioEvent, started: Bool) -> AudioRestart? {
         guard started else { return nil }
         switch event {
-        case .interruptionEnded, .mediaServicesLost: return .holdOn
+        case .interruptionBegan, .interruptionEnded, .mediaServicesLost: return .holdOn
         case .mediaServicesReset: return .rebuild
         }
     }

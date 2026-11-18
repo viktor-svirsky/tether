@@ -7,6 +7,12 @@ final class KeepAliveAudioEventTests: XCTestCase {
         XCTAssertEqual(KeepAlivePolicy.restart(after: .interruptionEnded, started: true), .holdOn)
     }
 
+    /// A call that starts with Tether in the background leaves it no sound, so iOS suspends it for the
+    /// whole call and it never hears the call end. A mixed sound plays again once the call has the audio (#191).
+    func testHoldsOnUntilTheSoundPlaysWhenACallStarts() {
+        XCTAssertEqual(KeepAlivePolicy.restart(after: .interruptionBegan, started: true), .holdOn)
+    }
+
     func testRebuildsEverythingAfterAMediaServicesReset() {
         XCTAssertEqual(KeepAlivePolicy.restart(after: .mediaServicesReset, started: true), .rebuild)
     }
@@ -16,6 +22,7 @@ final class KeepAliveAudioEventTests: XCTestCase {
     }
 
     func testAStoppedKeepAliveStaysStopped() {
+        XCTAssertNil(KeepAlivePolicy.restart(after: .interruptionBegan, started: false))
         XCTAssertNil(KeepAlivePolicy.restart(after: .interruptionEnded, started: false))
         XCTAssertNil(KeepAlivePolicy.restart(after: .mediaServicesLost, started: false))
         XCTAssertNil(KeepAlivePolicy.restart(after: .mediaServicesReset, started: false))

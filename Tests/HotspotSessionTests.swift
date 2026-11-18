@@ -1428,6 +1428,8 @@ final class HotspotSessionTests: XCTestCase {
         var call = false
         /// One came and went since the last round, with no round in between.
         var callEnded = false
+        /// CallKit has a call on, while the sound plays again.
+        var callOn = false
         var plays: Bool
         var line: UInt = #line
     }
@@ -1440,6 +1442,7 @@ final class HotspotSessionTests: XCTestCase {
             session.sceneActive = round.onScreen
             sound.interrupted = round.call
             sound.interruptedSinceTaken = round.callEnded
+            session.callOn = { round.callOn }
             if round.wake { session.wake() } else { session.syncWithHotspot() }
             XCTAssertEqual(sound.playing, round.plays, line: round.line)
         }
@@ -1488,6 +1491,28 @@ final class HotspotSessionTests: XCTestCase {
             SoundRound(minute: 21, onScreen: false, plays: true), // the call is over, no device back yet
             SoundRound(minute: 29.9, onScreen: false, plays: true), // 10 minutes from the last round in the call
             SoundRound(minute: 30, onScreen: false, plays: false),
+        ])
+    }
+
+    /// The sound plays again right after a call starts, so it no longer says a call is on. CallKit
+    /// still does, and the 10 minutes run from the call's end all the same (#191).
+    func testTheTenMinutesRunFromTheEndOfACallWithTheSoundBack() {
+        run([
+            SoundRound(minute: 0, onScreen: false, hotspot: true, plays: true),
+            SoundRound(minute: 1, onScreen: false, callOn: true, plays: true), // the call takes the hotspot
+            SoundRound(minute: 20, onScreen: false, callOn: true, plays: true),
+            SoundRound(minute: 21, onScreen: false, plays: true), // the call is over, no device back yet
+            SoundRound(minute: 29.9, onScreen: false, plays: true), // 10 minutes from the last round in the call
+            SoundRound(minute: 30, onScreen: false, plays: false),
+        ])
+    }
+
+    /// "Is Tether Sharing?" during a call only reports. The call keeps a sound that plays going, it
+    /// doesn't start one.
+    func testACallDoesntStartTheSoundOnABackgroundLaunch() {
+        run([
+            SoundRound(minute: 0, onScreen: false, callOn: true, plays: false),
+            SoundRound(minute: 1, onScreen: false, callOn: true, plays: false),
         ])
     }
 
