@@ -101,6 +101,7 @@ jobs:
     concurrency:
       group: release
       cancel-in-progress: false
+      queue: max # the default keeps one waiting job and cancels it for the next
     runs-on: macos-26
     environment: release # waits for an approval, see the top
     timeout-minutes: 30
@@ -240,6 +241,7 @@ jobs:
     concurrency:
       group: release
       cancel-in-progress: false
+      queue: max # the default keeps one waiting job and cancels it for the next
     runs-on: ubuntu-latest
     environment: release # the second approval, see the top
     timeout-minutes: 5
