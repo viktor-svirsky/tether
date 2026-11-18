@@ -194,6 +194,7 @@ final class WireGuardServer {
             /// proxyStats in WireGuard/proxy.go.
             struct Proxy: Decodable {
                 let addresses: [String]? // empty or null while it doesn't listen
+                let cantListen: Bool?
                 let paused: Bool
                 let open: Int
                 let up: UInt64
@@ -234,7 +235,7 @@ final class WireGuardServer {
                 }
             }
             let proxy = m.proxy.map {
-                ProxyStats(addresses: $0.addresses ?? [], paused: $0.paused, open: $0.open, traffic: TrafficTotals(bytesUp: $0.up, bytesDown: $0.down))
+                ProxyStats(addresses: $0.addresses ?? [], cantListen: $0.cantListen ?? false, paused: $0.paused, open: $0.open, traffic: TrafficTotals(bytesUp: $0.up, bytesDown: $0.down))
             } ?? ProxyStats()
             return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, proxy: proxy,
                                   stale: m.stale.flatMap(stale), recentStale: (m.recent ?? []).compactMap(stale))

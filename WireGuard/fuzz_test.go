@@ -239,7 +239,7 @@ func FuzzNAT64(f *testing.F) {
 		if p.Bits() != 96 || !slices.ContainsFunc(addrs, p.Contains) {
 			t.Fatalf("%v from %v", p, addrs)
 		}
-		s := &Server{}
+		s := &Server{now: time.Now} // viaNAT64 reads the expiry by the server clock
 		s.nat64.found.Store(&p)
 		s.nat64.expiry = time.Now().Add(time.Hour)
 		dst := netip.AddrPortFrom(netip.AddrFrom4([4]byte(binary.BigEndian.AppendUint32(nil, v4))), port)
