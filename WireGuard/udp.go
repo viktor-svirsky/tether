@@ -202,6 +202,7 @@ func (s *Server) send(c *cone) {
 				}
 			}
 		}
+		s.diag.sent(o.dst, err)
 		if err == nil {
 			c.last.Store(s.now().UnixNano())
 		}

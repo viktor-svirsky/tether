@@ -199,6 +199,31 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertEqual(stats.proxy.open, 3)
         XCTAssertEqual(stats.proxy.addresses, ["172.20.10.1:8118", "[2607:fb90:1:2::5]:8118"])
         XCTAssertEqual(stats.proxy.traffic, TrafficTotals(bytesUp: 2210, bytesDown: 48210))
+        // The Diagnostics screen's counters (#256).
+        XCTAssertEqual(stats.diagnostics, ServerDiagnostics(listening: ["172.20.10.1:51820", "[2607:fb90:1:2::5]:51820"], udpIn: 42,
+                                                            udpFrom: "172.20.10.3:51820", rejected: 2, replyFailed: 1,
+                                                            replyError: "to 172.20.10.4:51820: sendto: no route to host", packetsIn: 31,
+                                                            disallowed: 0, tcpTried: 4, tcpFailed: 1, udpFailed: 0, nat64: "64:ff9b::/96",
+                                                            lastError: "TCP to 1.1.1.1:443: dial tcp 1.1.1.1:443: connect: connection refused"))
+    }
+
+    /// Junk handshakes reach the Diagnostics screen through the C API as UDP in and rejected
+    /// messages, with where the port listens. A stopped server has counted nothing (#256).
+    func testTheDiagnosticsComeThroughTheCAPI() async throws {
+        let port = try start()
+        XCTAssertEqual(server.snapshot().diagnostics, ServerDiagnostics(listening: ["127.0.0.1:\(port)"]))
+        knock(port, times: 2)
+        // wireguard-go reads handshakes on its own goroutines.
+        var d = ServerDiagnostics()
+        for _ in 0..<100 where d.rejected < 2 {
+            try await Task.sleep(for: .milliseconds(20))
+            d = server.snapshot().diagnostics
+        }
+        XCTAssertEqual(d.udpIn, 2)
+        XCTAssertEqual(d.rejected, 2)
+        XCTAssertTrue(d.udpFrom.hasPrefix("127.0.0.1:"), d.udpFrom)
+        server.stop()
+        XCTAssertEqual(server.snapshot().diagnostics, ServerDiagnostics())
     }
 
     /// A device's screen shows where it connects from without the port (#73), and the session goes
@@ -342,6 +367,10 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertEqual(try WireGuardServer.Stats.read(Data(json.utf8)).connected, ["10.7.0.2"])
         XCTAssertNil(try WireGuardServer.Stats.read(Data(json.utf8)).stale, "no stale key, no stale config")
         XCTAssertEqual(try WireGuardServer.Stats.read(Data(json.utf8)).recentStale, [], "no recent key, none")
+        XCTAssertEqual(try WireGuardServer.Stats.read(Data(json.utf8)).diagnostics, ServerDiagnostics(), "no diag key, nothing counted")
+        let partial = #"{"v":1,"up":0,"down":0,"peers":[{"address":"10.7.0.2","connected":true,"up":0,"down":0,"handshake":5,"endpoint":""}],"diag":{"udpIn":3}}"#
+        XCTAssertEqual(try WireGuardServer.Stats.read(Data(partial.utf8)).diagnostics, ServerDiagnostics(udpIn: 3), "a key missing in diag reads as 0")
+        XCTAssertEqual(try WireGuardServer.Stats.read(Data(partial.utf8)).connected, ["10.7.0.2"], "and the devices still read")
     }
 
     func testTheDeviceListIsTheMessageGoReads() throws {

@@ -238,6 +238,12 @@ struct DemoState {
         server.handshakes = ["10.7.0.3": clock.now.addingTimeInterval(-2 * 3600)]
         if connected.contains("10.7.0.2") { server.handshakes["10.7.0.2"] = clock.now.addingTimeInterval(-30) }
         if scenario == .staleConfig { server.stale = StaleConfig(kind: .device, at: clock.now) }
+        // The Diagnostics screen's counters: the iPad's traffic, and one connection the iPhone couldn't make.
+        if connected.contains("10.7.0.2") {
+            server.diagnostics = ServerDiagnostics(udpIn: 1_250, udpFrom: "172.20.10.2:52345",
+                                                   packetsIn: 1_180, tcpTried: 42, tcpFailed: 1,
+                                                   lastError: "TCP to 203.0.113.9:443: connect: connection refused")
+        }
         // The proxy's devices: two pages open and 85 MB this month on its screen, or one page loading.
         if [.proxy, .proxyIPv6].contains(scenario) {
             server.proxyOpen = 2

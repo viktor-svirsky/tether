@@ -26,6 +26,8 @@ type hostBind struct {
 	// port is where it last listened, so the server can listen there again: the devices' configs
 	// point at it.
 	port uint16
+	// counts are for the Diagnostics screen, see diagnostics.go.
+	counts bindCounts
 }
 
 type endpoint struct{ netip.AddrPort }
@@ -99,6 +101,7 @@ func (b *hostBind) receiveOn(c *net.UDPConn) conn.ReceiveFunc {
 		}
 		sizes[0] = n
 		eps[0] = endpoint{netip.AddrPortFrom(from.Addr().Unmap(), from.Port())}
+		b.counts.received(eps[0].(endpoint).AddrPort)
 		return 1, nil
 	}
 }
@@ -136,10 +139,12 @@ func (b *hostBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 	}
 	b.mu.Unlock()
 	if c == nil {
+		b.counts.unsent(e.AddrPort, net.ErrClosed)
 		return net.ErrClosed
 	}
 	for _, buf := range bufs {
 		if _, err := c.WriteToUDPAddrPort(buf, e.AddrPort); err != nil {
+			b.counts.unsent(e.AddrPort, err)
 			if deadSocket(err) {
 				b.failed(c)
 			}

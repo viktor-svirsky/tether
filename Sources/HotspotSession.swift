@@ -590,6 +590,10 @@ final class HotspotSession {
         return true
     }
 
+    /// The server's counters for the Diagnostics screen, read when the screen asks: published, they
+    /// would redraw every view that watches the model each second (#166).
+    var serverDiagnostics: ServerDiagnostics { server.snapshot().diagnostics }
+
     private func publishProxyStats(_ stats: ProxyStats) {
         if stats != proxyStats { proxyStats = stats }
     }
