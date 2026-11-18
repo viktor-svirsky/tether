@@ -25,7 +25,7 @@ import (
 
 var loopback = netip.MustParseAddr("127.0.0.1")
 
-func keyPair(t *testing.T) (priv, pub [32]byte) {
+func keyPair(t testing.TB) (priv, pub [32]byte) {
 	rand.Read(priv[:])
 	priv[0] &= 248
 	priv[31] = priv[31]&127 | 64
