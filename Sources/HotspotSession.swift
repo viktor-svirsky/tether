@@ -112,6 +112,9 @@ final class HotspotSession {
     /// Only the on-screen sampler publishes connections and speeds, so it runs only while the app is on screen.
     /// False in a launch from a Shortcuts action, which happens in the background.
     var sceneActive: Bool
+    /// CallKit has a call on. The keep-alive sound plays again right after a call starts, so it can't
+    /// say so itself (#191).
+    var callOn: () -> Bool = { false }
 
     private let devices: WireGuardDevices
     private let server: WireGuardServing
@@ -321,7 +324,7 @@ final class HotspotSession {
         // A call can take the hotspot away for as long as it lasts, so the 10 minutes run from its
         // end too. Before, a long call left Tether suspended and its devices cut off until someone
         // opened it (#191). Not after an idle stop, which means to stop.
-        let call = keepAlive.takeInterruption() && idleStopped == nil
+        let call = (keepAlive.takeInterruption() || callOn()) && idleStopped == nil
         if hotspot { waitingSince = nil } else if sceneActive || call || waitingSince == nil { waitingSince = now }
         let plays = KeepAlivePolicy.plays(waitingSince: waitingSince, now: now)
         if plays { keepAlive.start() } else if keepAlive.playing {

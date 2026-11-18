@@ -25,7 +25,8 @@ final class KeepAlive {
     /// Making its sound right now. Starting it can fail, in the background say.
     var sounding: Bool { player?.isPlaying == true }
     /// A call, Siri or an alarm took the audio, and the sound hasn't played since. iOS doesn't always
-    /// say when a call is over, so the next sound that plays is what ends it.
+    /// say when a call is over, so the next sound that plays is what ends it. That is usually right
+    /// after the call starts, so `HotspotSession.callOn` asks CallKit instead.
     private var interrupted = false
     /// An interruption came since `takeInterruption` was last asked. When the sound comes back
     /// before the next watcher round, after Tether went unwatched through a call say, the round
