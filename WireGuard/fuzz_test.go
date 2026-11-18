@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -134,10 +135,12 @@ func FuzzResolve(f *testing.F) {
 	f.Add(q, []byte{}, true)
 	f.Add([]byte{}, []byte{}, false)
 	s := startAlone(f)
-	var upstream []byte
-	viaFakeDoH(s, func([]byte) []byte { return upstream })
+	// A request still out when doh returns, its hedge say, reads this during the next input.
+	var upstream atomic.Pointer[[]byte]
+	viaFakeDoH(s, func([]byte) []byte { return bytes.Clone(*upstream.Load()) })
 	f.Fuzz(func(t *testing.T, query, answer []byte, overTCP bool) {
-		upstream = answer
+		mine := bytes.Clone(answer) // the fuzzer reuses answer for the next input
+		upstream.Store(&mine)
 		got := s.resolve(query, overTCP)
 		if len(got) > dnsMessageMax {
 			t.Fatalf("a %d byte answer", len(got))
