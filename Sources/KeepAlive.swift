@@ -3,8 +3,8 @@ import UIKit
 
 /// Plays a looping silent sound so iOS keeps the app (and its listener) running in the background.
 /// It mixes with other audio, so music keeps playing. A phone call, Siri or an alarm interrupts it,
-/// and iOS does not resume it. When the interruption ends, or the media services die, it asks iOS
-/// for background time and keeps starting the sound in it until it plays.
+/// and iOS does not resume it. When the interruption begins or ends, or the media services die, it
+/// asks iOS for background time and keeps starting the sound in it until it plays.
 /// Fine for a personally installed app. App Store review would reject it.
 /// `KeepAlivePolicy` says when it plays.
 final class KeepAlive {
@@ -105,6 +105,7 @@ final class KeepAlive {
             log("a call, Siri or an alarm interrupted the keep-alive sound (reason \(reason))")
             interrupted = true
             interruptedSinceTaken = true
+            restart(after: .interruptionBegan)
         case .ended:
             let options = AVAudioSession.InterruptionOptions(rawValue: info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
             log("interruption over (shouldResume: \(options.contains(.shouldResume)))")
@@ -145,7 +146,7 @@ final class KeepAlive {
             }
             self?.stopHoldingOn()
         }
-        // After an interruption the line before says it is over.
+        // After an interruption the line before says it began or is over.
         let cause = lost ? "media services lost, " : ""
         log(holdingOn == .invalid
             ? "\(cause)iOS gave no background time to wait for the sound"
@@ -159,7 +160,11 @@ final class KeepAlive {
         guard holdingOn == task else { return }
         start()
         if sounding {
-            let cause = event == .mediaServicesLost ? "the media services were lost" : "the interruption"
+            let cause = switch event {
+            case .mediaServicesLost: "the media services were lost"
+            case .interruptionBegan: "the interruption began"
+            default: "the interruption"
+            }
             log("keep-alive sound back after \(cause), \(tries) \(tries == 1 ? "try" : "tries")")
             stopHoldingOn()
             return
