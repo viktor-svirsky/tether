@@ -9,6 +9,16 @@ struct DiagnosticsView: View {
     /// on the row, and a long one would cover it.
     @State private var copied = false
 
+    /// How long "Copied" shows, in seconds. A UI test under load can take longer than 2 s to look
+    /// after a menu closes, so in a Debug build it can pass `-diagnostics.copiedShownFor <s>`.
+    private static var copiedShownFor: Double {
+        #if DEBUG
+        let s = UserDefaults.standard.double(forKey: "diagnostics.copiedShownFor")
+        if s > 0 { return s }
+        #endif
+        return 2
+    }
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             List {
@@ -41,7 +51,7 @@ struct DiagnosticsView: View {
         }
         .task(id: copied) {
             guard copied else { return }
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(Self.copiedShownFor))
             if !Task.isCancelled { copied = false }
         }
         .navigationTitle("Diagnostics")

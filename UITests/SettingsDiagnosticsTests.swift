@@ -3,8 +3,10 @@ import XCTest
 /// Settings > Diagnostics (#256): the server's counters, and a tap that copies one. What each row
 /// says is covered by the unit tests (DiagnosticsTests), and the counters by Go's.
 final class SettingsDiagnosticsTests: TetherUITestCase {
+    /// "Copied" shows for a minute, not 2 s: under load a check after the menu closes can come later
+    /// than that, and miss it.
     private func openDiagnostics(_ scenario: Scenario = .sharing) {
-        launch(scenario)
+        launch(scenario, arguments: ["-diagnostics.copiedShownFor", "60"])
         openSettings()
         reveal(element("settings.diagnostics")).tap()
         XCTAssertTrue(app.navigationBars["Diagnostics"].waitForExistence(timeout: 5), "Diagnostics did not open")
