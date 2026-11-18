@@ -40,6 +40,7 @@ func (s *Server) reopen() {
 		return
 	}
 	s.keep("", "listening again on port %d after its socket was closed", []any{port})
+	s.wakeProxy(true) // iOS closed the proxy's sockets too
 }
 
 // retryIn has reopen run again after d, unless a retry is coming already: every failed send

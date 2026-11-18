@@ -146,6 +146,8 @@ final class HotspotSession {
     /// minutes. "Is Tether Sharing?" launches Tether in the background too, and only reports.
     private var waitingSince: Date? = .distantPast
     private var idleStop = IdleStop()
+    /// The proxy's bytes at the last idle check, see `stopWhenIdle`.
+    private var idleProxyTraffic: TrafficTotals?
     private var sampler = TrafficSampler()
     /// Who was connected at the watcher's last read in the background, see `readInBackground`.
     private var watchedConnected: Set<String> = []
@@ -295,8 +297,11 @@ final class HotspotSession {
     private func stopWhenIdle() {
         let after = idleStopAfter()
         let now = self.now()
-        // A device on the proxy is using Tether too.
-        let connected = !connectedNow.isEmpty || proxyStats.open > 0
+        // A device on the proxy is using Tether too. It opens connections only while it loads something,
+        // so data through it since the last check counts as well as one open now.
+        let proxyMoved = idleProxyTraffic.map { $0 != proxyStats.traffic } ?? false
+        idleProxyTraffic = proxyStats.traffic
+        let connected = !connectedNow.isEmpty || proxyStats.open > 0 || proxyMoved
         guard idleStop.check(sharing: sharing, connected: connected, onScreen: sceneActive, after: after, now: now) else {
             return
         }
