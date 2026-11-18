@@ -316,6 +316,13 @@ final class LimitTests: XCTestCase {
                        "It used 10 GB this month. It connects again on December 1, or when you resume it.")
     }
 
+    /// The proxy's notice says what its screen says, see `ProxyStatus.detail`.
+    func testTheProxysNoticeSaysItWorksAgain() {
+        let reached = LimitAlert(device: UUID(), name: "Proxy", kind: .reached, used: 1, limit: 10_000_000_000, period: november, proxy: true)
+        XCTAssertEqual(reached.notice(calendar: calendar, locale: Locale(identifier: "en_US")).body,
+                       "It used 10 GB this month. It works again on December 1, or when you resume it.")
+    }
+
     func testTheNearNoticeSaysHowMuch() {
         let near = LimitAlert(device: UUID(), name: "iPad", kind: .near, used: 9_100_000_000, limit: 10_000_000_000, period: november)
         XCTAssertEqual(near.notice(calendar: calendar, locale: Locale(identifier: "en_US")).body, "It used 9.1 GB of its 10 GB this month.")

@@ -6,7 +6,7 @@ package main
 // HTTPS and plain http:// requests, which covers browsers and most apps. UDP, pings and apps that
 // ignore the system proxy still go out as hotspot traffic, so WireGuard stays the whole-device way.
 //
-// There's no password: the proxy fields of Android, Windows and consoles have no login, so one
+// There's no password: the proxy fields of Android, Windows and PlayStation have no login, so one
 // would lock most devices out. Only the hotspot's clients are served, and the hotspot has its own
 // password. It listens on 172.20.10.1, and on the hotspot's IPv6 address too: on a carrier that
 // gives the iPhone IPv6 only, a Mac, an iPhone or an iPad on the hotspot takes no IPv4 address.

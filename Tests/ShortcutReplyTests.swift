@@ -11,6 +11,13 @@ final class ShortcutReplyTests: XCTestCase {
         XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 3)), "Tether is sharing with 3 devices.")
     }
 
+    /// A device on the proxy uses Tether too. The proxy can't tell its devices apart, so it's named, not counted.
+    func testStatusCountsTheProxyWhileAConnectionIsOpenOnIt() {
+        XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 0, proxyInUse: true)), "Tether is sharing. The proxy is in use.")
+        XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 1, proxyInUse: true)), "Tether is sharing with 1 device and the proxy.")
+        XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 2, proxyInUse: true)), "Tether is sharing with 2 devices and the proxy.")
+    }
+
     func testStatusPassesOnWhyWireGuardIsNotRunning() {
         let state = State(running: true, connected: 0, problem: "Its keys can't be read yet. Unlock this iPhone once.")
         XCTAssertEqual(ShortcutReply.status(state),

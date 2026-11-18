@@ -11,7 +11,7 @@
 
 **Use your iPhone's data on any device, as the iPhone's own traffic instead of hotspot traffic.**
 
-Lots of plans give the iPhone plenty of data, then cap, slow down or block Personal Hotspot. Tether makes every connection again on the iPhone itself, so your laptop's traffic counts as the phone's own. Windows, Mac, Linux, Android, iPad or a travel router: if it runs WireGuard, it works.
+Lots of plans give the iPhone plenty of data, then cap, slow down or block Personal Hotspot. Tether makes every connection again on the iPhone itself, so your laptop's traffic counts as the phone's own. Windows, Mac, Linux, Android, iPad or a travel router: if it runs WireGuard, it works. A TV or a console with a proxy setting can use Tether's proxy instead, for its browser and most apps. Games, calls and apps that skip the proxy still count as hotspot data.
 
 ![How Tether works: a laptop runs out of hotspot data, then connects to Tether over WireGuard and its traffic counts as the iPhone's own.](docs/tether.gif)
 
@@ -51,7 +51,7 @@ Other ways to install (Feather, a paid certificate, building it on a Mac) are in
 3. Give it the config. An iPad or phone scans the QR code. A laptop opens the address Add a device shows, usually `http://172.20.10.1`, and downloads the file.
 4. Turn the tunnel on. The device shows up in Tether as Connected.
 
-The code works while Add a device is open and for 10 minutes after. Travel routers, IPv6-only carriers and per-device settings are in the [guide](docs/GUIDE.md#connect-a-device).
+The code works while Add a device is open and for 10 minutes after. No WireGuard app on the device, but a proxy setting? Pick No, use the proxy in Add a device, and set the server and port it shows as the device's proxy. Travel routers, IPv6-only carriers and per-device settings are in the [guide](docs/GUIDE.md#connect-a-device).
 
 ## Good to know
 

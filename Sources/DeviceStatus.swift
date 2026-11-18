@@ -120,6 +120,21 @@ struct ProxyStatus: Equatable {
         }
     }
 
+    /// Add a device's last step when the proxy can't carry a page, or nil when it can. Opening the
+    /// steps turns it on and resumes a pause by you, but either can fail to be saved. Off, it has no
+    /// row under Devices, so that comes first.
+    static func blocked(_ proxy: WireGuardSetup.Proxy?) -> String? {
+        guard let proxy, proxy.on else { return "The proxy is off. Close this and pick No, use the proxy again to turn it on." }
+        return switch proxy.paused {
+        case .byYou?: "The proxy is paused. To resume it, close this, tap Proxy under Devices and turn off Pause."
+        case .atLimit?: "The proxy is paused at its data limit. To use it anyway, close this, tap Proxy under Devices and turn off Pause."
+        case nil: nil
+        }
+    }
+
+    /// A device on it has a connection open, so it counts as using Tether, see `UsingTether`.
+    var inUse: Bool { look == .connected }
+
     /// The line under the title on its screen, while it's paused or can't listen, see `DeviceStatus.detail`.
     func detail(resets: String, period: String) -> String? {
         switch state {
@@ -141,5 +156,20 @@ enum ProxyAddress {
     static func servers(_ addresses: [String]) -> [String] {
         let servers = addresses.compactMap { PeerStats.address($0) }
         return servers.isEmpty ? [Hotspot.host] : servers
+    }
+}
+
+/// The status card's line under Sharing: the WireGuard devices connected, and the proxy while a
+/// connection is open on it. The proxy's devices can't be told apart, so it's named, not counted.
+enum UsingTether {
+    static func headline(devices: Int, proxy: Bool) -> String {
+        switch (devices, proxy) {
+        case (0, false): "No device is using Tether yet"
+        case (0, true): "The proxy is in use"
+        case (1, false): "1 device connected"
+        case (1, true): "1 device connected and the proxy in use"
+        case let (n, false): "\(n) devices connected"
+        case let (n, true): "\(n) devices connected and the proxy in use"
+        }
     }
 }

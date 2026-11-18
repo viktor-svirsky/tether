@@ -516,7 +516,7 @@ struct AddDeviceSheet: View {
     private var proxySteps: some View {
         let working = proxyProgress?.working == true
         let hotspot = model.running
-        let paused = model.proxy?.paused != nil
+        let blocked = ProxyStatus.blocked(model.proxy)
         return ScrollView {
             VStack(spacing: 24) {
                 if model.localNetworkDenied && !working {
@@ -547,13 +547,13 @@ struct AddDeviceSheet: View {
                             title: "In its Wi-Fi settings, set the proxy", id: "add.proxy.step2") {
                         proxySettings(ProxyAddress.servers(model.proxyStats.addresses))
                     }
-                    StepRow(number: 3, mark: working ? .done : hotspot && !paused ? .waiting : .later, lineDone: nil,
+                    StepRow(number: 3, mark: working ? .done : hotspot && blocked == nil ? .waiting : .later, lineDone: nil,
                             title: "Open a page on it", id: "add.proxy.step3") {
                         Group {
                             if working {
                                 note("Working")
-                            } else if paused {
-                                note("The proxy is paused. Resume it on its screen, under Devices.")
+                            } else if let blocked {
+                                note(blocked)
                             } else {
                                 note("Waiting for the first page")
                             }
@@ -599,6 +599,11 @@ struct AddDeviceSheet: View {
             addressRow(ProxyAddress.port, caption: "Port", name: "Port", copyLabel: "Copy the port", id: "add.proxy.port",
                        copyID: "add.proxy.copyPort")
             ProxyPlaces()
+            // A Mac sets it for its Wi-Fi, not for one network, and Windows for every network.
+            Text("A Mac or a Windows PC keeps the proxy on other networks too. Turn it off on that device when you leave this hotspot.")
+                .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("add.proxy.turnOff")
         }
     }
 
@@ -677,9 +682,9 @@ struct ProxyPlaces: View {
     static let places = [
         ("iPhone, iPad", "Wi-Fi > (i) > Configure Proxy > Manual"),
         ("Mac", "Wi-Fi > Details > Proxies > Web and Secure Web"),
-        ("Windows", "Settings > Proxy > Use a proxy server"),
+        ("Windows", "Settings > Network & internet > Proxy > Manual proxy setup"),
         ("Android", "Wi-Fi > network > Edit > Proxy > Manual"),
-        ("PlayStation, Xbox, TV", "In the network settings, Proxy"),
+        ("PlayStation, Switch, TV", "In the network settings, Proxy"),
     ]
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
