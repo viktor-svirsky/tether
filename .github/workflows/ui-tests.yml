@@ -1,4 +1,4 @@
-# Actions > UI tests > Run workflow. The full XCUITest suite takes about 15 minutes, so it runs on
+# Actions > UI tests > Run workflow. The full XCUITest suite takes one to two hours, so it runs on
 # demand and not on every push. It runs twice at once: on the oldest iOS that GitHub's runners have,
 # on the smallest iPhone, and on the newest. iOS 17, the oldest Tether supports, isn't on any of
 # them, and iOS 27 isn't yet, so those need a phone or a Mac with that simulator (TESTING.md).
