@@ -852,6 +852,84 @@ func inOwnProcess(t *testing.T) {
 	}
 }
 
+// shutDownUnseen shuts the process's sockets down as iOS does, but the server never hears of it:
+// the bind was opened again, by ListenOn say, before its failed read was seen, which forgets it.
+// So reopen doesn't run, and only ListenOn can bring the proxy back.
+func shutDownUnseen(t *testing.T, s *Server) {
+	t.Helper()
+	s.bind.mu.Lock()
+	s.bind.died = func() {}
+	s.bind.mu.Unlock()
+	if _, _, e := syscall.Syscall(syscall.SYS_PID_SHUTDOWN_SOCKETS, uintptr(os.Getpid()), 2, 0); e != 0 {
+		t.Fatalf("pid_shutdown_sockets: %v", e)
+	}
+	if !waitFor(5*time.Second, func() bool {
+		s.bind.mu.Lock()
+		defer s.bind.mu.Unlock()
+		return s.bind.broken
+	}) {
+		t.Fatal("the bind didn't see its socket fail")
+	}
+	s.bind.mu.Lock()
+	s.bind.broken = false
+	s.bind.mu.Unlock()
+}
+
+// proxyWorksAgain fails the test unless a tunnel through the proxy at proxy works within a few seconds.
+func proxyWorksAgain(t *testing.T, proxy string) {
+	t.Helper()
+	echo := echoFarEnd(t)
+	var conn net.Conn
+	var r *bufio.Reader
+	var status int
+	if !waitFor(5*time.Second, func() bool {
+		c, err := net.DialTimeout("tcp", proxy, time.Second)
+		if err != nil {
+			return false // refused until it listens again
+		}
+		c.Close()
+		conn, r, status = tunnel(t, proxy, echo)
+		return status == http.StatusOK
+	}) || !echoes(conn, r) {
+		t.Fatalf("the proxy didn't listen again on %s: status %d", proxy, status)
+	}
+}
+
+// ListenOn brings back a proxy listener iOS shut down even when the server never heard of the
+// shutdown, and the address didn't change: it sees the listener is dead.
+func TestListeningAgainBringsBackADeadProxyListenerUnheardOf(t *testing.T) {
+	if os.Getenv("TETHER_OWN_PROCESS") == "" {
+		inOwnProcess(t)
+		return
+	}
+	s := proxyReady(t)
+	s.SetProxy(true, false)
+	proxy := proxyListening(t, s)
+	shutDownUnseen(t, s)
+	if err := s.ListenOn([]netip.Addr{loopback}); err != nil {
+		t.Fatal(err)
+	}
+	proxyWorksAgain(t, proxy)
+}
+
+// When the new addresses can't be listened on and the old ones are listened on again, the proxy
+// comes back too.
+func TestAFailedListenOnStillBringsBackADeadProxyListener(t *testing.T) {
+	if os.Getenv("TETHER_OWN_PROCESS") == "" {
+		inOwnProcess(t)
+		return
+	}
+	s := proxyReady(t)
+	s.SetProxy(true, false)
+	proxy := proxyListening(t, s)
+	shutDownUnseen(t, s)
+	// An address on no interface here, like a new IPv6 address that can't take a socket yet.
+	if err := s.ListenOn([]netip.Addr{netip.MustParseAddr("192.0.2.1")}); err == nil {
+		t.Fatal("listened on an address that isn't here")
+	}
+	proxyWorksAgain(t, proxy)
+}
+
 // A client that half-closes a CONNECT and then leaves, asleep say, ends its tunnel, though the far
 // end stays silent: its own direction ended, so nothing read its socket to see it go. The reset
 // stands for keepalive giving up, which leaves the same error on the socket.

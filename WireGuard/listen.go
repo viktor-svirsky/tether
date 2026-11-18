@@ -38,5 +38,6 @@ func (s *Server) ListenOn(hosts []netip.Addr) error {
 		s.socketDied()
 		return fmt.Errorf("%w, and listening again on the old addresses failed: %v", err, again)
 	}
+	s.wakeProxy(broken) // as above: listening again cleared broken, so reopen won't run
 	return err
 }

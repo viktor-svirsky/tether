@@ -494,9 +494,10 @@ func (k *proxySocket) accepted() {
 
 // wakeProxy has the proxy follow the hotspot's addresses after the server listens again, see
 // ListenOn: a socket whose address is gone or changed stops listening there, and each tries to
-// listen now on its family's address, which may be back. closed says iOS closed the app's sockets,
-// see reopen: then each listener is closed and listened on again, even on the same address. Accept
-// on a listener iOS closed waits for good, so serve can't see it, while the devices are refused.
+// listen now on its family's address, which may be back. A listener iOS closed is listened on again
+// too, even on the same address: its Accept waits for good, so serve can't see it, while the
+// devices are refused. closed says iOS closed the app's sockets, see reopen. Without it, the
+// listener's own error says so, which is there even when the server missed the shutdown.
 func (s *Server) wakeProxy(closed bool) {
 	s.mu.Lock()
 	r := s.proxy.run
@@ -510,7 +511,7 @@ func (s *Server) wakeProxy(closed bool) {
 		var from netip.AddrPort
 		s.mu.Lock()
 		moved := want.Addr() != k.host
-		if k.ln != nil && (moved || closed) {
+		if k.ln != nil && (moved || closed || socketError(k.ln) != nil) {
 			old, from, k.moving = k.ln, k.at, true
 		}
 		s.mu.Unlock()
@@ -1099,9 +1100,9 @@ func (r *proxyRun) relay(client *proxyConn, in io.Reader, out *outConn) {
 }
 
 // socketError is the error c's socket holds, from a reset or keepalive giving up, which a read
-// would return. Nil while there's none.
-func socketError(c net.Conn) error {
-	t, ok := c.(*net.TCPConn)
+// would return, or iOS closing it. Nil while there's none, and for what has no socket.
+func socketError(c any) error {
+	t, ok := c.(syscall.Conn)
 	if !ok {
 		return nil
 	}
