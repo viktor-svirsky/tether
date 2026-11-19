@@ -1552,7 +1552,7 @@ func TestTheProxyListsTheClientsTheFarEndAnswered(t *testing.T) {
 		t.Fatalf("served %v after a tunnel echoed, want 127.0.0.1", served())
 	}
 	s.mu.Lock()
-	s.proxy.served = map[netip.Addr]struct{}{}
+	s.proxy.served = map[netip.Addr]time.Time{}
 	s.mu.Unlock()
 	resp, err = viaProxy(proxy).Get("http://" + tcpPage(t, 10) + "/")
 	if err != nil {
@@ -1561,5 +1561,54 @@ func TestTheProxyListsTheClientsTheFarEndAnswered(t *testing.T) {
 	resp.Body.Close()
 	if got := served(); !slices.Equal(got, []string{"127.0.0.1"}) {
 		t.Fatalf("served %v after a page, want 127.0.0.1", got)
+	}
+}
+
+// A client served longer than servedFor ago drops out of the list, so one that comes back counts as
+// new, and past maxServed clients the one served longest ago goes (#285).
+func TestTheServedClientsAgeOutAndAreCapped(t *testing.T) {
+	s, _ := proxyOn(t)
+	served := func() []string { return s.statsMessage().Proxy.Served }
+	laptop := netip.MustParseAddr("172.20.10.5")
+	s.markServed(laptop)
+	if got := served(); !slices.Equal(got, []string{"172.20.10.5"}) {
+		t.Fatalf("served %v, want the laptop", got)
+	}
+	s.mu.Lock()
+	s.proxy.served[laptop] = time.Now().Add(-servedFor - time.Second)
+	s.mu.Unlock()
+	if got := served(); len(got) != 0 {
+		t.Fatalf("served %v after the laptop was idle, want none", got)
+	}
+	s.markServed(laptop)
+	if got := served(); !slices.Equal(got, []string{"172.20.10.5"}) {
+		t.Fatalf("served %v after the laptop came back, want it", got)
+	}
+	s.mu.Lock()
+	s.proxy.served[laptop] = time.Now().Add(-time.Minute) // the oldest
+	s.mu.Unlock()
+	for i := range maxServed {
+		s.markServed(netip.AddrFrom16([16]byte{0x20, 0x01, 0x0d, 0xb8, 15: byte(i + 1)}))
+	}
+	got := served()
+	if len(got) != maxServed || slices.Contains(got, "172.20.10.5") {
+		t.Fatalf("%d served, laptop in it %v, want %d without the laptop", len(got), slices.Contains(got, "172.20.10.5"), maxServed)
+	}
+}
+
+// A long tunnel marks its client again while bytes keep coming, so a TV streaming through one
+// stays served past servedFor.
+func TestATunnelKeepsMarkingItsClientServed(t *testing.T) {
+	var now time.Time
+	marks := 0
+	r := &servedReading{Reader: strings.NewReader(strings.Repeat("x", 100)), mark: func() { marks++ }, now: func() time.Time { return now }}
+	now = time.Unix(1000, 0)
+	b := make([]byte, 10)
+	r.Read(b)
+	r.Read(b)
+	now = now.Add(servedEvery)
+	r.Read(b)
+	if marks != 2 {
+		t.Fatalf("%d marks, want one at the start and one after servedEvery", marks)
 	}
 }

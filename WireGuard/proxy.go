@@ -110,8 +110,8 @@ type proxy struct {
 	dialsBy   map[netip.Addr]int // each client's, see maxDialsPerClient
 	refusedAt time.Time          // when a refusal was last logged, so a busy client can't fill the log
 
-	// served is the clients the far end answered since the server started, see markServed.
-	served map[netip.Addr]struct{}
+	// served is when the far end last answered each client, see markServed.
+	served map[netip.Addr]time.Time
 }
 
 func newProxy() *proxy {
@@ -130,7 +130,7 @@ func newProxy() *proxy {
 		maxDialsPerClient: maxDials / 2,
 		handshake:         proxyHandshake,
 		openBy:            map[netip.Addr]int{},
-		served:            map[netip.Addr]struct{}{},
+		served:            map[netip.Addr]time.Time{},
 		dialsBy:           map[netip.Addr]int{},
 		listen: func(ctx context.Context, address string) (net.Listener, error) {
 			// The keepalive of a tunnel device's side, see Start: a device that leaves the hotspot
@@ -359,10 +359,18 @@ func (s *Server) newProxyRun() *proxyRun {
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			w.WriteHeader(statusFor(err))
 		},
-		// A response came from the far end: the client is served, see markServed.
+		// A response came from the far end: the client is served, see markServed, and again while
+		// its body comes.
 		ModifyResponse: func(resp *http.Response) error {
 			if from, ok := resp.Request.Context().Value(proxyClient{}).(netip.Addr); ok {
 				r.s.markServed(from)
+				if resp.StatusCode == http.StatusSwitchingProtocols {
+					return nil // an upgrade's body is the connection, which ReverseProxy writes to
+				}
+				resp.Body = struct {
+					io.Reader
+					io.Closer
+				}{r.s.servedReader(resp.Body, from), resp.Body}
 			}
 			return nil
 		},
@@ -1100,7 +1108,7 @@ func (r *proxyRun) relay(client *proxyConn, in io.Reader, out *outConn) {
 	})
 	wg.Go(func() {
 		defer close(farEndRead)
-		farEnd := &servedReader{Reader: out, mark: func() { s.markServed(client.from) }}
+		farEnd := s.servedReader(out, client.from)
 		if err, writing := s.copy(client, farEnd, counts, false, nil); err != io.EOF {
 			fail(writing)
 		} else {
@@ -1139,8 +1147,8 @@ func socketError(c any) error {
 // proxyStats is the proxy's part of the stats, see statsMessage. Addresses is where it listens,
 // IPv4 first as ip:port, then IPv6 as [ip]:port, and empty while it doesn't: off, or no hotspot
 // address yet. CantListen says it listens nowhere though it has an address to, its port taken say.
-// Open is its client connections. Served is the clients the far end answered since the server
-// started, see markServed. Up and Down are its bytes in this run, the same bytes as the totals.
+// Open is its client connections. Served is the clients the far end answered in the last
+// servedFor, see markServed. Up and Down are its bytes in this run, the same bytes as the totals.
 type proxyStats struct {
 	Addresses  []string `json:"addresses"`
 	Paused     bool     `json:"paused"`
@@ -1155,7 +1163,11 @@ type proxyStats struct {
 func (s *Server) proxyStatsLocked() proxyStats {
 	p := s.proxy
 	st := proxyStats{Addresses: []string{}, Paused: p.paused, Open: p.open, Served: []string{}, Up: p.counts.up.Load(), Down: p.counts.down.Load()}
-	for a := range p.served {
+	for a, at := range p.served {
+		if s.now().Sub(at) > servedFor {
+			delete(p.served, a)
+			continue
+		}
 		st.Served = append(st.Served, a.String())
 	}
 	slices.Sort(st.Served)
@@ -1179,30 +1191,57 @@ type configProxy struct {
 }
 
 // markServed notes that the far end answered client from through the proxy: a response to a plain
-// request, or a tunnel's first bytes back. Add a device ticks its last step once a client it hadn't
-// seen is served (#285): it can't go by the proxy's bytes or connections, which a TV already on the
-// proxy moves too.
+// request, or a tunnel's bytes back. Add a device ticks its last step once a client that wasn't
+// served lately is (#285): it can't go by the proxy's bytes or connections, which a TV already on
+// the proxy moves too. A client drops out once it's had nothing for servedFor, so a device that
+// comes back, or a new one on its address, counts as new again. Past maxServed clients, which an
+// IPv6 hotspot's changing addresses could reach, the one served longest ago goes.
 func (s *Server) markServed(from netip.Addr) {
 	if !from.IsValid() {
 		return
 	}
+	now := s.now()
 	s.mu.Lock()
-	s.proxy.served[from] = struct{}{}
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	served := s.proxy.served
+	served[from] = now
+	if len(served) > maxServed {
+		var oldest netip.Addr
+		for a, at := range served {
+			if !oldest.IsValid() || at.Before(served[oldest]) {
+				oldest = a
+			}
+		}
+		delete(served, oldest)
+	}
 }
 
-// servedReader is a tunnel's far end, which marks its client served on the first bytes it reads.
-type servedReader struct {
+const (
+	servedFor   = 2 * time.Minute
+	servedEvery = 10 * time.Second // how often a long download or stream marks its client again
+	maxServed   = 32
+)
+
+// servedReader is the far end of a client's request, which marks the client served when bytes
+// come, at most every servedEvery.
+func (s *Server) servedReader(r io.Reader, from netip.Addr) io.Reader {
+	return &servedReading{Reader: r, mark: func() { s.markServed(from) }, now: s.now}
+}
+
+type servedReading struct {
 	io.Reader
 	mark func()
-	done bool
+	now  func() time.Time
+	last time.Time
 }
 
-func (r *servedReader) Read(b []byte) (int, error) {
+func (r *servedReading) Read(b []byte) (int, error) {
 	n, err := r.Reader.Read(b)
-	if n > 0 && !r.done {
-		r.done = true
-		r.mark()
+	if n > 0 {
+		if now := r.now(); r.last.IsZero() || now.Sub(r.last) >= servedEvery {
+			r.last = now
+			r.mark()
+		}
 	}
 	return n, err
 }

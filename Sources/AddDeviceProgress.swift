@@ -95,21 +95,26 @@ enum AddDeviceWay: Hashable {
     case wireGuard, proxy
 }
 
-/// Add a device's proxy path (#78): its last step ticks off once the far end answered a device
-/// through the proxy that it hadn't answered when the screen opened, and stays ticked. The proxy's
-/// connections and bytes can't tell: a TV already on it opens and moves them too (#285), and a
-/// connection let in may still fail its lookup and load nothing.
+/// Add a device's proxy path (#78): its last step ticks off once the far end answers a device
+/// through the proxy that it hadn't answered lately when the screen opened, and stays ticked. The
+/// proxy's connections and bytes can't tell: a TV already on it opens and moves them too (#285),
+/// and a connection let in may still fail its lookup and load nothing.
 struct ProxyProgress: Equatable {
-    /// The devices the far end had answered when the screen opened.
-    private let opened: Set<String>
+    /// The devices the far end had answered lately when the screen opened, from the first read of a
+    /// listening proxy: with the server stopped or a read failed, the list is empty and says nothing.
+    private var opened: Set<String>?
     private(set) var working = false
 
     init(at stats: ProxyStats) {
-        opened = stats.served
         follow(stats)
     }
 
     mutating func follow(_ stats: ProxyStats) {
+        guard !stats.addresses.isEmpty else { return }
+        guard let opened else {
+            opened = stats.served
+            return
+        }
         if !stats.served.isSubset(of: opened) { working = true }
     }
 }

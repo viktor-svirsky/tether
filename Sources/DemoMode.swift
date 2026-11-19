@@ -259,16 +259,16 @@ struct DemoState {
         return session
     }
 
-    /// The `addDeviceProxyWorking` demo's page: its bytes come in each second, as the sampler would
-    /// read them, so they're through the proxy after Add a device opened whenever that is. A demo
-    /// has no sampler, so this reads them. It stops once the session is gone, as in a unit test.
+    /// The `addDeviceProxyWorking` demo's page: each second a device the proxy hadn't served gets
+    /// bytes back, as the sampler would read them, so one is new to Add a device whenever it opened.
+    /// A demo has no sampler, so this reads them. It stops once the session is gone, as in a unit test.
     @MainActor
     private func loadAPage(through server: FakeServer, _ session: HotspotSession) {
         Task { [weak session] in
-            for _ in 0..<60 {
+            for i in 0..<60 {
                 try? await Task.sleep(for: .seconds(1))
                 guard let session else { return }
-                server.proxyServed = ["172.20.10.5"] // the device opening the page, new to the proxy
+                server.proxyServed.insert("172.20.10.\(10 + i)")
                 server.proxyTraffic += TrafficTotals(bytesUp: 1_000, bytesDown: 30_000)
                 session.sampleTraffic()
             }
