@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"net"
+	"net/http"
 	"net/netip"
 	"strings"
 	"testing"
@@ -216,5 +217,25 @@ func TestDiagnosticsShowTheNAT64Prefix(t *testing.T) {
 	d := diagWithin(t, s, func(d diagStats) bool { return d.NAT64 != "" })
 	if d.NAT64 != carrierNAT64.String() || d.TCPTried != 1 || d.TCPFailed != 0 {
 		t.Fatalf("diagnostics %+v, want the carrier's prefix and one connection that worked", d)
+	}
+}
+
+// The proxy's connections count in Diagnostics like a tunnel device's: tried, failed, and why (#284).
+func TestDiagnosticsCountTheProxysConnections(t *testing.T) {
+	s, proxy := proxyOn(t)
+	conn, r, status := tunnel(t, proxy, echoFarEnd(t))
+	if status != http.StatusOK || !echoes(conn, r) {
+		t.Fatalf("the tunnel got %d", status)
+	}
+	if d := diagWithin(t, s, func(d diagStats) bool { return d.TCPTried == 1 }); d.TCPFailed != 0 || d.LastError != "" {
+		t.Fatalf("diagnostics %+v, want one connection tried and none failed", d)
+	}
+	refused := refusedPort(t)
+	if _, _, status := tunnel(t, proxy, refused); status != http.StatusBadGateway {
+		t.Fatalf("got %d, want 502", status)
+	}
+	d := diagWithin(t, s, func(d diagStats) bool { return d.TCPFailed == 1 })
+	if d.TCPTried != 2 || !strings.HasPrefix(d.LastError, "TCP to "+refused+": ") {
+		t.Fatalf("diagnostics %+v, want the refused connection as the last error", d)
 	}
 }

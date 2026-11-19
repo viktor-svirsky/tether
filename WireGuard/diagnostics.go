@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/netip"
@@ -52,16 +53,22 @@ func (d *diagnostics) heard(format string) {
 	}
 }
 
-// dialCounted is dialOut, counting a connection the iPhone makes for a device. It counts as tried
-// before the dial, so one to a far end that drops SYNs shows while it waits, and a NAT64 retry is
-// part of the same try. Lookups Tether answers itself make no connection, so they don't count.
+// dialCounted is dialOut, counting a connection the iPhone makes for a device. Lookups Tether
+// answers itself make no connection, so they don't count.
 func (s *Server) dialCounted(dst netip.AddrPort, lookups bool) (net.Conn, error) {
 	if lookups {
 		return s.dialOut(dst, lookups)
 	}
+	return s.diagDial(s.ctx, dst, func() (net.Conn, error) { return s.dialOut(dst, lookups) })
+}
+
+// diagDial runs dial, the iPhone's connection to dst for a device or the proxy, on ctx. It counts
+// as tried before the dial, so one to a far end that drops SYNs shows while it waits, and a NAT64
+// retry is part of the same try. One called off, by a proxy client leaving say, didn't fail.
+func (s *Server) diagDial(ctx context.Context, dst netip.AddrPort, dial func() (net.Conn, error)) (net.Conn, error) {
 	s.diag.tcpTried.Add(1)
-	out, err := s.dialOut(dst, lookups)
-	if err != nil {
+	out, err := dial()
+	if err != nil && ctx.Err() == nil {
 		s.diag.tcpFailed.Add(1)
 		s.diag.failed("TCP to " + dst.String() + ": " + err.Error())
 	}
