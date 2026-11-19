@@ -1522,3 +1522,30 @@ func TestBlockEndsAPooledConnectionToALocalAddress(t *testing.T) {
 		t.Fatalf("with Block got %d, want 403", status)
 	}
 }
+
+// Turning the proxy off ends a relay that's draining at once, not when drainGrace runs out (#287).
+// On loopback a send queue empties at once, so the test's queue never does: the relay stays in
+// drain until something ends it.
+func TestTurningTheProxyOffEndsADrainingRelayAtOnce(t *testing.T) {
+	s := proxyReady(t)
+	s.mu.Lock()
+	s.proxy.queued = func(net.Conn) int { return 1 }
+	s.mu.Unlock()
+	s.SetProxy(true, false)
+	proxy := proxyListening(t, s)
+	reset := make(chan struct{})
+	target := farEnd(t, func(conn *net.TCPConn) {
+		<-reset
+		conn.SetLinger(0) // the deferred Close sends a reset, so the relay drains toward the client
+	})
+	if _, _, status := tunnel(t, proxy, target); status != http.StatusOK {
+		t.Fatalf("got %d", status)
+	}
+	close(reset)
+	time.Sleep(300 * time.Millisecond) // nothing says when the relay starts draining
+	start := time.Now()
+	s.SetProxy(false, false)
+	if took := time.Since(start); took > drainGrace/2 {
+		t.Fatalf("turning the proxy off took %v", took)
+	}
+}

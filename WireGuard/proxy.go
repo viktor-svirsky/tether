@@ -90,6 +90,7 @@ type proxy struct {
 	systemLookup      func(ctx context.Context, host string) ([]netip.Addr, error)
 	retry             time.Duration
 	goneCheck         time.Duration
+	queued            func(net.Conn) int // what a connection still has to send, see drain
 	maxConns          int
 	handshake         time.Duration
 	maxLookups        int // the proxy's name lookups at once, for all its devices, like a device's maxLookups
@@ -120,6 +121,7 @@ func newProxy() *proxy {
 		},
 		retry:             proxyRetry,
 		goneCheck:         proxyGoneCheck,
+		queued:            sendQueue,
 		maxConns:          maxProxyConns,
 		maxPerClient:      maxProxyPerClient,
 		maxLookups:        maxLookups,
@@ -150,6 +152,7 @@ type proxyRun struct {
 	listen       func(ctx context.Context, address string) (net.Listener, error)
 	retry        time.Duration
 	goneCheck    time.Duration
+	queued       func(net.Conn) int
 	socks        [2]*proxySocket // IPv4's, then IPv6's
 	// Under s.mu.
 	stopped  bool
@@ -309,7 +312,7 @@ func (s *Server) stopProxy() {
 // newProxyRun makes a run. Runs with s.mu held.
 func (s *Server) newProxyRun() *proxyRun {
 	p := s.proxy
-	r := &proxyRun{s: s, p: p, systemLookup: p.systemLookup, listen: p.listen, retry: p.retry, goneCheck: p.goneCheck}
+	r := &proxyRun{s: s, p: p, systemLookup: p.systemLookup, listen: p.listen, retry: p.retry, goneCheck: p.goneCheck, queued: p.queued}
 	for i := range r.socks {
 		r.socks[i] = &proxySocket{r: r, v6: i == 1, done: make(chan struct{}), wake: make(chan struct{}, 1)}
 	}
@@ -1056,11 +1059,11 @@ func (r *proxyRun) relay(client *proxyConn, in io.Reader, out *outConn) {
 		}
 		if clientFailed {
 			client.reset()
-			s.drain(r.ctx, func() int { return sendQueue(out.Conn) })
+			s.drain(r.ctx, func() int { return r.queued(out.Conn) })
 			out.reset()
 		} else {
 			out.reset()
-			s.drain(r.ctx, func() int { return sendQueue(client.Conn) })
+			s.drain(r.ctx, func() int { return r.queued(client.Conn) })
 			client.reset()
 		}
 	}
