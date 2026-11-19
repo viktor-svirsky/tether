@@ -1528,8 +1528,10 @@ func TestBlockEndsAPooledConnectionToALocalAddress(t *testing.T) {
 // drain until something ends it.
 func TestTurningTheProxyOffEndsADrainingRelayAtOnce(t *testing.T) {
 	s := proxyReady(t)
+	draining := make(chan struct{})
+	var once sync.Once
 	s.mu.Lock()
-	s.proxy.queued = func(net.Conn) int { return 1 }
+	s.proxy.queued = func(net.Conn) int { once.Do(func() { close(draining) }); return 1 }
 	s.mu.Unlock()
 	s.SetProxy(true, false)
 	proxy := proxyListening(t, s)
@@ -1542,7 +1544,11 @@ func TestTurningTheProxyOffEndsADrainingRelayAtOnce(t *testing.T) {
 		t.Fatalf("got %d", status)
 	}
 	close(reset)
-	time.Sleep(300 * time.Millisecond) // nothing says when the relay starts draining
+	select {
+	case <-draining:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the relay never started draining")
+	}
 	start := time.Now()
 	s.SetProxy(false, false)
 	if took := time.Since(start); took > drainGrace/2 {
