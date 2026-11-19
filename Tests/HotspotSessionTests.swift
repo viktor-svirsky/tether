@@ -30,7 +30,7 @@ final class HotspotSessionTests: XCTestCase {
 
     /// `saved` is a setup already in the Keychain at launch.
     private func makeSession(sceneActive: Bool = true, locked: Bool = false, saved: WireGuardSetup? = nil,
-                             log: @escaping @MainActor (String) -> Void = { _ in }) {
+                             cellular: @escaping () -> String = { "" }, log: @escaping @MainActor (String) -> Void = { _ in }) {
         server = FakeServer()
         sound = FakeSound()
         page = FakePage()
@@ -42,7 +42,7 @@ final class HotspotSessionTests: XCTestCase {
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
                                  carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
                                  dns: { [unowned self] in dns }, blockLocal: { [unowned self] in blockLocal }, usageDefaults: usageDefaults,
-                                 now: { [unowned self] in now }, log: log)
+                                 now: { [unowned self] in now }, cellular: cellular, log: log)
     }
 
     private func minutes(_ m: Double) -> Date { start.addingTimeInterval(m * 60) }
@@ -728,6 +728,31 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(logged.filter { $0.hasPrefix("Tether ") }, ["Tether left the screen", "Tether on screen"])
     }
 
+    /// Whether the cellular data went with the hotspot, read only in the round it goes (#191).
+    func testTheHotspotGoingAwaySaysWhatTheCellularDataHas() {
+        var logged: [String] = []
+        var reads = 0
+        makeSession(cellular: { reads += 1; return "pdp_ip0: no address, data line: LTE" }, log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        address = nil
+        for _ in 0..<3 { session.syncWithHotspot() }
+        XCTAssertEqual(logged.filter { $0.hasPrefix("hotspot address gone") },
+                       ["hotspot address gone or changed, stopping (pdp_ip0: no address, data line: LTE)"])
+        XCTAssertEqual(reads, 1)
+    }
+
+    /// With nothing to say about the cellular data, as in a demo, the line has no empty brackets.
+    func testTheHotspotGoingAwayWithNoCellularText() {
+        var logged: [String] = []
+        makeSession(log: { logged.append($0) })
+        address = hotspot
+        session.syncWithHotspot()
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertEqual(logged.filter { $0.hasPrefix("hotspot address gone") }, ["hotspot address gone or changed, stopping"])
+    }
+
     func testAProblemIsLoggedOnceNotEveryRound() {
         var logged: [String] = []
         makeSession(log: { logged.append($0) })
@@ -1403,6 +1428,8 @@ final class HotspotSessionTests: XCTestCase {
         var call = false
         /// One came and went since the last round, with no round in between.
         var callEnded = false
+        /// CallKit has a call on, while the sound plays again.
+        var callOn = false
         var plays: Bool
         var line: UInt = #line
     }
@@ -1415,6 +1442,7 @@ final class HotspotSessionTests: XCTestCase {
             session.sceneActive = round.onScreen
             sound.interrupted = round.call
             sound.interruptedSinceTaken = round.callEnded
+            session.callOn = { round.callOn }
             if round.wake { session.wake() } else { session.syncWithHotspot() }
             XCTAssertEqual(sound.playing, round.plays, line: round.line)
         }
@@ -1463,6 +1491,28 @@ final class HotspotSessionTests: XCTestCase {
             SoundRound(minute: 21, onScreen: false, plays: true), // the call is over, no device back yet
             SoundRound(minute: 29.9, onScreen: false, plays: true), // 10 minutes from the last round in the call
             SoundRound(minute: 30, onScreen: false, plays: false),
+        ])
+    }
+
+    /// The sound plays again right after a call starts, so it no longer says a call is on. CallKit
+    /// still does, and the 10 minutes run from the call's end all the same (#191).
+    func testTheTenMinutesRunFromTheEndOfACallWithTheSoundBack() {
+        run([
+            SoundRound(minute: 0, onScreen: false, hotspot: true, plays: true),
+            SoundRound(minute: 1, onScreen: false, callOn: true, plays: true), // the call takes the hotspot
+            SoundRound(minute: 20, onScreen: false, callOn: true, plays: true),
+            SoundRound(minute: 21, onScreen: false, plays: true), // the call is over, no device back yet
+            SoundRound(minute: 29.9, onScreen: false, plays: true), // 10 minutes from the last round in the call
+            SoundRound(minute: 30, onScreen: false, plays: false),
+        ])
+    }
+
+    /// "Is Tether Sharing?" during a call only reports. The call keeps a sound that plays going, it
+    /// doesn't start one.
+    func testACallDoesntStartTheSoundOnABackgroundLaunch() {
+        run([
+            SoundRound(minute: 0, onScreen: false, callOn: true, plays: false),
+            SoundRound(minute: 1, onScreen: false, callOn: true, plays: false),
         ])
     }
 

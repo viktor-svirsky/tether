@@ -292,9 +292,9 @@ func TestADNSStormIsAnsweredAndItsConesGoAfterDNSIdle(t *testing.T) {
 	if t.Failed() {
 		return
 	}
-	// The cones go by the time each one last sent, read by a read deadline, not by s.now. So their
-	// clocks move back past dnsIdle, and the reads wake at once to look at them. Again on each pass,
-	// since under -race a lookup's resend can land after its answer and open its port again.
+	// The cones go by the time each one last sent. So their clocks move back past dnsIdle, and the
+	// reads wake at once to look at them. Again on each pass, since under -race a lookup's resend
+	// can land after its answer and open its port again.
 	age := func() {
 		s.mu.Lock()
 		var cones []*cone
@@ -302,7 +302,7 @@ func TestADNSStormIsAnsweredAndItsConesGoAfterDNSIdle(t *testing.T) {
 			cones = append(cones, c)
 		}
 		s.mu.Unlock()
-		aged := time.Now().Add(-dnsIdle - time.Second).UnixNano()
+		aged := s.now().Add(-dnsIdle - time.Second).UnixNano()
 		for _, c := range cones {
 			c.last.Store(aged)
 			c.conn.SetReadDeadline(time.Now())

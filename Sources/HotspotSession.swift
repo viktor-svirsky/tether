@@ -98,6 +98,12 @@ final class HotspotSession {
     private(set) var idleStopped: IdleStopped? { willSet { willChange() } }
     /// Devices that came near or reached their data limit, for the notifications, the latest last.
     private(set) var limitAlerts: [LimitAlert] = [] { willSet { willChange() } }
+    /// The HTTP proxy as saved: on or off, paused, its limit (#78). Nil until it's first turned on.
+    private(set) var proxy: WireGuardSetup.Proxy? { willSet { willChange() } }
+    /// What the server says about the proxy, read with the speeds, and by the watcher in the background.
+    private(set) var proxyStats = ProxyStats() { willSet { willChange() } }
+    /// Turning the proxy on or off couldn't be saved, until a turn saves.
+    private(set) var proxyProblem: String? { willSet { willChange() } }
     /// Who was connected at the last read, for the notifications: the sampler's on screen, the
     /// watcher's in the background. Nothing on screen shows the watcher's, so it isn't published.
     var connectedNow: Set<String> { sceneActive ? wireGuardConnected : watchedConnected }
@@ -106,6 +112,9 @@ final class HotspotSession {
     /// Only the on-screen sampler publishes connections and speeds, so it runs only while the app is on screen.
     /// False in a launch from a Shortcuts action, which happens in the background.
     var sceneActive: Bool
+    /// CallKit has a call on. The keep-alive sound plays again right after a call starts, so it can't
+    /// say so itself (#191).
+    var callOn: () -> Bool = { false }
 
     private let devices: WireGuardDevices
     private let server: WireGuardServing
@@ -133,6 +142,9 @@ final class HotspotSession {
     private var usageSavedAt: Date?
     private var usageUnsaved = false
     private let now: () -> Date
+    /// What the cellular data has, like "pdp_ip0: IPv6, data line: LTE", read for the log when the
+    /// hotspot goes away (#191).
+    private let cellular: @MainActor () -> String
     private let log: @MainActor (String) -> Void
 
     /// When the hotspot went away, or Tether was last on screen since. Nil while the hotspot is on.
@@ -140,6 +152,8 @@ final class HotspotSession {
     /// minutes. "Is Tether Sharing?" launches Tether in the background too, and only reports.
     private var waitingSince: Date? = .distantPast
     private var idleStop = IdleStop()
+    /// The proxy's bytes at the last idle check, see `stopWhenIdle`.
+    private var idleProxyTraffic: TrafficTotals?
     private var sampler = TrafficSampler()
     /// Who was connected at the watcher's last read in the background, see `readInBackground`.
     private var watchedConnected: Set<String> = []
@@ -171,7 +185,7 @@ final class HotspotSession {
          idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> DNSChoice.Upstream = { DNSChoice.defaultUpstream },
          blockLocal: @escaping () -> Bool = { false },
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
-         resetDay: @escaping () -> ResetDay = { .default },
+         resetDay: @escaping () -> ResetDay = { .default }, cellular: @escaping @MainActor () -> String = { "" },
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -189,6 +203,7 @@ final class HotspotSession {
         monthlyUsage = usageDefaults.map { MonthlyUsage.load(from: $0, resetDay: resetDay()) } ?? MonthlyUsage(resetDay: resetDay())
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
+        self.cellular = cellular
         self.log = log
         publishSetup()
         showSetupProblem() // from launch, before any device joins the hotspot
@@ -224,7 +239,8 @@ final class HotspotSession {
         if ipv6Only != onIPv6OnlyCarrier { onIPv6OnlyCarrier = ipv6Only }
         let hotspot = hotspotAddress()
         if running, hotspot != boundHost, !listenToo(on: hotspot) {
-            log("hotspot address gone or changed, stopping")
+            let cellular = cellular()
+            log("hotspot address gone or changed, stopping" + (cellular.isEmpty ? "" : " (\(cellular))"))
             stopSharing()
         }
         // A WireGuard start that failed (keys locked after a restart, say) is tried again here.
@@ -276,7 +292,7 @@ final class HotspotSession {
         page.stop()
         pageHandler.forget()
         // What the devices used since the last read: a stopped server still reports what it carried.
-        countUsage(server.snapshot().peers)
+        countUsage(server.snapshot())
         saveUsage()
         running = false
         startProblem = nil // the next hotspot gets a new try
@@ -289,7 +305,14 @@ final class HotspotSession {
     private func stopWhenIdle() {
         let after = idleStopAfter()
         let now = self.now()
-        guard idleStop.check(sharing: sharing, connected: !connectedNow.isEmpty, onScreen: sceneActive, after: after, now: now) else {
+        // A device on the proxy is using Tether too, but not one a paused proxy answers with 403. It
+        // opens connections only while it loads something, so data through it since the last check
+        // counts as well as one open now.
+        let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running).inUse } ?? false
+        let proxyMoved = proxy?.paused == nil && (idleProxyTraffic.map { $0 != proxyStats.traffic } ?? false)
+        idleProxyTraffic = proxyStats.traffic
+        let connected = !connectedNow.isEmpty || proxyInUse || proxyMoved
+        guard idleStop.check(sharing: sharing, connected: connected, onScreen: sceneActive, after: after, now: now) else {
             return
         }
         log("no device connected for \(after.spelledOut), stopping until Tether is opened")
@@ -308,7 +331,7 @@ final class HotspotSession {
         // A call can take the hotspot away for as long as it lasts, so the 10 minutes run from its
         // end too. Before, a long call left Tether suspended and its devices cut off until someone
         // opened it (#191). Not after an idle stop, which means to stop.
-        let call = keepAlive.takeInterruption() && idleStopped == nil
+        let call = (keepAlive.takeInterruption() || keepAlive.playing && callOn()) && idleStopped == nil
         if hotspot { waitingSince = nil } else if sceneActive || call || waitingSince == nil { waitingSince = now }
         let plays = KeepAlivePolicy.plays(waitingSince: waitingSince, now: now)
         if plays { keepAlive.start() } else if keepAlive.playing {
@@ -467,10 +490,14 @@ final class HotspotSession {
     /// For the Shortcuts actions. Off screen the sampler doesn't run, so the connected devices are read now.
     func shortcutState() -> ShortcutReply.State {
         var connected = wireGuardConnected
+        var proxyStats = proxyStats
         if running, server.running {
-            connected = unpaused(server.snapshot().connected)
+            let snapshot = server.snapshot()
+            connected = unpaused(snapshot.connected)
+            proxyStats = snapshot.proxy
         }
-        return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem,
+        let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running).inUse } ?? false
+        return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem, proxyInUse: proxyInUse,
                                    idleStopped: idleStopped != nil, keptAlive: !running || keepAlive.sounding)
     }
 
@@ -510,8 +537,9 @@ final class HotspotSession {
     /// it's resumed. A pause that couldn't be saved changes nothing, and its screen says so.
     /// A device already paused stays paused for its reason: one paused at its limit just now, before
     /// the screen showed it, still connects again when the count resets.
+    /// The proxy is paused the same way, by its id.
     func pauseWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
-        guard devices.setup.peers.first(where: { $0.id == id })?.paused == nil else { return }
+        guard devices.setup.pause(of: id) == nil else { return }
         pause(id, .byYou, problem: "The device couldn't be paused.")
     }
 
@@ -519,8 +547,7 @@ final class HotspotSession {
     /// count resets, see `checkLimits`. One the count already let go (the reset, before a read caught
     /// up) doesn't.
     func resumeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
-        let peer = devices.setup.peers.first { $0.id == id }
-        let atLimit = peer?.paused == .atLimit && peer?.limit.map { usage(of: id).thisMonth.total >= $0 } == true
+        let atLimit = devices.setup.pause(of: id) == .atLimit && devices.setup.limit(of: id).map { usage(of: id).thisMonth.total >= $0 } == true
         guard pause(id, nil, problem: "The device couldn't be resumed."), atLimit else { return }
         monthlyUsage.markResumedOver(id, at: now(), calendar: calendar)
         usageUnsaved = true
@@ -529,11 +556,11 @@ final class HotspotSession {
     /// Its data limit per month, or nil for none. It counts at once: lowered below what the device used
     /// this month, the device is paused, raised above it or removed, a device paused at it resumes. A
     /// resume or a notice for the old limit doesn't hold for the new one. False when it couldn't be
-    /// saved, and the device's screen says so.
+    /// saved, and the device's screen says so. The proxy's too, by its id.
     @discardableResult
     func setLimit(_ id: WireGuardSetup.Peer.ID, _ limit: UInt64?) -> Bool {
         // The same limit picked again changes nothing, so a resume over it still holds.
-        if devices.setup.peers.first(where: { $0.id == id })?.limit == limit { return true }
+        if devices.setup.limit(of: id) == limit { return true }
         guard devices.limit(id, limit) else {
             log("WireGuard: the new limit couldn't be saved")
             showDeviceProblem(DeviceProblem(device: id, text: "The new limit couldn't be saved."))
@@ -546,6 +573,37 @@ final class HotspotSession {
         publishSetup()
         checkLimits()
         return true
+    }
+
+    /// Turns the HTTP proxy on or off (#78). Add a device turns it on, its screen off. Go listens from
+    /// the next change, which this sends, and the stats are read at once, for where it listens. False
+    /// when it couldn't be saved: then nothing changes, and `proxyProblem` says so.
+    @discardableResult
+    func setProxy(on: Bool) -> Bool {
+        let current = devices.setup.proxy
+        // Already so: Add a device opens on it again, say. On again still resumes a pause by you.
+        if (current?.on ?? false) == on, !(on && current?.paused == .byYou) {
+            if proxyProblem != nil { proxyProblem = nil }
+            return true
+        }
+        guard devices.proxy(on: on) else {
+            log("Proxy: turning it \(on ? "on" : "off") couldn't be saved")
+            proxyProblem = on ? "The proxy couldn't be turned on." : "The proxy couldn't be turned off."
+            return false
+        }
+        if proxyProblem != nil { proxyProblem = nil }
+        log("Proxy: turned \(on ? "on" : "off")")
+        wireGuardPeersChanged()
+        publishProxyStats(server.snapshot().proxy)
+        return true
+    }
+
+    /// The server's counters for the Diagnostics screen, read when the screen asks: published, they
+    /// would redraw every view that watches the model each second (#166).
+    var serverDiagnostics: ServerDiagnostics { server.snapshot().diagnostics }
+
+    private func publishProxyStats(_ stats: ProxyStats) {
+        if stats != proxyStats { proxyStats = stats }
     }
 
     /// Resumed at its limit this period, so it's over it until the count resets.
@@ -725,10 +783,11 @@ final class HotspotSession {
 
     private func publishSetup() {
         if devices.setup.peers != wireGuardPeers { wireGuardPeers = devices.setup.peers }
+        if devices.setup.proxy != proxy { proxy = devices.setup.proxy }
         // Only from a setup that was read: a locked Keychain lists no devices, and that isn't a removal.
         if devices.loaded {
             let before = monthlyUsage
-            monthlyUsage.keep(only: Set(devices.setup.peers.map(\.id) + [devices.setup.ready?.id].compactMap { $0 }))
+            monthlyUsage.keep(only: Set(devices.setup.peers.map(\.id) + [devices.setup.ready?.id, devices.setup.proxy?.id].compactMap { $0 }))
             if monthlyUsage != before { usageUnsaved = true }
         }
         if devices.setup.ready != wireGuardReady { wireGuardReady = devices.setup.ready }
@@ -789,8 +848,9 @@ final class HotspotSession {
             if upSpeed != 0 { upSpeed = 0 }
             tunnelsUp = []
             if !wireGuardConnected.isEmpty { wireGuardConnected = [] }
-            let peers = server.snapshot().peers // a stopped server answers with what each device used
-            if peers != wireGuardPeerStats { wireGuardPeerStats = peers }
+            let snap = server.snapshot() // a stopped server answers with what each device used
+            if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
+            publishProxyStats(snap.proxy)
             if staleConfig != nil { staleConfig = nil }
             checkLimits()
             return
@@ -801,8 +861,9 @@ final class HotspotSession {
         publishConnected()
         if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
         if snap.stale != staleConfig { staleConfig = snap.stale }
+        publishProxyStats(snap.proxy)
         absorb(snap.peers)
-        countUsage(snap.peers)
+        countUsage(snap)
         guard let speeds = sampler.sample(snap.totals, at: now) else { return } // nothing to compare with yet
         // Only a change: every publish redraws every view that watches the model, each second (#166).
         if speeds.up != upSpeed { upSpeed = speeds.up }
@@ -853,13 +914,15 @@ final class HotspotSession {
         guard running else {
             watchedConnected = []
             tunnelsUp = []
+            publishProxyStats(ProxyStats(traffic: proxyStats.traffic))
             return
         }
         let snap = server.snapshot()
         tunnelsUp = snap.connected
         watchedConnected = unpaused(snap.connected)
+        publishProxyStats(snap.proxy) // for the idle stop
         absorb(snap.peers)
-        countUsage(snap.peers)
+        countUsage(snap)
     }
 
     // MARK: Data per month
@@ -881,19 +944,20 @@ final class HotspotSession {
         return PeerStats.address(wireGuardPeerStats[peer.address]?.endpoint)
     }
 
-    /// Adds what each device's counters grew by to this month, and saves at most once a minute. A
-    /// crash loses up to that minute, never counts anything twice.
-    private func countUsage(_ peers: [String: PeerStats]) {
+    /// Adds what each device's counters grew by to this month, the proxy's too, and saves at most once
+    /// a minute. A crash loses up to that minute, never counts anything twice.
+    private func countUsage(_ snap: ServerSnapshot) {
         var ids: [String: WireGuardSetup.Peer.ID] = [:]
         for peer in devices.setup.peers { ids[peer.address] = peer.id }
         if let ready = devices.setup.ready { ids[ready.address] = ready.id }
         var counts: [WireGuardSetup.Peer.ID: TrafficTotals] = [:]
         var handshakes: [WireGuardSetup.Peer.ID: Date] = [:]
-        for (address, stats) in peers {
+        for (address, stats) in snap.peers {
             guard let id = ids[address] else { continue }
             counts[id] = stats.traffic
             handshakes[id] = stats.lastHandshake
         }
+        if let proxy = devices.setup.proxy { counts[proxy.id] = snap.proxy.traffic }
         let paused = Set(devices.setup.peers.filter { $0.paused != nil }.map(\.id))
         followResetDay()
         let before = monthlyUsage
@@ -913,7 +977,10 @@ final class HotspotSession {
         followResetDay()
         let now = self.now()
         var changed = false
-        for peer in devices.setup.peers {
+        // The proxy goes by the same rules, named "Proxy" in the notifications.
+        var limited = devices.setup.peers.map { (id: $0.id, name: $0.name, paused: $0.paused, limit: $0.limit) }
+        if let proxy = devices.setup.proxy { limited.append((proxy.id, ProxyStatus.name, proxy.paused, proxy.limit)) }
+        for peer in limited {
             let used = monthlyUsage.of(peer.id, at: now, calendar: calendar).thisMonth.total
             switch (peer.paused, peer.limit) {
             case (.atLimit?, nil):
@@ -924,11 +991,11 @@ final class HotspotSession {
                 guard devices.pause(peer.id, .atLimit) else { continue }
                 changed = true
                 log("WireGuard: a device reached its limit and is paused until the count resets")
-                alert(peer, .reached, used: used, limit: limit, now: now)
+                alert(peer.id, peer.name, .reached, used: used, limit: limit, now: now)
             case let (nil, limit?) where used < limit && used >= limit / 10 * 9 && !monthlyUsage.nearTold(peer.id, at: now, calendar: calendar):
                 monthlyUsage.markNearTold(peer.id, at: now, calendar: calendar)
                 usageUnsaved = true
-                alert(peer, .near, used: used, limit: limit, now: now)
+                alert(peer.id, peer.name, .near, used: used, limit: limit, now: now)
             default:
                 break
             }
@@ -939,8 +1006,9 @@ final class HotspotSession {
         }
     }
 
-    private func alert(_ peer: WireGuardSetup.Peer, _ kind: LimitAlert.Kind, used: UInt64, limit: UInt64, now: Date) {
-        let alert = LimitAlert(device: peer.id, name: peer.name, kind: kind, used: used, limit: limit, period: period)
+    private func alert(_ id: WireGuardSetup.Peer.ID, _ name: String, _ kind: LimitAlert.Kind, used: UInt64, limit: UInt64, now: Date) {
+        let alert = LimitAlert(device: id, name: name, kind: kind, used: used, limit: limit, period: period,
+                               proxy: id == devices.setup.proxy?.id)
         limitAlerts = Array((limitAlerts + [alert]).suffix(20))
     }
 
@@ -1024,6 +1092,14 @@ enum Interfaces {
 
     private static func carrierIPv4(_ lines: [(name: String, address: String)]) -> Bool {
         lines.contains { $0.name == "pdp_ip0" && !$0.address.contains(":") && !isCLAT($0.address) }
+    }
+
+    /// What pdp_ip0, the cellular data's interface, has, for the log: "pdp_ip0: IPv6", say, or
+    /// "pdp_ip0: no address". Never the address itself.
+    static func pdpIp0(in interfaces: [String]) -> String {
+        let lines = parse(interfaces).filter { $0.name == "pdp_ip0" && !$0.address.contains("%") }
+        let has = [carrierIPv4(lines) ? "IPv4" : nil, lines.contains { $0.address.contains(":") } ? "IPv6" : nil].compactMap { $0 }
+        return "pdp_ip0: " + (has.isEmpty ? "no address" : has.joined(separator: " and "))
     }
 
     private static func isCLAT(_ address: String) -> Bool {

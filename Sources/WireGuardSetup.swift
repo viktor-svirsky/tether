@@ -119,9 +119,22 @@ struct WireGuardSetup: Codable, Equatable {
         }
     }
 
+    /// The HTTP proxy, for devices without WireGuard (#78), see WireGuard/proxy.go. One device for all
+    /// its clients: paused, limited and counted by its id like a device. Kept once turned on, so its
+    /// count and limit stay when it's turned off. Saved here so a pause or limit holds after a
+    /// relaunch. A release before it, installed over this one, drops it.
+    struct Proxy: Codable, Hashable {
+        var id = UUID()
+        var on = true
+        var paused: Pause?
+        var limit: UInt64?
+    }
+
     var serverPrivateKey: Data
     /// The devices someone has used, in the order they first connected.
     var peers: [Peer]
+    /// Nil until it's first turned on, and in a setup saved before there was one.
+    var proxy: Proxy?
     /// The device behind the QR code in the Add a device sheet: a key nobody has used yet. The server lets
     /// it in while Add a device is open (see `AddWindow`), and the first time it
     /// connects it joins `peers`, without its private key, and a new one takes its place. Nil only in a
@@ -183,16 +196,41 @@ struct WireGuardSetup: Codable, Equatable {
         peers.removeAll { $0.id == id }
     }
 
-    /// Pauses the device, or resumes it with nil, see `Peer.paused`.
+    /// Pauses the device or the proxy, or resumes it with nil, see `Peer.paused`.
     mutating func pausePeer(_ id: Peer.ID, _ pause: Pause?) {
+        if proxy?.id == id { proxy?.paused = pause }
         guard let i = peers.firstIndex(where: { $0.id == id }) else { return }
         peers[i].paused = pause
     }
 
-    /// Its data limit per month in bytes, or nil for none, see `Peer.limit`.
+    /// Its data limit per month in bytes, or nil for none, see `Peer.limit`. The proxy's too.
     mutating func limitPeer(_ id: Peer.ID, _ limit: UInt64?) {
+        if proxy?.id == id { proxy?.limit = limit }
         guard let i = peers.firstIndex(where: { $0.id == id }) else { return }
         peers[i].limit = limit
+    }
+
+    /// Why the device or the proxy with this id is paused, nil when it isn't or there's none.
+    func pause(of id: Peer.ID) -> Pause? {
+        proxy?.id == id ? proxy?.paused : peers.first { $0.id == id }?.paused
+    }
+
+    /// The data limit of the device or the proxy with this id, nil for none.
+    func limit(of id: Peer.ID) -> UInt64? {
+        proxy?.id == id ? proxy?.limit : peers.first { $0.id == id }?.limit
+    }
+
+    /// Turns the proxy on, the first time with a new id, or off. On again lets it carry: a pause by
+    /// you would leave Add a device waiting for a page that can't load. One at its limit stays paused.
+    mutating func turnProxy(on: Bool) {
+        guard on else {
+            proxy?.on = false
+            return
+        }
+        var next = proxy ?? Proxy()
+        next.on = true
+        if next.paused == .byYou { next.paused = nil }
+        proxy = next
     }
 
     /// The devices at these tunnel addresses reach Tether at `host`, see `Peer.host`.
@@ -470,6 +508,12 @@ final class WireGuardDevices {
     @discardableResult
     func limit(_ id: WireGuardSetup.Peer.ID, _ limit: UInt64?) -> Bool {
         change { $0.limitPeer(id, limit) }
+    }
+
+    /// See `WireGuardSetup.turnProxy`. False when it couldn't be saved, and then nothing changes.
+    @discardableResult
+    func proxy(on: Bool) -> Bool {
+        change { $0.turnProxy(on: on) }
     }
 
     /// False when the change couldn't be saved. Then the device stays, here and on the server, since

@@ -8,6 +8,7 @@
 //   Format.swift        bytes and speeds as text
 //   MainView.swift      MainView (the main screen), StatusCard, and the speeds
 //   DevicesView.swift   Add a device on the main screen, and a device's own screen
+//   ProxyView.swift     the HTTP proxy's own screen (#78)
 //   AddDeviceSheet.swift the steps to add a device, with the QR code for it
 //   AddDeviceProgress.swift  how far adding a device has got, for the sheet, Foundation only
 //   DeviceStatus.swift  what a device's row and screen say: connected, not, or paused, Foundation only
@@ -57,6 +58,14 @@ final class Model: ObservableObject {
     var wireGuardProblem: String? { session.wireGuardProblem }
     var sharing: Bool { session.sharing }
     var wireGuardNeedsReset: Bool { session.wireGuardNeedsReset }
+    /// The HTTP proxy (#78), see `HotspotSession.proxy`. Paused, limited and counted by its id, like a device.
+    var proxy: WireGuardSetup.Proxy? { session.proxy }
+    var proxyStats: ProxyStats { session.proxyStats }
+    var proxyProblem: String? { session.proxyProblem }
+    /// For the Diagnostics screen in Settings (#256).
+    var serverDiagnostics: ServerDiagnostics { session.serverDiagnostics }
+    /// On, so it has a row under Devices.
+    var proxyOn: Bool { proxy?.on == true }
 
     /// iOS blocks Tether's replies to the devices, see `LocalNetworkCheck`. Checked while on screen.
     @Published private(set) var localNetworkDenied = false
@@ -118,9 +127,14 @@ final class Model: ObservableObject {
     private var demo: DemoState?
     /// The `notificationsScreen` demo opens on the Settings sheet.
     var opensSettings: Bool { demo?.scenario == .notificationsScreen }
-    /// Some demos open on the Add a device sheet.
-    var opensAddDevice: Bool {
-        [.addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved].contains(demo?.scenario)
+    /// Some demos open on the Add a device sheet, past its first question.
+    var opensAddDevice: Bool { addDeviceOpensOn != nil }
+    var addDeviceOpensOn: AddDeviceWay? {
+        switch demo?.scenario {
+        case .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved: .wireGuard
+        case .addDeviceProxy, .addDeviceProxyWorking: .proxy
+        default: nil
+        }
     }
     /// The `addDeviceComputer` demos open the sheet with Computer picked.
     var addDeviceStartsOnComputer: Bool { [.addDeviceComputer, .addDeviceComputerIPv6].contains(demo?.scenario) }
@@ -138,6 +152,7 @@ final class Model: ObservableObject {
     #else
     var opensSettings: Bool { false }
     var opensAddDevice: Bool { false }
+    var addDeviceOpensOn: AddDeviceWay? { nil }
     var addDeviceFollows: WireGuardSetup.Peer.ID? { nil }
     var addDeviceStartsOnComputer: Bool { false }
     #endif
@@ -176,6 +191,9 @@ final class Model: ObservableObject {
         }
         #endif
         refreshExpiryWarning()
+        let calls = SystemCalls()
+        callWatch = CallWatch(calls: calls, cellular: Self.cellular, log: Self.append)
+        session.callOn = { calls.calls.contains { !$0.ended } }
         observeScene()
         localNetwork.onChange = { [weak self] denied in
             self?.localNetworkDenied = denied
@@ -217,6 +235,7 @@ final class Model: ObservableObject {
                            return !LocalNetworks.allowed(in: settings)
                        }, usageDefaults: settings,
                        resetDay: { ResetDay.saved(in: settings) },
+                       cellular: { "\(Interfaces.pdpIp0(in: Interfaces.addresses())), \(cellular.dataLine())" },
                        log: Self.append)
     }
 
@@ -242,6 +261,10 @@ final class Model: ObservableObject {
     }
 
     private var watcher: Task<Void, Never>?
+    /// Logs the calls, see `CallWatch`.
+    private var callWatch: CallWatch?
+    /// Shared, so the call lines and the hotspot line number the lines the same way.
+    private static let cellular = Cellular(radio: SystemRadio())
     private var sampler: Task<Void, Never>?
 
     /// After each watcher round: what to tell, see `Notifier`. In the background the round has just
@@ -340,6 +363,9 @@ final class Model: ObservableObject {
     func removeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) -> Bool {
         session.removeWireGuardDevice(id)
     }
+
+    /// See `HotspotSession.setProxy`.
+    func setProxy(on: Bool) { session.setProxy(on: on) }
 
     /// See `HotspotSession.openAddWindow`.
     func openAddWindow() {

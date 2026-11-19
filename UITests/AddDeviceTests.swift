@@ -112,8 +112,7 @@ final class AddDeviceTests: TetherUITestCase {
     /// instead of a word or two a line (#176).
     func testAtTheLargestTextSizeTheKindsAreButtonsAndTheStepsUseTheWidth() throws {
         launch(.waiting, arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
-        reveal(element("add.open"), maxSwipes: 30).tap()
-        XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
+        openAddDevice(maxSwipes: 30)
         let install = element("add.install")
         let step1 = reveal(element("add.step1"), maxSwipes: 30)
         XCTAssertLessThan(abs(step1.frame.minX - install.frame.minX), 20, "the title starts at the card's edge, not after the mark")
@@ -128,9 +127,16 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(computer.label, "Computer or router")
         XCTAssertFalse(computer.isSelected)
         XCTAssertGreaterThanOrEqual(computer.frame.minY, phone.frame.maxY, "under it, not beside it")
-        try audit(only: "add.kind")
-        reveal(computer, maxSwipes: 30).tap()
-        XCTAssertTrue(computer.isSelected)
+        // Scrolled here, so the audit leaves contrast out (see audit), and the selected button's white
+        // text is read from the pixels once it's still, like the other filled buttons.
+        try audit(types: structuralAudit, only: "add.kind")
+        waitUntilStill(phone)
+        let ratio = textContrast(of: phone)
+        XCTAssertGreaterThanOrEqual(ratio, 4.5, "Phone or tablet, selected: \(ratio):1")
+        waitUntilStill(reveal(computer, maxSwipes: 30)) // a tap while it still scrolls can miss
+        computer.tap()
+        let selected = expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: computer)
+        XCTAssertEqual(XCTWaiter().wait(for: [selected], timeout: 5), .completed, "the tap picks it")
         XCTAssertTrue(reveal(element("add.address"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("add.share"), maxSwipes: 30).label.contains("Share the file"))
         let shot = XCTAttachment(screenshot: app.screenshot())

@@ -7,6 +7,8 @@ final class WireGuardServer {
     private(set) var running = false
     private var carried = CarriedTotals()
     private var carriedDevices = CarriedDevices()
+    /// The proxy's bytes from earlier runs, like a device's.
+    private var carriedProxy = CarriedTotals()
     /// The run's stats at the last read Swift could decode.
     private var lastRun = ServerSnapshot()
     /// The last time stats couldn't be read, so it's logged once.
@@ -49,6 +51,7 @@ final class WireGuardServer {
         let last = currentRun()
         carried.absorb(last.totals)
         carriedDevices.absorb(last.peers)
+        carriedProxy.absorb(last.proxy.traffic)
         lastRun = ServerSnapshot() // the next run counts from zero
         TetherWGStop()
         running = false
@@ -58,7 +61,8 @@ final class WireGuardServer {
     /// and what it used is dropped, as on the server. A saved device the server doesn't let in now keeps it.
     /// A paused device stays, and keeps what it used: the server closes its connections and lets nothing through.
     /// `dns` is where lookups to Tether's own address go, see `DNSChoice`, and `blockLocal` keeps the devices
-    /// out of the iPhone's local networks, see `LocalNetworks`. They go in the same message, so they never disagree.
+    /// out of the iPhone's local networks, see `LocalNetworks`. They go in the same message, so they never disagree,
+    /// and so does the proxy, on or off and paused or not, see `WireGuardSetup.proxy`.
     func setPeers(_ setup: WireGuardSetup, dns: DNSChoice.Upstream = DNSChoice.defaultUpstream, blockLocal: Bool = false) throws {
         // Also while stopped: a device removed then mustn't hand what it used to the next device
         // that gets its address.
@@ -67,7 +71,7 @@ final class WireGuardServer {
         let peers = setup.serverPeers
         guard peers.allSatisfy({ $0.publicKey.count == 32 }) else { throw Failure(message: "a device key isn't 32 bytes") }
         // No router mark: the server finds a router by its clients' traffic, see noticeRouter in server.go.
-        let message = ConfigMessage(peers, dns: dns, blockLocal: blockLocal)
+        let message = ConfigMessage(peers, dns: dns, blockLocal: blockLocal, proxy: setup.proxy)
         let json = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
         let error = json.withCString { TetherWGConfigure(UnsafeMutablePointer(mutating: $0)) }
         if let message = take(error) { throw Failure(message: message) }
@@ -95,13 +99,15 @@ final class WireGuardServer {
         if running { TetherWGFreeMemory() }
     }
 
-    /// Counters that only grow, across restarts, the totals and each device's. Which devices are
+    /// Counters that only grow, across restarts, the totals, each device's and the proxy's. Which devices are
     /// connected, the last config that knocked but no longer works, and each address's from the last
     /// minute for the config page (#63), only while running.
     func snapshot() -> ServerSnapshot {
         let run = running ? currentRun() : ServerSnapshot()
-        return ServerSnapshot(totals: carried.apply(to: run.totals), peers: carriedDevices.apply(to: run.peers), stale: run.stale,
-                              recentStale: run.recentStale)
+        var proxy = run.proxy
+        proxy.traffic = carriedProxy.apply(to: run.proxy.traffic)
+        return ServerSnapshot(totals: carried.apply(to: run.totals), peers: carriedDevices.apply(to: run.peers), proxy: proxy,
+                              stale: run.stale, recentStale: run.recentStale, diagnostics: run.diagnostics)
     }
 
     /// This run's stats. Stats it can't read leave the last counters it read, so a stop still carries
@@ -137,11 +143,19 @@ final class WireGuardServer {
         var dns: DNS?
         /// Added later, so the version stays. Always sent: without it Go lets the devices into the local networks.
         var blockLocal = false
+        /// Added later, so the version stays. Always sent, off when there's none (#78).
+        var proxy = Proxy()
 
         struct Peer: Encodable {
             let key: Data // base64 in the JSON
             let address: String
             var paused = false // added later, so the version stays
+        }
+
+        /// configProxy in WireGuard/proxy.go.
+        struct Proxy: Encodable, Equatable {
+            var on = false
+            var paused = false
         }
 
         /// A DoH URL or plain servers, never both: configDNS in WireGuard/dns.go.
@@ -165,6 +179,10 @@ final class WireGuardServer {
             let peers: [Peer]
             let stale: Stale?
             let recent: [Stale]?
+            /// Missing from a server before the proxy (#78).
+            let proxy: Proxy?
+            /// Missing from a server before the Diagnostics screen (#256).
+            let diag: ServerDiagnostics?
 
             struct Peer: Decodable {
                 let address: String
@@ -173,6 +191,16 @@ final class WireGuardServer {
                 let down: UInt64
                 let handshake: Int64 // Unix seconds, 0 for never
                 let endpoint: String // "" for never
+            }
+
+            /// proxyStats in WireGuard/proxy.go.
+            struct Proxy: Decodable {
+                let addresses: [String]? // empty or null while it doesn't listen
+                let cantListen: Bool?
+                let paused: Bool
+                let open: Int
+                let up: UInt64
+                let down: UInt64
             }
 
             struct Stale: Decodable {
@@ -208,8 +236,12 @@ final class WireGuardServer {
                     StaleConfig(kind: $0, at: Date(timeIntervalSince1970: TimeInterval(s.at)), from: s.from.flatMap { $0.isEmpty ? nil : $0 })
                 }
             }
-            return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, stale: m.stale.flatMap(stale),
-                                  recentStale: (m.recent ?? []).compactMap(stale))
+            let proxy = m.proxy.map {
+                ProxyStats(addresses: $0.addresses ?? [], cantListen: $0.cantListen ?? false, paused: $0.paused, open: $0.open, traffic: TrafficTotals(bytesUp: $0.up, bytesDown: $0.down))
+            } ?? ProxyStats()
+            return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, proxy: proxy,
+                                  stale: m.stale.flatMap(stale), recentStale: (m.recent ?? []).compactMap(stale),
+                                  diagnostics: m.diag ?? ServerDiagnostics())
         }
     }
 }
@@ -258,6 +290,7 @@ private extension ServerSnapshot {
     var disconnected: ServerSnapshot {
         var s = self
         for address in s.peers.keys { s.peers[address]?.connected = false }
+        s.proxy = ProxyStats(traffic: s.proxy.traffic)
         s.stale = nil
         s.recentStale = []
         return s
@@ -272,13 +305,14 @@ private func take(_ p: UnsafeMutablePointer<CChar>?) -> String? {
 }
 
 extension WireGuardServer.ConfigMessage {
-    /// The devices the server lets in, paused or not, and where lookups to Tether's own address go.
-    init(_ peers: [WireGuardSetup.Peer], dns: DNSChoice.Upstream? = nil, blockLocal: Bool = false) {
+    /// The devices the server lets in, paused or not, where lookups to Tether's own address go, and the proxy.
+    init(_ peers: [WireGuardSetup.Peer], dns: DNSChoice.Upstream? = nil, blockLocal: Bool = false, proxy: WireGuardSetup.Proxy? = nil) {
         let message: DNS? = switch dns {
         case let .doh(url): DNS(doh: url.absoluteString)
         case let .servers(servers): DNS(udp: servers)
         case nil: nil
         }
-        self.init(peers: peers.map { Peer(key: $0.publicKey, address: $0.address, paused: $0.paused != nil) }, dns: message, blockLocal: blockLocal)
+        self.init(peers: peers.map { Peer(key: $0.publicKey, address: $0.address, paused: $0.paused != nil) }, dns: message, blockLocal: blockLocal,
+                  proxy: Proxy(on: proxy?.on ?? false, paused: proxy?.paused != nil))
     }
 }

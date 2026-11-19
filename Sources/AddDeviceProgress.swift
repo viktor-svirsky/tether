@@ -88,3 +88,27 @@ struct AddDeviceNaming: Equatable {
         return (device, name)
     }
 }
+
+/// How the device in Add a device goes through Tether, its first question (#78): WireGuard, all of
+/// it, or the proxy, with no app.
+enum AddDeviceWay: Hashable {
+    case wireGuard, proxy
+}
+
+/// Add a device's proxy path (#78): its last step ticks off once the proxy carries something after
+/// the screen opened, and stays ticked. A connection open to it isn't enough: Go counts one as soon
+/// as it lets it in, while its lookup may still fail and no page load.
+struct ProxyProgress: Equatable {
+    /// The proxy's bytes when the screen opened.
+    private let opened: TrafficTotals
+    private(set) var working = false
+
+    init(at stats: ProxyStats) {
+        opened = stats.traffic
+        follow(stats)
+    }
+
+    mutating func follow(_ stats: ProxyStats) {
+        if stats.traffic.total > opened.total { working = true }
+    }
+}

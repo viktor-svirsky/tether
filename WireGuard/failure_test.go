@@ -614,7 +614,7 @@ func TestADeviceSendingAsAnotherGetsNothingThrough(t *testing.T) {
 
 // A cone that idled out is gone for good. The device's next packet from the same port gets a new
 // iPhone port, and a host still sending to the old one reaches nobody, like any NAT whose mapping
-// timed out. Cones age on the real clock, not s.now, so the test ages the cone's last send.
+// timed out. The test ages the cone's last send and wakes its read, the way a later clock would.
 func TestAnExpiredConeGetsAFreshMapping(t *testing.T) {
 	s, c := setup(t)
 	device := netip.MustParseAddrPort("10.7.0.2:40001")
@@ -672,7 +672,7 @@ func TestAnExpiredConeGetsAFreshMapping(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("the aged cone stayed open")
 		}
-		old.last.Store(time.Now().Add(-udpIdle - time.Second).UnixNano())
+		old.last.Store(s.now().Add(-udpIdle - time.Second).UnixNano())
 		old.conn.SetReadDeadline(time.Now())
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -813,14 +813,9 @@ func TestAStalledDownloadEndsWhenItsDevicesSessionEnds(t *testing.T) {
 	}
 	c.dev.Down()
 	at := time.Now()
-	setNow := func(d time.Duration) {
-		s.mu.Lock()
-		s.now = func() time.Time { return at.Add(d) }
-		s.mu.Unlock()
-	}
 	// Read every handshakeEvery, the way the refresher does, until the session is over.
 	for d := time.Duration(0); d < sessionOver+handshakeEvery; d += handshakeEvery {
-		setNow(d)
+		clockOf(s).set(at.Add(d))
 		s.readHandshakes()
 		if d < sessionOver-handshakeEvery && s.leftOver(netip.MustParseAddr("10.7.0.2")) == "" {
 			t.Fatalf("the connection closed %v after the device left, while its session could still be on", d)
@@ -836,10 +831,7 @@ func TestASuspensionDoesntCloseTheDevicesConnections(t *testing.T) {
 	target := farEnd(t, func(conn *net.TCPConn) { io.Copy(conn, conn) })
 	conn := connect(t, c, target)
 	s.readHandshakes()
-	later := time.Now().Add(sessionOver + time.Minute)
-	s.mu.Lock()
-	s.now = func() time.Time { return later }
-	s.mu.Unlock()
+	clockOf(s).set(time.Now().Add(sessionOver + time.Minute))
 	s.readHandshakes()
 	time.Sleep(200 * time.Millisecond) // a close would have reset it by now
 	conn.SetDeadline(time.Now().Add(5 * time.Second))

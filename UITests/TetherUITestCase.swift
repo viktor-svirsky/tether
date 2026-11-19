@@ -3,7 +3,7 @@ import XCTest
 /// The fake app states a test can launch (`-TetherDemo <name>`, see Sources/DemoMode.swift).
 /// Their fixed values are described there.
 enum Scenario: String {
-    case waiting, localNetworkIntro, wireGuardLockedWaiting, noDevices, sharing, wireGuardLocked, wireGuardNeedsReset, wireGuardUnsaved, qrCodeUnsaved, expiring, notificationsOff, notifying, notificationsScreen, addDeviceScreen, addDeviceComputer, addDeviceComputerIPv6, addDeviceWaiting, addDeviceDone, addDeviceDoneUnsaved, localNetworkDenied, staleConfig, oldAddress, paused
+    case waiting, localNetworkIntro, wireGuardLockedWaiting, noDevices, sharing, wireGuardLocked, wireGuardNeedsReset, wireGuardUnsaved, qrCodeUnsaved, expiring, notificationsOff, notifying, notificationsScreen, addDeviceScreen, addDeviceComputer, addDeviceComputerIPv6, addDeviceWaiting, addDeviceDone, addDeviceDoneUnsaved, localNetworkDenied, staleConfig, oldAddress, paused, proxy, proxyIPv6, addDeviceProxy, addDeviceProxyWorking
 }
 
 /// Base class for the screen tests: launching, finding things by identifier, scrolling a List.
@@ -207,10 +207,21 @@ class TetherUITestCase: XCTestCase {
 
     // MARK: navigation
 
-    /// From the main screen to the Add a device sheet.
-    func openAddDevice(file: StaticString = #filePath, line: UInt = #line) {
-        reveal(element("add.open"), file: file, line: line).tap()
-        XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5), "the sheet did not open", file: file, line: line)
+    /// From the main screen to the Add a device sheet's WireGuard steps, through its first question (#78).
+    func openAddDevice(maxSwipes: Int = 14, file: StaticString = #filePath, line: UInt = #line) {
+        openAddDeviceQuestion(maxSwipes: maxSwipes, file: file, line: line)
+        // At the largest text size on a small iPhone the card runs past the screen's lower edge, where
+        // reveal won't settle, but its top is there to tap.
+        let way = element("add.way.wireGuard")
+        if !way.isHittable { reveal(way, maxSwipes: maxSwipes, file: file, line: line) }
+        way.tap()
+        XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5), "the WireGuard steps did not open", file: file, line: line)
+    }
+
+    /// From the main screen to the Add a device sheet's first question: WireGuard or the proxy (#78).
+    func openAddDeviceQuestion(maxSwipes: Int = 14, file: StaticString = #filePath, line: UInt = #line) {
+        reveal(element("add.open"), maxSwipes: maxSwipes, file: file, line: line).tap()
+        XCTAssertTrue(element("add.question").waitForExistence(timeout: 5), "the sheet did not open", file: file, line: line)
     }
 
     /// From the main screen to the Settings sheet, through the gear.
@@ -375,7 +386,7 @@ class TetherUITestCase: XCTestCase {
     /// Their tests read the real contrast from the pixels instead, see `textContrast`.
     static let filledButtons: Set<String> = ["intro.continue"]
     /// Tether's elements that use only `.secondary` text, the plain button tint or the system's red for a destructive button.
-    static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.hint", "add.airdrop", "add.router", "notices.footer", "sharing.footer", "settings.logFooter"]
+    static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.hint", "add.airdrop", "add.router", "notices.footer", "sharing.footer", "settings.logFooter", "add.proxy.result", "proxy.off"]
 
     /// The audit without contrast, for a screen that is scrolled (see `audit`).
     var structuralAudit: XCUIAccessibilityAuditType {

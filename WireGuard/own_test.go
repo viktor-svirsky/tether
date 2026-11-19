@@ -35,7 +35,7 @@ func ownAre(s *Server, addrs ...string) {
 }
 
 // startAlone starts a server with no devices, for what needs no traffic.
-func startAlone(t *testing.T) *Server {
+func startAlone(t testing.TB) *Server {
 	priv, _ := keyPair(t)
 	s, err := Start([]netip.Addr{loopback}, 0, priv)
 	if err != nil {
@@ -99,7 +99,7 @@ func TestTheOwnAddressesFollowTheIPhone(t *testing.T) {
 func TestAFailedFirstReadOfTheOwnAddressesStopsTheStart(t *testing.T) {
 	priv, _ := keyPair(t)
 	failing := func() ([]net.Addr, error) { return nil, errors.New("no addresses for you") }
-	s, err := start([]netip.Addr{loopback}, 0, priv, failing)
+	s, err := start([]netip.Addr{loopback}, 0, priv, failing, time.Now, afterFunc)
 	if err == nil {
 		s.Close()
 		t.Fatal("started without knowing the iPhone's own addresses")

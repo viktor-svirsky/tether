@@ -25,7 +25,7 @@ import (
 
 var loopback = netip.MustParseAddr("127.0.0.1")
 
-func keyPair(t *testing.T) (priv, pub [32]byte) {
+func keyPair(t testing.TB) (priv, pub [32]byte) {
 	rand.Read(priv[:])
 	priv[0] &= 248
 	priv[31] = priv[31]&127 | 64
@@ -108,7 +108,7 @@ func setup(t *testing.T) (*Server, *client) { return setupWithMTU(t, MTU) }
 func setupWithMTU(t *testing.T, mtu int) (*Server, *client) {
 	sPriv, sPub := keyPair(t)
 	cPriv, cPub := keyPair(t)
-	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
+	s, err := startWithClock([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,9 +553,7 @@ func TestADeviceIsConnectedUntilItsHandshakeIsOld(t *testing.T) {
 	if st := s.Stats(); len(st.Connected) != 1 || st.Connected[0] != "10.7.0.2" {
 		t.Fatalf("connected %v, want the device's tunnel address", st.Connected)
 	}
-	s.mu.Lock()
-	s.now = func() time.Time { return time.Now().Add(onlineWithin) }
-	s.mu.Unlock()
+	clockOf(s).ahead(onlineWithin)
 	st := s.Stats()
 	if len(st.Connected) != 0 {
 		t.Fatalf("connected %v after the handshake aged, want none", st.Connected)
@@ -575,7 +573,7 @@ func TestARemovedDeviceIsNotConnected(t *testing.T) {
 }
 
 func TestOneWayUDPOutlivesTheQuietDirection(t *testing.T) {
-	s := &Server{fromNet: func(a netip.AddrPort) netip.AddrPort { return a }}
+	s := &Server{now: time.Now, after: afterFunc, fromNet: func(a netip.AddrPort) netip.AddrPort { return a }}
 	conn, err := net.ListenUDP("udp4", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -597,7 +595,7 @@ func TestOneWayUDPOutlivesTheQuietDirection(t *testing.T) {
 // A DNS lookup uses a new port every time, so its cone goes after dnsIdle, not a minute later.
 func TestALookupFlowEndsSooner(t *testing.T) {
 	ended := func(dnsOnly bool) bool {
-		s := &Server{fromNet: func(a netip.AddrPort) netip.AddrPort { return a }}
+		s := &Server{now: time.Now, after: afterFunc, fromNet: func(a netip.AddrPort) netip.AddrPort { return a }}
 		conn, err := net.ListenUDP("udp4", nil)
 		if err != nil {
 			t.Fatal(err)
@@ -638,6 +636,154 @@ func TestAPortThatSendsElsewhereKeepsTheMinute(t *testing.T) {
 	c.sentTo(netip.MustParseAddrPort("1.1.1.1:53"))
 	if c.idle() != udpIdle {
 		t.Fatalf("idle %v after other traffic, want %v", c.idle(), udpIdle)
+	}
+}
+
+// A cone ages by the server's clock, so moving the clock past udpIdle ends it without waiting.
+func TestAConeIdlesOutByTheServersClock(t *testing.T) {
+	s, _ := setup(t)
+	k := clockOf(s)
+	start := time.Now()
+	k.set(start)
+	k.manualTimers()
+	// waited waits until the cone's read waits until at. Other timers, a handshake's say, are skipped.
+	waited := func(at time.Time) {
+		t.Helper()
+		for due := (time.Time{}); !due.Equal(at); {
+			select {
+			case due = <-k.armed:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("the cone's read never waited until %v", at.Sub(start))
+			}
+		}
+	}
+	c := s.cone(netip.MustParseAddrPort("10.7.0.2:5000"))
+	if c == nil {
+		t.Fatal("no cone")
+	}
+	// A new cone counts as a lookup's until its first packet goes elsewhere, as handleUDP's does
+	// right after. Its read wakes after dnsIdle, sees time left, and waits for the rest of udpIdle.
+	waited(start.Add(dnsIdle))
+	c.sentTo(netip.MustParseAddrPort("1.1.1.1:443"))
+	k.advance(udpIdle - time.Second)
+	waited(start.Add(udpIdle))
+	if c.closed() {
+		t.Fatal("the cone closed before udpIdle")
+	}
+	k.advance(time.Second)
+	select {
+	case <-c.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the cone outlived udpIdle")
+	}
+}
+
+// startWithClock is Start with a clock the test can move, see clockOf.
+func startWithClock(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
+	k := newFakeClock()
+	s, err := start(hosts, port, privateKey, net.InterfaceAddrs, k.now, k.after)
+	if err == nil {
+		clocks.Store(s, k)
+	}
+	return s, err
+}
+
+// clocks holds the clock of each server startWithClock started.
+var clocks sync.Map
+
+// clockOf is the clock startWithClock gave the server.
+func clockOf(s *Server) *fakeClock {
+	k, _ := clocks.Load(s)
+	return k.(*fakeClock)
+}
+
+// fakeClock is a clock a test moves. It follows the real one, ahead by shift, until set stops it.
+// Its timers are real ones until manualTimers. Then they run as advance passes their time, and
+// armed gets each one's time as it's set.
+type fakeClock struct {
+	mu     sync.Mutex
+	shift  time.Duration
+	at     time.Time // where set stopped it, zero while it follows the real clock
+	manual bool
+	timers map[*fakeTimer]bool
+	armed  chan time.Time
+}
+
+type fakeTimer struct {
+	at time.Time
+	f  func()
+}
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{timers: map[*fakeTimer]bool{}, armed: make(chan time.Time, 100)}
+}
+
+func (k *fakeClock) now() time.Time {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.at.IsZero() {
+		return time.Now().Add(k.shift)
+	}
+	return k.at
+}
+
+// set stops the clock at t.
+func (k *fakeClock) set(t time.Time) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.at = t
+}
+
+// ahead has the clock follow the real one, d ahead.
+func (k *fakeClock) ahead(d time.Duration) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.at, k.shift = time.Time{}, d
+}
+
+// manualTimers has the timers set from now on run only as advance passes their time.
+func (k *fakeClock) manualTimers() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.manual = true
+}
+
+func (k *fakeClock) after(d time.Duration, f func()) func() bool {
+	k.mu.Lock()
+	if !k.manual {
+		k.mu.Unlock()
+		return afterFunc(d, f)
+	}
+	t := &fakeTimer{at: k.at.Add(d), f: f}
+	k.timers[t] = true
+	k.mu.Unlock()
+	select {
+	case k.armed <- t.at:
+	default:
+	}
+	return func() bool {
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		pending := k.timers[t]
+		delete(k.timers, t)
+		return pending
+	}
+}
+
+// advance moves the stopped clock on by d and runs the timers that came due.
+func (k *fakeClock) advance(d time.Duration) {
+	k.mu.Lock()
+	k.at = k.at.Add(d)
+	var due []*fakeTimer
+	for t := range k.timers {
+		if !t.at.After(k.at) {
+			due = append(due, t)
+			delete(k.timers, t)
+		}
+	}
+	k.mu.Unlock()
+	for _, t := range due {
+		t.f()
 	}
 }
 
@@ -927,7 +1073,7 @@ func twoRouters(t *testing.T) (s *Server, a, b netip.Addr, cb *client, target st
 	sPriv, sPub := keyPair(t)
 	aPriv, aPub := keyPair(t)
 	bPriv, bPub := keyPair(t)
-	s, err := Start([]netip.Addr{loopback}, 0, sPriv)
+	s, err := startWithClock([]netip.Addr{loopback}, 0, sPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -965,9 +1111,7 @@ func TestAnOnlineRouterKeepsItsRole(t *testing.T) {
 
 func TestTheRoleMovesOnceTheRouterIsOffline(t *testing.T) {
 	s, _, b, cb, target := twoRouters(t)
-	s.mu.Lock()
-	s.now = func() time.Time { return time.Now().Add(onlineWithin) }
-	s.mu.Unlock()
+	clockOf(s).ahead(onlineWithin)
 	if _, err := fetch(t, cb, target); err != nil {
 		t.Fatal(err)
 	}
@@ -1414,7 +1558,7 @@ func TestADeviceAtItsConeCapLeavesOthersTheirs(t *testing.T) {
 // Only the device's own packets keep a cone open. A host that keeps sending to the port can't hold
 // one of the device's cones forever.
 func TestRepliesAloneDontKeepAConeOpen(t *testing.T) {
-	s := &Server{fromNet: func(a netip.AddrPort) netip.AddrPort { return a }, tun: newStackTun()}
+	s := &Server{now: time.Now, after: afterFunc, fromNet: func(a netip.AddrPort) netip.AddrPort { return a }, tun: newStackTun()}
 	defer s.tun.Close()
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {

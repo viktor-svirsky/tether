@@ -295,7 +295,7 @@ func TestTheConfigMessageCarriesTheSetting(t *testing.T) {
 		`{"v":1,"peers":[],"blockLocal":false}`: false,
 		`{"v":1,"peers":[],"blockLocal":true}`:  true,
 	} {
-		_, _, block, err := parseConfig(js)
+		_, _, block, _, err := parseConfig(js)
 		if err != nil || block != want {
 			t.Errorf("%s: block %v, %v, want %v", js, block, err, want)
 		}

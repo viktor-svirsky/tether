@@ -184,10 +184,15 @@ type Server struct {
 	// heard sees each line wireguard-go logs. Tests set it to look at the server mid-change.
 	heard atomic.Pointer[func(string)]
 	ipID  atomic.Uint32 // IPv4 identification for the UDP and ping replies we build
+	diag  diagnostics   // for the Diagnostics screen, see diagnostics.go
 	// up and down are the byte totals. Atomic, since every read and write of every connection
 	// adds to them, and a lock there would make them all take turns.
 	up, down atomic.Uint64
-	now      func() time.Time // tests move the clock to age a handshake
+	// now is the server's clock, and after runs f once d has passed on it, unless the func it
+	// returns stops it first. Both are read without a lock, so start sets them and nothing changes
+	// them after. Tests that age a handshake or a cone give start a clock they move.
+	now   func() time.Time
+	after func(d time.Duration, f func()) func() bool
 
 	// The handshake refresher, and SetPeers, read wireguard-go's status. Nothing on the packet path
 	// does, since that would wait on wireguard-go's config lock, which Close and SetPeers hold
@@ -285,6 +290,8 @@ type Server struct {
 	closed bool
 	// forwarding counts the forwardTCP goroutines handleTCP let in, for Close to wait for.
 	forwarding sync.WaitGroup
+	// proxy is the HTTP proxy for devices without WireGuard, see proxy.go.
+	proxy *proxy
 }
 
 // arrival is a TCP connection a device asked for, from its SYN until its dial ends.
@@ -299,11 +306,12 @@ type arrival struct {
 // that can't be listened on fails it, and so does a failed first read of the iPhone's own
 // addresses. Peers come from SetPeers.
 func Start(hosts []netip.Addr, port int, privateKey [32]byte) (*Server, error) {
-	return start(hosts, port, privateKey, net.InterfaceAddrs)
+	return start(hosts, port, privateKey, net.InterfaceAddrs, time.Now, afterFunc)
 }
 
-// start is Start with the iPhone's own addresses read by listAddrs. Tests give one that fails.
-func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() ([]net.Addr, error)) (*Server, error) {
+// start is Start with the iPhone's own addresses read by listAddrs, and the clock now and after.
+// Tests give a listAddrs that fails, and a clock they move.
+func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() ([]net.Addr, error), now func() time.Time, after func(time.Duration, func()) func() bool) (*Server, error) {
 	// Go's default keepalive probes every idle connection every 15 s, which keeps the cellular
 	// radio awake. Probing is still needed: when the device closes first, forwardTCP half-closes
 	// and waits for the remote, so a remote that silently went away would hold it forever.
@@ -318,7 +326,8 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 		endpoints: map[netip.Addr]string{},
 		knocks:    newKnocks(),
 		traffic:   map[netip.Addr]*traffic{},
-		now:       time.Now,
+		now:       now,
+		after:     after,
 		flows:     map[netip.Addr]map[io.Closer]struct{}{},
 		tcpTo:     map[io.Closer]netip.Addr{},
 		cones:     map[netip.AddrPort]*cone{},
@@ -343,6 +352,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 		dead:      make(chan struct{}, 1),
 		listAddrs: listAddrs,
 	}
+	s.proxy = newProxy()
 	s.page.Store(&[]netip.AddrPort{})
 	s.local.Store(&map[netip.Addr]struct{}{})
 	s.onLink.Store(&[]netip.Prefix{})
@@ -393,7 +403,7 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 
 	logger := &device.Logger{Verbosef: s.notice, Errorf: s.noticeError}
 	s.bind = &hostBind{hosts: hosts, died: s.socketDied}
-	s.dev = device.NewDevice(s.tun, s.bind, logger)
+	s.dev = device.NewDevice(countingTun{s.tun, &s.diag.packetsIn}, s.bind, logger)
 	if err := s.dev.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\n", hex.EncodeToString(privateKey[:]), port)); err != nil {
 		s.dev.Close()
 		s.stack.Close()
@@ -416,6 +426,9 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 // for, and their dials end at once. Calling it again does nothing.
 func (s *Server) Close() { s.closeOnce.Do(s.close) }
 
+// afterFunc is the real clock's after.
+func afterFunc(d time.Duration, f func()) func() bool { return time.AfterFunc(d, f).Stop }
+
 func (s *Server) close() {
 	close(s.stop)
 	s.stopped.Wait()
@@ -423,6 +436,7 @@ func (s *Server) close() {
 	s.closed = true
 	s.mu.Unlock()
 	s.cancel()
+	s.stopProxy() // after cancel, which ends its dials and NAT64 lookups, so it doesn't wait them out
 	s.dev.Close() // closes the tun too
 	s.stack.Close()
 	s.closePings()
@@ -550,6 +564,7 @@ func (s *Server) notice(format string, args ...any) {
 	s.noticeHandshake(format)
 	s.noticeRouter(format, args...)
 	s.noticeStale(format, args...)
+	s.diag.heard(format)
 	s.keep("", format, args)
 }
 
@@ -561,7 +576,7 @@ func (s *Server) noticeHandshake(format string) {
 	if !strings.Contains(format, "Sending handshake response") {
 		return
 	}
-	time.AfterFunc(time.Second, func() {
+	s.after(time.Second, func() {
 		select {
 		case s.shake <- struct{}{}:
 		default:
@@ -1178,18 +1193,12 @@ func (s *Server) forwardTCP(r forwardRequest) {
 		refuse()
 		return
 	}
-	out, err := s.dialOut(dst, lookups)
+	out, err := s.dialCounted(dst, lookups)
 	if err != nil {
 		refuse()
 		return
 	}
-	// A reset, unlike Close, tells a side the transfer didn't finish.
-	resetOut := func() {
-		if t, ok := out.(*net.TCPConn); ok {
-			t.SetLinger(0)
-		}
-		out.Close()
-	}
+	resetOut := func() { resetTCP(out) }
 	// out is tracked from here, so SetPeers or Close can close it while the device's side is
 	// made, and end that too. It waits for the device's ACK, which never comes when the device's
 	// key just went or the stack is closed.
@@ -1346,6 +1355,14 @@ func (s *Server) dialTCP(ctx context.Context, dst netip.AddrPort, nat64Wait func
 		}
 	}
 	return out, err
+}
+
+// resetTCP closes c with a reset, which, unlike a FIN, tells the other side the transfer didn't finish.
+func resetTCP(c net.Conn) {
+	if t, ok := c.(*net.TCPConn); ok {
+		t.SetLinger(0)
+	}
+	c.Close()
 }
 
 // wake ends the handshake CreateEndpoint waits on: gVisor waits for the queue's next event, then

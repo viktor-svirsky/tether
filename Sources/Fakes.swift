@@ -39,6 +39,16 @@ final class FakeServer: WireGuardServing {
     var stale: StaleConfig?
     /// Other addresses' configs that knocked before `stale`, which the config page reads with it.
     var earlierStale: [StaleConfig] = []
+    /// The proxy's counters, always reported, like a device's.
+    var proxyTraffic = TrafficTotals()
+    /// Its open connections and where it listens, reported only while running with the proxy on, as
+    /// Go does. Nil listens where Go does on a usual hotspot.
+    var proxyOpen = 0
+    var proxyAddresses: [String]?
+    /// The Diagnostics screen's counters, reported only while running, as the real server's start
+    /// from zero with each run. With no `listening` set, it listens where the last start said.
+    var diagnostics = ServerDiagnostics()
+    private var listening: [String] = []
     /// The addresses of each start, comma-separated.
     private(set) var starts: [String] = []
     private(set) var lastSetup: WireGuardSetup?
@@ -54,6 +64,7 @@ final class FakeServer: WireGuardServing {
         stop()
         starts.append(hosts.joined(separator: ","))
         if let startError { throw startError }
+        listening = hosts.map { Hotspot.withPort($0, port) }
         running = true
         page = []
         do {
@@ -103,8 +114,21 @@ final class FakeServer: WireGuardServing {
             }
             for (address, handshake) in handshakes { peers[address, default: PeerStats()].lastHandshake = handshake }
         }
-        return ServerSnapshot(totals: totals, peers: peers, stale: running ? stale : nil,
-                              recentStale: running ? earlierStale + [stale].compactMap(\.self) : [])
+        var proxy = ProxyStats(traffic: proxyTraffic)
+        if running, let on = lastSetup?.proxy, on.on {
+            proxy.addresses = proxyAddresses ?? ["\(Hotspot.host):8118"]
+            proxy.paused = on.paused != nil
+            proxy.open = proxyOpen
+        }
+        return ServerSnapshot(totals: totals, peers: peers, proxy: proxy, stale: running ? stale : nil,
+                              recentStale: running ? earlierStale + [stale].compactMap(\.self) : [],
+                              diagnostics: running ? runDiagnostics : ServerDiagnostics())
+    }
+
+    private var runDiagnostics: ServerDiagnostics {
+        var d = diagnostics
+        if d.listening.isEmpty { d.listening = listening }
+        return d
     }
 
     func freeMemory() {}

@@ -177,18 +177,18 @@ func (s *Server) sendPing(p echoRequest) {
 	limit := s.maxPings
 	s.mu.Unlock()
 	counts := s.trafficOf(owner)
-	id, ok := s.pings.add(waitingPing{device: src, owner: owner, traffic: counts, dst: dst, id: m.Ident(), at: time.Now()}, limit)
+	id, ok := s.pings.add(waitingPing{device: src, owner: owner, traffic: counts, dst: dst, id: m.Ident(), at: s.now()}, limit)
 	if !ok {
 		return
 	}
 	b, err := (&icmp.Message{Type: ipv4.ICMPTypeEcho, Body: &icmp.Echo{ID: int(id), Seq: int(m.Sequence()), Data: m.Payload()}}).Marshal(nil)
 	if err != nil {
-		s.pings.take(id, dst)
+		s.pings.take(id, dst, s.now())
 		return
 	}
 	to := s.toNet(netip.AddrPortFrom(dst, 0)).Addr()
 	if _, err := s.pings.conn.Load().WriteTo(b, &net.UDPAddr{IP: to.AsSlice()}); err != nil {
-		s.pings.take(id, dst)
+		s.pings.take(id, dst, s.now())
 		return
 	}
 	s.count(counts, true, len(m.Payload())) // the data, as UDP and TCP count theirs
@@ -221,7 +221,7 @@ func (s *Server) receivePings() {
 		}
 		addr, _ := netip.AddrFromSlice(u.IP)
 		src := s.fromNet(netip.AddrPortFrom(addr.Unmap(), 0)).Addr()
-		w, ok := s.pings.take(uint16(echo.ID), src)
+		w, ok := s.pings.take(uint16(echo.ID), src, s.now())
 		if !ok || s.blocks(src) {
 			continue // another app's, one that waited too long, or a local host's sent before Block
 		}
@@ -242,12 +242,15 @@ func (s *Server) receivePings() {
 // reopenPings opens a new ping socket after a read failed. False once the server is closing.
 func (s *Server) reopenPings() bool {
 	for {
+		wait := make(chan struct{})
+		stop := s.after(s.pings.reopened.Add(time.Second).Sub(s.now()), func() { close(wait) })
 		select {
 		case <-s.ctx.Done():
+			stop()
 			return false
-		case <-time.After(time.Until(s.pings.reopened.Add(time.Second))):
+		case <-wait:
 		}
-		s.pings.reopened = time.Now()
+		s.pings.reopened = s.now()
 		conn, err := icmp.ListenPacket("udp4", "0.0.0.0")
 		if err != nil {
 			s.notice("ping: can't listen again: %v", err)
@@ -293,7 +296,7 @@ func (p *pinger) add(w waitingPing, limit int) (uint16, bool) {
 }
 
 // take ends the wait of the request that went out as id to from.
-func (p *pinger) take(id uint16, from netip.Addr) (waitingPing, bool) {
+func (p *pinger) take(id uint16, from netip.Addr, now time.Time) (waitingPing, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	w, ok := p.waiting[id]
@@ -301,7 +304,7 @@ func (p *pinger) take(id uint16, from netip.Addr) (waitingPing, bool) {
 		return waitingPing{}, false
 	}
 	p.removeLocked(id, w)
-	return w, time.Since(w.at) <= pingWait
+	return w, now.Sub(w.at) <= pingWait
 }
 
 func (p *pinger) removeLocked(id uint16, w waitingPing) {

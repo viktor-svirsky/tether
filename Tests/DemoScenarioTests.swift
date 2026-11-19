@@ -10,7 +10,8 @@ final class DemoScenarioTests: XCTestCase {
     private let waiting: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro]
     /// The list shows both states: the iPad connected, the Windows PC not.
     private let iPadConnected: Set<DemoScenario> = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying,
-                                                    .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .staleConfig]
+                                                    .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .staleConfig,
+                                                    .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
     private let noSpeed: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro, .noDevices, .wireGuardUnsaved,
                                               .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6]
 
@@ -83,6 +84,24 @@ final class DemoScenarioTests: XCTestCase {
         let session = DemoState(.oldAddress).makeSession()
         let pc = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "Windows PC" })
         XCTAssertTrue(session.needsNewConfig(pc))
+    }
+
+    /// The proxy demos (#78) have it on, with the iPad and the Windows PC, and only they do. `proxy`
+    /// has two connections open and 85 MB this month, `proxyIPv6` listens at both addresses, and Add a
+    /// device's waits for the first page or has one loading through it.
+    func testTheProxyDemosHaveTheProxyOn() throws {
+        let on: Set<DemoScenario> = [.proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
+        for scenario in DemoScenario.allCases {
+            XCTAssertEqual(DemoState(scenario).makeSession().proxy?.on == true, on.contains(scenario), "\(scenario)")
+        }
+        let proxy = DemoState(.proxy).makeSession()
+        XCTAssertEqual(proxy.proxyStats.open, 2)
+        XCTAssertEqual(proxy.proxyStats.addresses, ["172.20.10.1:8118"])
+        XCTAssertEqual(proxy.usage(of: try XCTUnwrap(proxy.proxy?.id)).thisMonth.total, 85_000_000)
+        XCTAssertEqual(DemoState(.proxyIPv6).makeSession().proxyStats.addresses,
+                       ["172.20.10.1:8118", "[2001:db8:9e74:4eaa:459:5cd0:7ec7:f792]:8118"])
+        XCTAssertEqual(DemoState(.addDeviceProxy).makeSession().proxyStats.open, 0)
+        XCTAssertEqual(DemoState(.addDeviceProxyWorking).makeSession().proxyStats.open, 1)
     }
 
     /// A demo's log is its own, emptied at each launch, so the app's log never gets a demo's lines.

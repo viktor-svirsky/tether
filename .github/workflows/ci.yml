@@ -54,7 +54,7 @@ jobs:
     runs-on: macos-26
     permissions:
       contents: read
-    timeout-minutes: 30 # an estimate of about 7 minutes, the race run about 3 of them since #135
+    timeout-minutes: 30 # an estimate of about 12 minutes: the race run about 3 since #135, fuzzing 4.5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,8 +69,20 @@ jobs:
       - name: WireGuard server tests under the race detector
         # go test stops a run at 10 minutes by default. This one came close to that before #135.
         run: go -C WireGuard test -race -timeout 20m ./...
-      - name: Fuzz the UDP replies
-        run: go -C WireGuard test -run '^$' -fuzz FuzzReplyPackets -fuzztime 30s ./...
+      # 30 s per target keeps them working. It's a smoke test, not a long fuzz. An input that fails
+      # is written to WireGuard/testdata/fuzz, and the next step keeps it.
+      - name: Fuzz what devices and the internet send
+        id: fuzz
+        run: |
+          for f in FuzzReplyPackets FuzzTunWrite FuzzResolve FuzzServeTCP FuzzQuestions FuzzEchoReply FuzzNAT64 FuzzFitUDP FuzzProxyTarget; do
+            go -C WireGuard test -run '^$' -fuzz "^$f\$" -fuzztime 30s . || exit 1
+          done
+      - name: Keep the input the fuzzer failed on
+        if: failure() && steps.fuzz.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-input
+          path: WireGuard/testdata/fuzz
       # Fails only on a known vulnerability that Tether's code can reach. Pinned, like the actions.
       - name: Known vulnerabilities
         run: go -C WireGuard run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

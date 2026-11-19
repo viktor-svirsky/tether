@@ -76,7 +76,7 @@ struct MainView: View {
                     }
                 }
 
-                if !model.wireGuardPeers.isEmpty {
+                if !model.wireGuardPeers.isEmpty || model.proxyOn {
                     Section("Devices") {
                         ForEach(model.wireGuardPeers) { peer in
                             NavigationLink { DeviceView(model: model, peer: peer) } label: {
@@ -97,10 +97,13 @@ struct MainView: View {
                             }
                             .accessibilityIdentifier("device.\(peer.name)")
                         }
+                        if model.proxyOn, let proxy = model.proxy {
+                            proxyRow(proxy)
+                        }
                     }
                 }
 
-                AddDeviceSection(model: model, first: model.wireGuardPeers.isEmpty) { addingDevice = true }
+                AddDeviceSection(model: model, first: model.wireGuardPeers.isEmpty && !model.proxyOn) { addingDevice = true }
             }
             // The title above draws it big, so the bar stays hidden. It's still set, because the
             // screens pushed from here use it for their back button.
@@ -116,6 +119,27 @@ struct MainView: View {
                 if model.opensAddDevice { addingDevice = true }
             }
         }
+    }
+}
+
+extension MainView {
+    /// The proxy's row under the devices (#78), once it's on: like a device's, with how many
+    /// connections are open in place of Connected.
+    private func proxyRow(_ proxy: WireGuardSetup.Proxy) -> some View {
+        let status = ProxyStatus(proxy, stats: model.proxyStats, hotspotOn: model.running)
+        return NavigationLink { ProxyView(model: model) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                deviceRow {
+                    Text(ProxyStatus.name)
+                    if !textSize.isAccessibilitySize { Spacer() }
+                    DeviceStatusLabel(status: status.look, text: status.label)
+                        .font(.subheadline)
+                }
+                Text(Format.used(model.usage(of: proxy.id).thisMonth.total, model.usagePeriod))
+                    .font(.subheadline)
+            }
+        }
+        .accessibilityIdentifier("proxy.row")
     }
 }
 
@@ -223,11 +247,8 @@ struct StatusCard: View {
     }
 
     private var headline: String {
-        switch model.wireGuardConnected.count {
-        case 0: return "No device is using Tether yet"
-        case 1: return "1 device connected"
-        case let n: return "\(n) devices connected"
-        }
+        let proxy = model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running).inUse } ?? false
+        return UsingTether.headline(devices: model.wireGuardConnected.count, proxy: proxy)
     }
 
     /// The orb sits left of the text. At the accessibility text sizes a row would squeeze the text
