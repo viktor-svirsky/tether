@@ -1056,11 +1056,11 @@ func (r *proxyRun) relay(client *proxyConn, in io.Reader, out *outConn) {
 		}
 		if clientFailed {
 			client.reset()
-			s.drain(func() int { return sendQueue(out.Conn) })
+			s.drain(r.ctx, func() int { return sendQueue(out.Conn) })
 			out.reset()
 		} else {
 			out.reset()
-			s.drain(func() int { return sendQueue(client.Conn) })
+			s.drain(r.ctx, func() int { return sendQueue(client.Conn) })
 			client.reset()
 		}
 	}
