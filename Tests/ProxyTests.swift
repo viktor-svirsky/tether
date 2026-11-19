@@ -252,23 +252,31 @@ final class ProxyTests: XCTestCase {
         XCTAssertNil(session.proxy?.paused, "the count reset")
     }
 
-    /// Devices on the proxy keep Tether sharing: an idle stop would cut them off (#76).
-    func testOpenProxyConnectionsKeepSharingFromAnIdleStop() throws {
+    /// Devices on the proxy keep Tether sharing: an idle stop would cut them off (#76). An open
+    /// connection counts only while something moves through it: a tunnel a Mac holds open for push,
+    /// with nothing through it for the idle time, doesn't (#286).
+    func testOnlyProxyConnectionsThatMoveDataKeepSharingFromAnIdleStop() throws {
         sceneActive = false
         idleAfter = .tenMinutes
         _ = try proxyOn()
         session.wake()
         server.proxyOpen = 1
         session.watch()
-        now = now.addingTimeInterval(11 * 60)
-        session.watch()
-        XCTAssertTrue(session.sharing, "a device is on the proxy")
+        for _ in 1 ... 11 {
+            now = now.addingTimeInterval(60)
+            server.proxyTraffic.bytesDown += 1000
+            session.watch()
+        }
+        XCTAssertTrue(session.sharing, "a device loads something through the proxy")
         XCTAssertNil(session.idleStopped)
-        server.proxyOpen = 0
+        now = now.addingTimeInterval(60) // the first round with nothing through it, the tunnel still open
         session.watch()
-        now = now.addingTimeInterval(11 * 60)
+        now = now.addingTimeInterval(9 * 60)
         session.watch()
-        XCTAssertNotNil(session.idleStopped, "nobody on it any more")
+        XCTAssertTrue(session.sharing)
+        now = now.addingTimeInterval(60)
+        session.watch()
+        XCTAssertNotNil(session.idleStopped, "an open tunnel with nothing through it for 10 minutes")
     }
 
     /// Paused, the proxy still takes a connection to answer it with 403, so a device that keeps
