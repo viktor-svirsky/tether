@@ -104,6 +104,7 @@ type proxy struct {
 	run       *proxyRun // nil while it's off
 	paused    bool
 	open      int                // client connections, see maxConns
+	admitted  uint64             // every client connection let in since the server started (#285)
 	openBy    map[netip.Addr]int // each client's, see maxPerClient
 	lookups   int                // lookups still running, also ones whose client gave up
 	dials     int                // plain requests' dials still running, also ones whose client gave up
@@ -579,6 +580,7 @@ func (r *proxyRun) admit(c net.Conn, k *proxySocket) (*proxyConn, bool) {
 		return nil, false
 	}
 	p.open++
+	p.admitted++
 	p.openBy[from]++
 	pc := &proxyConn{keptConn: keptConn{Conn: c}}
 	untrack := s.trackLocked(proxyFlows, netip.Addr{}, &closer{pc.reset})
@@ -1126,11 +1128,14 @@ func socketError(c any) error {
 // proxyStats is the proxy's part of the stats, see statsMessage. Addresses is where it listens,
 // IPv4 first as ip:port, then IPv6 as [ip]:port, and empty while it doesn't: off, or no hotspot
 // address yet. CantListen says it listens nowhere though it has an address to, its port taken say.
-// Open is its client connections. Up and Down are its bytes in this run, the same bytes as the totals.
+// Open is its client connections. Admitted counts every one it let in since the server started, so
+// a new device shows while another keeps it busy (#285). Up and Down are its bytes in this run, the
+// same bytes as the totals.
 type proxyStats struct {
 	Addresses  []string `json:"addresses"`
 	Paused     bool     `json:"paused"`
 	Open       int      `json:"open"`
+	Admitted   uint64   `json:"admitted"`
 	CantListen bool     `json:"cantListen"`
 	Up         uint64   `json:"up"`
 	Down       uint64   `json:"down"`
@@ -1139,7 +1144,7 @@ type proxyStats struct {
 // proxyStatsLocked runs with s.mu held.
 func (s *Server) proxyStatsLocked() proxyStats {
 	p := s.proxy
-	st := proxyStats{Addresses: []string{}, Paused: p.paused, Open: p.open, Up: p.counts.up.Load(), Down: p.counts.down.Load()}
+	st := proxyStats{Addresses: []string{}, Paused: p.paused, Open: p.open, Admitted: p.admitted, Up: p.counts.up.Load(), Down: p.counts.down.Load()}
 	if p.run != nil {
 		var cant bool
 		for _, k := range p.run.socks {

@@ -130,9 +130,9 @@ final class ProxyTests: XCTestCase {
     /// Go's "proxy" in the stats: where it listens, IPv4 first, then the IPv6 one on an IPv6-only
     /// hotspot, empty while it doesn't, and its own counters.
     func testTheProxysStatsAreRead() throws {
-        let json = #"{"v":1,"up":9,"down":90,"peers":[],"proxy":{"addresses":["172.20.10.1:8118","[2001:db8::1]:8118"],"paused":true,"open":2,"up":3,"down":40}}"#
+        let json = #"{"v":1,"up":9,"down":90,"peers":[],"proxy":{"addresses":["172.20.10.1:8118","[2001:db8::1]:8118"],"paused":true,"open":2,"admitted":7,"up":3,"down":40}}"#
         let proxy = try WireGuardServer.Stats.read(Data(json.utf8)).proxy
-        XCTAssertEqual(proxy, ProxyStats(addresses: ["172.20.10.1:8118", "[2001:db8::1]:8118"], paused: true, open: 2,
+        XCTAssertEqual(proxy, ProxyStats(addresses: ["172.20.10.1:8118", "[2001:db8::1]:8118"], paused: true, open: 2, admitted: 7,
                                          traffic: TrafficTotals(bytesUp: 3, bytesDown: 40)))
         let cantListen = #"{"v":1,"up":0,"down":0,"peers":[],"proxy":{"addresses":[],"cantListen":true,"paused":false,"open":0,"up":0,"down":0}}"#
         XCTAssertEqual(try WireGuardServer.Stats.read(Data(cantListen.utf8)).proxy, ProxyStats(cantListen: true))
@@ -386,20 +386,38 @@ final class ProxyTests: XCTestCase {
         XCTAssertEqual(UsingTether.headline(devices: 3, proxy: true), "3 devices connected and the proxy in use")
     }
 
-    /// Add a device's last step ticks off once the proxy carries something after the screen opened.
-    /// An open connection alone doesn't: it may still be waiting for a lookup that fails.
-    func testTheProxyPathWorksOnceSomethingGoesThrough() {
-        let opened = ProxyStats(traffic: TrafficTotals(bytesUp: 10, bytesDown: 100))
+    /// Add a device's last step ticks off once the proxy lets in a new connection and carries
+    /// something after the screen opened. An open connection alone doesn't: it may still be waiting
+    /// for a lookup that fails. Bytes alone don't either: another device may already use it (#285).
+    func testTheProxyPathWorksOnceANewConnectionCarriesSomething() {
+        let opened = ProxyStats(open: 1, admitted: 3, traffic: TrafficTotals(bytesUp: 10, bytesDown: 100))
         var progress = ProxyProgress(at: opened)
         XCTAssertFalse(progress.working)
         progress.follow(opened)
         XCTAssertFalse(progress.working, "nothing new")
-        progress.follow(ProxyStats(traffic: TrafficTotals(bytesUp: 10, bytesDown: 101)))
-        XCTAssertTrue(progress.working)
+        progress.follow(ProxyStats(open: 1, admitted: 3, traffic: TrafficTotals(bytesUp: 10, bytesDown: 5000)))
+        XCTAssertFalse(progress.working, "a TV already on it streams, no new connection")
+        progress.follow(ProxyStats(open: 2, admitted: 4, traffic: TrafficTotals(bytesUp: 20, bytesDown: 6000)))
+        XCTAssertTrue(progress.working, "the laptop got in, and the proxy carried more")
+        var quiet = ProxyProgress(at: opened)
+        quiet.follow(ProxyStats(open: 2, admitted: 4, traffic: opened.traffic))
+        XCTAssertFalse(quiet.working, "the laptop got in, nothing through the proxy yet")
         progress.follow(ProxyStats())
         XCTAssertTrue(progress.working, "once it works it stays ticked")
         var open = ProxyProgress(at: ProxyStats())
-        open.follow(ProxyStats(open: 1))
+        open.follow(ProxyStats(open: 1, admitted: 1))
         XCTAssertFalse(open.working, "a connection let in, with nothing through it yet")
+    }
+
+    /// A read that failed says 0 let in, which says nothing new. A restarted server counts from 0
+    /// again, so what it let in since came after the screen opened.
+    func testTheProxyPathFollowsAFailedReadAndARestart() {
+        let opened = ProxyStats(admitted: 3, traffic: TrafficTotals(bytesUp: 10, bytesDown: 100))
+        var progress = ProxyProgress(at: opened)
+        progress.follow(ProxyStats(traffic: TrafficTotals(bytesUp: 10, bytesDown: 200)))
+        progress.follow(ProxyStats(admitted: 3, traffic: TrafficTotals(bytesUp: 10, bytesDown: 300)))
+        XCTAssertFalse(progress.working, "the failed read in between isn't a new connection")
+        progress.follow(ProxyStats(admitted: 1, traffic: TrafficTotals(bytesUp: 10, bytesDown: 400)))
+        XCTAssertTrue(progress.working, "after a restart, the one let in is new")
     }
 }

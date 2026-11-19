@@ -1522,3 +1522,29 @@ func TestBlockEndsAPooledConnectionToALocalAddress(t *testing.T) {
 		t.Fatalf("with Block got %d, want 403", status)
 	}
 }
+
+// Admitted counts every connection the proxy let in, open or closed, so a new device shows as a new
+// connection even while another one keeps the proxy busy (#285).
+func TestTheProxyCountsTheConnectionsItAdmitted(t *testing.T) {
+	s, proxy := proxyOn(t)
+	if n := s.statsMessage().Proxy.Admitted; n != 0 {
+		t.Fatalf("%d admitted before any connection", n)
+	}
+	echo := echoFarEnd(t)
+	conn, r, _ := tunnel(t, proxy, echo)
+	if !echoes(conn, r) {
+		t.Fatal("no echo")
+	}
+	conn.Close()
+	if !waitFor(5*time.Second, func() bool { m := s.statsMessage(); return m.Proxy.Open == 0 && m.Proxy.Admitted == 1 }) {
+		t.Fatalf("after one closed tunnel %+v, want 0 open and 1 admitted", s.statsMessage().Proxy)
+	}
+	other, otherR, _ := tunnel(t, proxy, echo)
+	defer other.Close()
+	if !echoes(other, otherR) {
+		t.Fatal("no echo")
+	}
+	if m := s.statsMessage(); m.Proxy.Admitted != 2 {
+		t.Fatalf("after a second tunnel %+v, want 2 admitted", m.Proxy)
+	}
+}

@@ -87,6 +87,9 @@ struct ProxyStats: Equatable {
     var paused = false
     /// The client connections it has open, from every device on it.
     var open = 0
+    /// Every client connection it let in since the server started, so a new device shows while
+    /// another keeps it busy (#285). 0 from a server too old to say, or a read that failed.
+    var admitted: UInt64 = 0
     /// Its bytes, the same ones as the totals. They only grow, across restarts, like a device's.
     var traffic = TrafficTotals()
 }

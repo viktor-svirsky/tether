@@ -41,9 +41,10 @@ final class FakeServer: WireGuardServing {
     var earlierStale: [StaleConfig] = []
     /// The proxy's counters, always reported, like a device's.
     var proxyTraffic = TrafficTotals()
-    /// Its open connections and where it listens, reported only while running with the proxy on, as
-    /// Go does. Nil listens where Go does on a usual hotspot.
+    /// Its open connections, the ones it let in, and where it listens, reported only while running
+    /// with the proxy on, as Go does. Nil listens where Go does on a usual hotspot.
     var proxyOpen = 0
+    var proxyAdmitted: UInt64 = 0
     var proxyAddresses: [String]?
     /// The Diagnostics screen's counters, reported only while running, as the real server's start
     /// from zero with each run. With no `listening` set, it listens where the last start said.
@@ -119,6 +120,7 @@ final class FakeServer: WireGuardServing {
             proxy.addresses = proxyAddresses ?? ["\(Hotspot.host):8118"]
             proxy.paused = on.paused != nil
             proxy.open = proxyOpen
+            proxy.admitted = proxyAdmitted
         }
         return ServerSnapshot(totals: totals, peers: peers, proxy: proxy, stale: running ? stale : nil,
                               recentStale: running ? earlierStale + [stale].compactMap(\.self) : [],
