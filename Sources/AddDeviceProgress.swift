@@ -100,21 +100,28 @@ enum AddDeviceWay: Hashable {
 /// proxy's connections and bytes can't tell: a TV already on it opens and moves them too (#285),
 /// and a connection let in may still fail its lookup and load nothing.
 struct ProxyProgress: Equatable {
-    /// The devices the far end had answered lately when the screen opened, from the first read of a
-    /// listening proxy: with the server stopped or a read failed, the list is empty and says nothing.
-    private var opened: Set<String>?
+    /// The devices already on the proxy: every one served in the first `settling` of a listening
+    /// proxy, since a server that just started knows none yet and Go marks a busy device again
+    /// every 10 s. With the server stopped or a read failed, the list is empty and says nothing. A
+    /// device leaves once Go drops it after 2 minutes without traffic, so it counts as new again.
+    private var opened: Set<String> = []
+    private var listeningSince: Date?
     private(set) var working = false
+    static let settling: TimeInterval = 12
 
-    init(at stats: ProxyStats) {
-        follow(stats)
+    init(at stats: ProxyStats, now: Date = .now) {
+        follow(stats, now: now)
     }
 
-    mutating func follow(_ stats: ProxyStats) {
+    mutating func follow(_ stats: ProxyStats, now: Date = .now) {
         guard !stats.addresses.isEmpty else { return }
-        guard let opened else {
-            opened = stats.served
+        let since = listeningSince ?? now
+        listeningSince = since
+        if now.timeIntervalSince(since) < Self.settling {
+            opened.formUnion(stats.served)
             return
         }
         if !stats.served.isSubset(of: opened) { working = true }
+        opened.formIntersection(stats.served)
     }
 }

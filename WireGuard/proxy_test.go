@@ -1612,3 +1612,46 @@ func TestATunnelKeepsMarkingItsClientServed(t *testing.T) {
 		t.Fatalf("%d marks, want one at the start and one after servedEvery", marks)
 	}
 }
+
+// A plain request that upgrades, a websocket say, goes through with its body as it is, which
+// ReverseProxy needs to carry the connection, and marks its client served once (#285).
+func TestAnUpgradeGoesThroughAndServesItsClient(t *testing.T) {
+	s, proxy := proxyOn(t)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		br := bufio.NewReader(c)
+		if _, err := http.ReadRequest(br); err != nil {
+			return
+		}
+		io.WriteString(c, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n")
+		io.Copy(c, br)
+	}()
+	far := viaRemote(l.Addr().String())
+	c, err := net.Dial("tcp", proxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	fmt.Fprintf(c, "GET http://%s/ HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n", far, far)
+	r := bufio.NewReader(c)
+	resp, err := http.ReadResponse(r, nil)
+	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("got %v, %v, want 101", resp, err)
+	}
+	if !echoes(c, r) {
+		t.Fatal("the upgraded connection doesn't carry bytes")
+	}
+	if got := s.statsMessage().Proxy.Served; !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Fatalf("served %v, want the client", got)
+	}
+}

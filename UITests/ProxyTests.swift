@@ -98,9 +98,10 @@ final class ProxyTests: TetherUITestCase {
 
     func testTheLastStepSaysWorkingOnceAPageGoesThrough() {
         launch(.addDeviceProxyWorking, screen: "add.proxy.step1")
-        // A new device's page comes through each second, see `DemoState.loadAPage`.
+        // A new device's page comes through each second, see `DemoState.loadAPage`. It counts once
+        // the first 12 s, which only learn who is already on the proxy, are over.
         let done = expectation(for: NSPredicate(format: "value == 'Done'"), evaluatedWith: element("add.proxy.step3"))
-        XCTAssertEqual(XCTWaiter().wait(for: [done], timeout: 5), .completed, "the last step never ticked")
+        XCTAssertEqual(XCTWaiter().wait(for: [done], timeout: 25), .completed, "the last step never ticked")
         XCTAssertEqual(value(of: element("add.proxy.step2")), "Done")
         XCTAssertEqual(reveal(element("add.proxy.result")).label, "Working")
     }

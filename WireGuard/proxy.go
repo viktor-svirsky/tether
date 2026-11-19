@@ -365,7 +365,9 @@ func (s *Server) newProxyRun() *proxyRun {
 			if from, ok := resp.Request.Context().Value(proxyClient{}).(netip.Addr); ok {
 				r.s.markServed(from)
 				if resp.StatusCode == http.StatusSwitchingProtocols {
-					return nil // an upgrade's body is the connection, which ReverseProxy writes to
+					// An upgrade's body is the connection, which ReverseProxy writes to, so it's marked
+					// only here and drops out after servedFor even while bytes flow.
+					return nil
 				}
 				resp.Body = struct {
 					io.Reader

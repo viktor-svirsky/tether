@@ -387,41 +387,44 @@ final class ProxyTests: XCTestCase {
     }
 
     /// Add a device's last step ticks off once the far end answers a device through the proxy that
-    /// it hadn't answered lately when the screen opened. A TV already on it doesn't tick it,
-    /// whatever it opens or moves, and neither does a new connection that loads nothing (#285).
+    /// wasn't on it in the first 12 s. A TV already on it doesn't tick it, whatever it opens or
+    /// moves, and neither does a new connection that loads nothing (#285).
     func testTheProxyPathWorksOnceANewDeviceIsServed() {
-        let tv = "172.20.10.3", laptop = "172.20.10.5", at = ["172.20.10.1:8118"]
-        var progress = ProxyProgress(at: ProxyStats(addresses: at, open: 1, served: [tv]))
-        XCTAssertFalse(progress.working)
-        progress.follow(ProxyStats(addresses: at, open: 4, served: [tv], traffic: TrafficTotals(bytesUp: 50, bytesDown: 9000)))
+        let tv = "172.20.10.3", laptop = "172.20.10.5", at = ["172.20.10.1:8118"], t0 = Date(timeIntervalSince1970: 1000)
+        var progress = ProxyProgress(at: ProxyStats(addresses: at, open: 1, served: [tv]), now: t0)
+        progress.follow(ProxyStats(addresses: at, open: 4, served: [tv]), now: t0 + 20)
         XCTAssertFalse(progress.working, "the TV keeps streaming and opens new connections")
-        progress.follow(ProxyStats(addresses: at, open: 5, served: [tv]))
+        progress.follow(ProxyStats(addresses: at, open: 5, served: [tv]), now: t0 + 30)
         XCTAssertFalse(progress.working, "the laptop got in, and nothing came back to it")
-        progress.follow(ProxyStats())
+        progress.follow(ProxyStats(), now: t0 + 31)
         XCTAssertFalse(progress.working, "a failed read")
-        progress.follow(ProxyStats(addresses: at, open: 5, served: [tv, laptop]))
+        progress.follow(ProxyStats(addresses: at, open: 5, served: [tv, laptop]), now: t0 + 32)
         XCTAssertTrue(progress.working)
-        progress.follow(ProxyStats())
+        progress.follow(ProxyStats(), now: t0 + 33)
         XCTAssertTrue(progress.working, "once it works it stays ticked")
     }
 
-    /// A laptop added again after a while without traffic is no longer in Go's list, so it counts
-    /// as new.
+    /// A laptop on the proxy when the sheet opened, then idle until Go drops it after 2 minutes,
+    /// counts as new when it loads something in the same sheet. Before that it still waits.
     func testTheProxyPathWorksForALaptopAddedAgainAfterIdle() {
-        let tv = "172.20.10.3", laptop = "172.20.10.5", at = ["172.20.10.1:8118"]
-        var progress = ProxyProgress(at: ProxyStats(addresses: at, served: [tv]))
-        progress.follow(ProxyStats(addresses: at, served: [tv, laptop]))
+        let tv = "172.20.10.3", laptop = "172.20.10.5", at = ["172.20.10.1:8118"], t0 = Date(timeIntervalSince1970: 1000)
+        var progress = ProxyProgress(at: ProxyStats(addresses: at, served: [tv, laptop]), now: t0)
+        progress.follow(ProxyStats(addresses: at, served: [tv, laptop]), now: t0 + 60)
+        XCTAssertFalse(progress.working, "the laptop was already on it")
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 130)
+        progress.follow(ProxyStats(addresses: at, served: [tv, laptop]), now: t0 + 140)
         XCTAssertTrue(progress.working)
     }
 
-    /// Opened while the server is stopped, say before the hotspot is on, the list comes from the
-    /// first read of a listening proxy, so the TV coming back then isn't a new device.
+    /// Opened while the server is stopped, say before the hotspot is on, a new server knows no one
+    /// yet. The TV coming back in the first 12 s of a listening proxy isn't a new device.
     func testTheProxyPathWaitsWhenOpenedWithTheServerDown() {
-        let tv = "172.20.10.3", at = ["172.20.10.1:8118"]
-        var progress = ProxyProgress(at: ProxyStats())
-        progress.follow(ProxyStats(traffic: TrafficTotals(bytesUp: 5, bytesDown: 50)))
-        progress.follow(ProxyStats(addresses: at, open: 1, served: [tv]))
-        progress.follow(ProxyStats(addresses: at, open: 2, served: [tv]))
+        let tv = "172.20.10.3", at = ["172.20.10.1:8118"], t0 = Date(timeIntervalSince1970: 1000)
+        var progress = ProxyProgress(at: ProxyStats(), now: t0)
+        progress.follow(ProxyStats(traffic: TrafficTotals(bytesUp: 5, bytesDown: 50)), now: t0 + 5)
+        progress.follow(ProxyStats(addresses: at), now: t0 + 10)
+        progress.follow(ProxyStats(addresses: at, open: 1, served: [tv]), now: t0 + 18)
+        progress.follow(ProxyStats(addresses: at, open: 2, served: [tv]), now: t0 + 40)
         XCTAssertFalse(progress.working)
     }
 }
