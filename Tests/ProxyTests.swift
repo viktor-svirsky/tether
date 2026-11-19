@@ -397,10 +397,11 @@ final class ProxyTests: XCTestCase {
         progress.follow(ProxyStats(addresses: at, open: 5, served: [tv]), now: t0 + 30)
         XCTAssertFalse(progress.working, "the laptop got in, and nothing came back to it")
         progress.follow(ProxyStats(), now: t0 + 31)
-        XCTAssertFalse(progress.working, "a failed read")
-        progress.follow(ProxyStats(addresses: at, open: 5, served: [tv, laptop]), now: t0 + 32)
+        XCTAssertFalse(progress.working, "a failed read, which starts the 12 s again")
+        progress.follow(ProxyStats(addresses: at, open: 5, served: [tv]), now: t0 + 32)
+        progress.follow(ProxyStats(addresses: at, open: 5, served: [tv, laptop]), now: t0 + 50)
         XCTAssertTrue(progress.working)
-        progress.follow(ProxyStats(), now: t0 + 33)
+        progress.follow(ProxyStats(), now: t0 + 51)
         XCTAssertTrue(progress.working, "once it works it stays ticked")
     }
 
@@ -414,6 +415,31 @@ final class ProxyTests: XCTestCase {
         progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 130)
         progress.follow(ProxyStats(addresses: at, served: [tv, laptop]), now: t0 + 140)
         XCTAssertTrue(progress.working)
+    }
+
+    /// The hotspot drops and comes back after the first 12 s: the new server knows no one, so the
+    /// TV coming back in the first 12 s after that isn't a new device either.
+    func testTheProxyPathWaitsWhenTheHotspotDropsAndComesBack() {
+        let tv = "172.20.10.3", at = ["172.20.10.1:8118"], t0 = Date(timeIntervalSince1970: 1000)
+        var progress = ProxyProgress(at: ProxyStats(addresses: at, served: [tv]), now: t0)
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 60)
+        progress.follow(ProxyStats(), now: t0 + 70)
+        progress.follow(ProxyStats(addresses: at), now: t0 + 80)
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 88)
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 120)
+        XCTAssertFalse(progress.working)
+    }
+
+    /// The edge of the first 12 s: a device first served at 11 s is already on the proxy, one
+    /// first served at 13 s is new, even if it was on the proxy before and only came back then.
+    func testTheProxyPathLearnsForTwelveSeconds() {
+        let tv = "172.20.10.3", laptop = "172.20.10.5", at = ["172.20.10.1:8118"], t0 = Date(timeIntervalSince1970: 1000)
+        var progress = ProxyProgress(at: ProxyStats(addresses: at), now: t0)
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 11)
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 12)
+        XCTAssertFalse(progress.working, "the TV came in the first 12 s")
+        progress.follow(ProxyStats(addresses: at, served: [tv, laptop]), now: t0 + 13)
+        XCTAssertTrue(progress.working, "the laptop came after")
     }
 
     /// Opened while the server is stopped, say before the hotspot is on, a new server knows no one

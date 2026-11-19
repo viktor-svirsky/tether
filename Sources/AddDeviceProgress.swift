@@ -102,8 +102,9 @@ enum AddDeviceWay: Hashable {
 struct ProxyProgress: Equatable {
     /// The devices already on the proxy: every one served in the first `settling` of a listening
     /// proxy, since a server that just started knows none yet and Go marks a busy device again
-    /// every 10 s. With the server stopped or a read failed, the list is empty and says nothing. A
-    /// device leaves once Go drops it after 2 minutes without traffic, so it counts as new again.
+    /// every 10 s. With the server stopped or a read failed, the list is empty and says nothing,
+    /// and the next listening read starts the `settling` again. A device leaves once Go drops it
+    /// after 2 minutes without traffic, so it counts as new again.
     private var opened: Set<String> = []
     private var listeningSince: Date?
     private(set) var working = false
@@ -114,7 +115,10 @@ struct ProxyProgress: Equatable {
     }
 
     mutating func follow(_ stats: ProxyStats, now: Date = .now) {
-        guard !stats.addresses.isEmpty else { return }
+        guard !stats.addresses.isEmpty else {
+            listeningSince = nil
+            return
+        }
         let since = listeningSince ?? now
         listeningSince = since
         if now.timeIntervalSince(since) < Self.settling {
