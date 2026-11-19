@@ -104,12 +104,14 @@ type proxy struct {
 	run       *proxyRun // nil while it's off
 	paused    bool
 	open      int                // client connections, see maxConns
-	admitted  uint64             // every client connection let in since the server started (#285)
 	openBy    map[netip.Addr]int // each client's, see maxPerClient
 	lookups   int                // lookups still running, also ones whose client gave up
 	dials     int                // plain requests' dials still running, also ones whose client gave up
 	dialsBy   map[netip.Addr]int // each client's, see maxDialsPerClient
 	refusedAt time.Time          // when a refusal was last logged, so a busy client can't fill the log
+
+	// served is the clients the far end answered since the server started, see markServed.
+	served map[netip.Addr]struct{}
 }
 
 func newProxy() *proxy {
@@ -128,6 +130,7 @@ func newProxy() *proxy {
 		maxDialsPerClient: maxDials / 2,
 		handshake:         proxyHandshake,
 		openBy:            map[netip.Addr]int{},
+		served:            map[netip.Addr]struct{}{},
 		dialsBy:           map[netip.Addr]int{},
 		listen: func(ctx context.Context, address string) (net.Listener, error) {
 			// The keepalive of a tunnel device's side, see Start: a device that leaves the hotspot
@@ -356,6 +359,13 @@ func (s *Server) newProxyRun() *proxyRun {
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			w.WriteHeader(statusFor(err))
 		},
+		// A response came from the far end: the client is served, see markServed.
+		ModifyResponse: func(resp *http.Response) error {
+			if from, ok := resp.Request.Context().Value(proxyClient{}).(netip.Addr); ok {
+				r.s.markServed(from)
+			}
+			return nil
+		},
 	}
 	return r
 }
@@ -580,9 +590,8 @@ func (r *proxyRun) admit(c net.Conn, k *proxySocket) (*proxyConn, bool) {
 		return nil, false
 	}
 	p.open++
-	p.admitted++
 	p.openBy[from]++
-	pc := &proxyConn{keptConn: keptConn{Conn: c}}
+	pc := &proxyConn{keptConn: keptConn{Conn: c}, from: from}
 	untrack := s.trackLocked(proxyFlows, netip.Addr{}, &closer{pc.reset})
 	pc.done = func() {
 		untrack()
@@ -627,6 +636,7 @@ func (c *keptConn) CloseWrite() error {
 type proxyConn struct {
 	keptConn
 	read bool
+	from netip.Addr // the client, see markServed
 }
 
 func (c *proxyConn) Read(b []byte) (int, error) {
@@ -1090,7 +1100,8 @@ func (r *proxyRun) relay(client *proxyConn, in io.Reader, out *outConn) {
 	})
 	wg.Go(func() {
 		defer close(farEndRead)
-		if err, writing := s.copy(client, out, counts, false, nil); err != io.EOF {
+		farEnd := &servedReader{Reader: out, mark: func() { s.markServed(client.from) }}
+		if err, writing := s.copy(client, farEnd, counts, false, nil); err != io.EOF {
 			fail(writing)
 		} else {
 			client.CloseWrite()
@@ -1128,14 +1139,13 @@ func socketError(c any) error {
 // proxyStats is the proxy's part of the stats, see statsMessage. Addresses is where it listens,
 // IPv4 first as ip:port, then IPv6 as [ip]:port, and empty while it doesn't: off, or no hotspot
 // address yet. CantListen says it listens nowhere though it has an address to, its port taken say.
-// Open is its client connections. Admitted counts every one it let in since the server started, so
-// a new device shows while another keeps it busy (#285). Up and Down are its bytes in this run, the
-// same bytes as the totals.
+// Open is its client connections. Served is the clients the far end answered since the server
+// started, see markServed. Up and Down are its bytes in this run, the same bytes as the totals.
 type proxyStats struct {
 	Addresses  []string `json:"addresses"`
 	Paused     bool     `json:"paused"`
 	Open       int      `json:"open"`
-	Admitted   uint64   `json:"admitted"`
+	Served     []string `json:"served"`
 	CantListen bool     `json:"cantListen"`
 	Up         uint64   `json:"up"`
 	Down       uint64   `json:"down"`
@@ -1144,7 +1154,11 @@ type proxyStats struct {
 // proxyStatsLocked runs with s.mu held.
 func (s *Server) proxyStatsLocked() proxyStats {
 	p := s.proxy
-	st := proxyStats{Addresses: []string{}, Paused: p.paused, Open: p.open, Admitted: p.admitted, Up: p.counts.up.Load(), Down: p.counts.down.Load()}
+	st := proxyStats{Addresses: []string{}, Paused: p.paused, Open: p.open, Served: []string{}, Up: p.counts.up.Load(), Down: p.counts.down.Load()}
+	for a := range p.served {
+		st.Served = append(st.Served, a.String())
+	}
+	slices.Sort(st.Served)
 	if p.run != nil {
 		var cant bool
 		for _, k := range p.run.socks {
@@ -1162,4 +1176,33 @@ func (s *Server) proxyStatsLocked() proxyStats {
 type configProxy struct {
 	On     bool `json:"on"`
 	Paused bool `json:"paused"`
+}
+
+// markServed notes that the far end answered client from through the proxy: a response to a plain
+// request, or a tunnel's first bytes back. Add a device ticks its last step once a client it hadn't
+// seen is served (#285): it can't go by the proxy's bytes or connections, which a TV already on the
+// proxy moves too.
+func (s *Server) markServed(from netip.Addr) {
+	if !from.IsValid() {
+		return
+	}
+	s.mu.Lock()
+	s.proxy.served[from] = struct{}{}
+	s.mu.Unlock()
+}
+
+// servedReader is a tunnel's far end, which marks its client served on the first bytes it reads.
+type servedReader struct {
+	io.Reader
+	mark func()
+	done bool
+}
+
+func (r *servedReader) Read(b []byte) (int, error) {
+	n, err := r.Reader.Read(b)
+	if n > 0 && !r.done {
+		r.done = true
+		r.mark()
+	}
+	return n, err
 }

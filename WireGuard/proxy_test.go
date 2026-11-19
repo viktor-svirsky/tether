@@ -1523,28 +1523,43 @@ func TestBlockEndsAPooledConnectionToALocalAddress(t *testing.T) {
 	}
 }
 
-// Admitted counts every connection the proxy let in, open or closed, so a new device shows as a new
-// connection even while another one keeps the proxy busy (#285).
-func TestTheProxyCountsTheConnectionsItAdmitted(t *testing.T) {
+// Served lists the clients the far end answered, so Add a device can tell a new device from one
+// already on the proxy (#285). A request that fails doesn't serve its client, a tunnel's first
+// bytes back and a plain response do.
+func TestTheProxyListsTheClientsTheFarEndAnswered(t *testing.T) {
 	s, proxy := proxyOn(t)
-	if n := s.statsMessage().Proxy.Admitted; n != 0 {
-		t.Fatalf("%d admitted before any connection", n)
+	served := func() []string { return s.statsMessage().Proxy.Served }
+	if got := served(); got == nil || len(got) != 0 {
+		t.Fatalf("served %v before anything, want an empty list", got)
 	}
-	echo := echoFarEnd(t)
-	conn, r, _ := tunnel(t, proxy, echo)
+	if _, _, status := tunnel(t, proxy, refusedPort(t)); status != http.StatusBadGateway {
+		t.Fatalf("a tunnel to a closed port got %d", status)
+	}
+	resp, err := viaProxy(proxy).Get("http://" + refusedPort(t) + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := served(); len(got) != 0 {
+		t.Fatalf("served %v after two failed requests, want none", got)
+	}
+	conn, r, _ := tunnel(t, proxy, echoFarEnd(t))
+	defer conn.Close()
 	if !echoes(conn, r) {
 		t.Fatal("no echo")
 	}
-	conn.Close()
-	if !waitFor(5*time.Second, func() bool { m := s.statsMessage(); return m.Proxy.Open == 0 && m.Proxy.Admitted == 1 }) {
-		t.Fatalf("after one closed tunnel %+v, want 0 open and 1 admitted", s.statsMessage().Proxy)
+	if !waitFor(5*time.Second, func() bool { return slices.Equal(served(), []string{"127.0.0.1"}) }) {
+		t.Fatalf("served %v after a tunnel echoed, want 127.0.0.1", served())
 	}
-	other, otherR, _ := tunnel(t, proxy, echo)
-	defer other.Close()
-	if !echoes(other, otherR) {
-		t.Fatal("no echo")
+	s.mu.Lock()
+	s.proxy.served = map[netip.Addr]struct{}{}
+	s.mu.Unlock()
+	resp, err = viaProxy(proxy).Get("http://" + tcpPage(t, 10) + "/")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if m := s.statsMessage(); m.Proxy.Admitted != 2 {
-		t.Fatalf("after a second tunnel %+v, want 2 admitted", m.Proxy)
+	resp.Body.Close()
+	if got := served(); !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Fatalf("served %v after a page, want 127.0.0.1", got)
 	}
 }

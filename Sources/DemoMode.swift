@@ -268,7 +268,7 @@ struct DemoState {
             for _ in 0..<60 {
                 try? await Task.sleep(for: .seconds(1))
                 guard let session else { return }
-                server.proxyAdmitted = 1 // the device opening the page, new to the proxy
+                server.proxyServed = ["172.20.10.5"] // the device opening the page, new to the proxy
                 server.proxyTraffic += TrafficTotals(bytesUp: 1_000, bytesDown: 30_000)
                 session.sampleTraffic()
             }

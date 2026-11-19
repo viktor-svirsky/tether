@@ -95,27 +95,21 @@ enum AddDeviceWay: Hashable {
     case wireGuard, proxy
 }
 
-/// Add a device's proxy path (#78): its last step ticks off once the proxy let in a new connection
-/// and carried something after the screen opened, and stays ticked. A connection open to it isn't
-/// enough: Go counts one as soon as it lets it in, while its lookup may still fail and no page load.
-/// Bytes alone aren't either: a TV already on the proxy moves them too (#285).
+/// Add a device's proxy path (#78): its last step ticks off once the far end answered a device
+/// through the proxy that it hadn't answered when the screen opened, and stays ticked. The proxy's
+/// connections and bytes can't tell: a TV already on it opens and moves them too (#285), and a
+/// connection let in may still fail its lookup and load nothing.
 struct ProxyProgress: Equatable {
-    /// The proxy's bytes and connections let in when the screen opened.
-    private let opened: TrafficTotals
-    private let admitted: UInt64
-    private var newConnection = false
+    /// The devices the far end had answered when the screen opened.
+    private let opened: Set<String>
     private(set) var working = false
 
     init(at stats: ProxyStats) {
-        opened = stats.traffic
-        admitted = stats.admitted
+        opened = stats.served
         follow(stats)
     }
 
     mutating func follow(_ stats: ProxyStats) {
-        // 0 is a failed read and says nothing. A different count is a new connection, also after a
-        // restart, where the server counts from 0 again.
-        if stats.admitted != 0, stats.admitted != admitted { newConnection = true }
-        if newConnection, stats.traffic.total > opened.total { working = true }
+        if !stats.served.isSubset(of: opened) { working = true }
     }
 }
