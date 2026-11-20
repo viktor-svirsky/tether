@@ -199,6 +199,7 @@ final class WireGuardServer {
                 let cantListen: Bool?
                 let paused: Bool
                 let open: Int
+                let served: [String]
                 let up: UInt64
                 let down: UInt64
             }
@@ -237,7 +238,7 @@ final class WireGuardServer {
                 }
             }
             let proxy = m.proxy.map {
-                ProxyStats(addresses: $0.addresses ?? [], cantListen: $0.cantListen ?? false, paused: $0.paused, open: $0.open, traffic: TrafficTotals(bytesUp: $0.up, bytesDown: $0.down))
+                ProxyStats(addresses: $0.addresses ?? [], cantListen: $0.cantListen ?? false, paused: $0.paused, open: $0.open, served: Set($0.served), traffic: TrafficTotals(bytesUp: $0.up, bytesDown: $0.down))
             } ?? ProxyStats()
             return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, proxy: proxy,
                                   stale: m.stale.flatMap(stale), recentStale: (m.recent ?? []).compactMap(stale),
