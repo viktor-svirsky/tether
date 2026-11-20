@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 struct MainView: View {
     @ObservedObject private var model = Model.shared
@@ -181,6 +182,70 @@ struct HotspotSettingsLink: View {
     }
 }
 
+/// Recent throughput, with the newest sample at the right edge and both directions on one scale.
+struct SpeedHistoryGraph: View {
+    let samples: [SpeedSample]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var end: Date { samples.last?.at ?? Date() }
+    private var peak: Double { max(1_000, samples.map { max($0.up, $0.down) }.max() ?? 0) }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Chart {
+                ForEach(samples) { sample in
+                    LineMark(x: .value("Time", sample.at), y: .value("Download", sample.down),
+                             series: .value("Direction", "Download"))
+                        .foregroundStyle(Direction.download)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                    LineMark(x: .value("Time", sample.at), y: .value("Upload", sample.up),
+                             series: .value("Direction", "Upload"))
+                        .foregroundStyle(Direction.upload)
+                        .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
+                }
+                if let latest = samples.last {
+                    PointMark(x: .value("Time", latest.at), y: .value("Download", latest.down))
+                        .foregroundStyle(Direction.download)
+                        .symbolSize(16)
+                    PointMark(x: .value("Time", latest.at), y: .value("Upload", latest.up))
+                        .foregroundStyle(Direction.upload)
+                        .symbolSize(16)
+                }
+            }
+            .chartXScale(domain: end.addingTimeInterval(-SpeedSample.historyDuration)...end)
+            .chartYScale(domain: 0...(peak * 1.15))
+            .chartXAxis {
+                AxisMarks(preset: .aligned, values: [end.addingTimeInterval(-SpeedSample.historyDuration / 2)]) { _ in
+                    AxisValueLabel(centered: false, anchor: .top, collisionResolution: .disabled) {
+                        Text("Last 30 seconds").font(.caption)
+                    }
+                }
+                AxisMarks(preset: .aligned, values: [end]) { _ in
+                    AxisValueLabel(centered: false, anchor: .topTrailing) {
+                        Text("Now").font(.caption)
+                    }
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let speed = value.as(Double.self) { Text(Format.speed(speed)) }
+                    }
+                }
+            }
+            .chartPlotStyle { plot in plot.clipped() }
+            .frame(height: 120)
+            .animation(reduceMotion ? nil : .linear(duration: 1), value: samples)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Speed history, last 30 seconds")
+        .accessibilityValue(samples.isEmpty ? "Waiting for traffic samples" :
+            "Peak download \(Format.speed(samples.map(\.down).max() ?? 0)), peak upload \(Format.speed(samples.map(\.up).max() ?? 0))")
+        .accessibilityIdentifier("traffic.history")
+    }
+}
+
 /// How fast data moves right now, down and up. At the accessibility text sizes the two don't fit
 /// side by side, and each would break over three lines, so they stack (#176).
 struct SpeedRow: View {
@@ -299,6 +364,7 @@ struct StatusCard: View {
             } else if sharing {
                 Divider()
                 SpeedRow(down: model.downSpeed, up: model.upSpeed)
+                SpeedHistoryGraph(samples: model.speedHistory)
                 hint {
                     Text("To stop, turn off Personal Hotspot.")
                         .accessibilityIdentifier("status.stopHint")

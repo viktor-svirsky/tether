@@ -12,8 +12,16 @@ final class StatusCardTests: TetherUITestCase {
 
     func testWaitingHidesTheSharingSections() {
         launch(.waiting)
-        assertNowhere(element("traffic.speeds"), sectionHeader("DEVICES"))
+        assertNowhere(element("traffic.speeds"), element("traffic.history"), sectionHeader("DEVICES"))
         XCTAssertTrue(reveal(element("add.open")).exists, "it leads with adding a device")
+    }
+
+    func testSharingShowsSpeedHistoryForBothDirections() {
+        launch(.sharing)
+        let history = element("traffic.history")
+        XCTAssertTrue(history.exists)
+        XCTAssertEqual(history.label, "Speed history, last 30 seconds")
+        XCTAssertEqual(history.value as? String, "Peak download 3.2 Mbit/s, peak upload 400 kbit/s")
     }
 
     func testNoDevicesSaysNobodyUsesTetherYet() {

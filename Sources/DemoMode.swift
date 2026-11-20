@@ -254,10 +254,16 @@ struct DemoState {
         }
         if scenario == .addDeviceProxyWorking { server.proxyOpen = 1 }
         if scenario == .proxyIPv6 { server.proxyAddresses = ["\(Hotspot.host):8118", "[\(ipv6)]:8118"] }
+        // A full graph in screenshots, ending at the same clock and current speeds as before.
+        clock.now = clock.now.addingTimeInterval(-29)
         session.sampleTraffic()
-        clock.now = clock.now.addingTimeInterval(1)
-        server.totals = TrafficTotals(bytesUp: UInt64(upSpeed / 8), bytesDown: UInt64(downSpeed / 8))
-        session.sampleTraffic()
+        for second in 1...30 {
+            clock.now = clock.now.addingTimeInterval(1)
+            let downFactor = second == 30 ? 1 : 0.25 + 0.75 * pow(sin(Double(second) * .pi / 10), 2)
+            let upFactor = second == 30 ? 1 : 0.2 + 0.8 * pow(cos(Double(second) * .pi / 8), 2)
+            server.totals += TrafficTotals(bytesUp: UInt64(upSpeed * upFactor / 8), bytesDown: UInt64(downSpeed * downFactor / 8))
+            session.sampleTraffic()
+        }
         if scenario == .addDeviceProxyWorking { loadAPage(through: server, session) }
         if scenario == .notUsingTether {
             session.neighborsAnswered([HotspotKnock(address: "172.20.10.2", answer: .open),
@@ -283,7 +289,7 @@ struct DemoState {
     }
 }
 
-/// The demo session's clock, which `makeSession` moves on one second between its two samples.
+/// The demo session's clock, which `makeSession` moves through the graph's recent history.
 private final class DemoClock {
     var now = DemoScenario.now
 }
