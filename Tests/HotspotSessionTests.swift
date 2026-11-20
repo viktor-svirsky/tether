@@ -349,9 +349,8 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(changes, 1, "and only when it changes")
     }
 
-    /// Sharing with nothing moving, a sample and a watcher round change nothing on screen, so nothing
-    /// redraws every second (#166).
-    func testNothingIsPublishedWhenNothingChanged() throws {
+    /// With nothing moving, only the graph's new idle reading needs publishing.
+    func testOnlyHistoryIsPublishedWhenSpeedsAndDevicesAreUnchanged() throws {
         makeSession()
         address = hotspot
         session.syncWithHotspot()
@@ -366,7 +365,7 @@ final class HotspotSessionTests: XCTestCase {
         session.sampleTraffic()
         session.syncWithHotspot()
         session.dnsChanged() // publishes the setup, the same as before
-        XCTAssertEqual(changes, 0)
+        XCTAssertEqual(changes, 1)
     }
 
     /// Flown to another time zone mid-run, the month ends at the new zone's midnight, not the launch
@@ -1693,10 +1692,62 @@ final class HotspotSessionTests: XCTestCase {
         server.totals = TrafficTotals(bytesUp: 1000, bytesDown: 1000)
         server.connected = ["10.7.0.99"] // nobody's, so nothing else changes
         session.sampleTraffic()
-        XCTAssertEqual(announced.count, 4, "down, up, the connected devices and their stats")
+        XCTAssertEqual(announced.count, 5, "down, up, history, the connected devices and their stats")
     }
 
     // MARK: Speeds
+
+    func testSpeedHistoryKeepsThirtySecondsIncludingUnchangedAndIdleReadings() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        XCTAssertTrue(session.speedHistory.isEmpty, "the baseline isn't a speed reading")
+        for second in 1...45 {
+            now = start.addingTimeInterval(Double(second))
+            server.totals = TrafficTotals(bytesUp: UInt64(second * 125), bytesDown: UInt64(second * 250))
+            session.sampleTraffic()
+        }
+        XCTAssertEqual(session.speedHistory.count, 31)
+        XCTAssertEqual(session.speedHistory.first?.at, start.addingTimeInterval(15))
+        XCTAssertTrue(session.speedHistory.allSatisfy { $0.up == 1000 && $0.down == 2000 })
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        XCTAssertEqual(session.speedHistory.last?.up, 0)
+        XCTAssertEqual(session.speedHistory.last?.down, 0)
+        now = now.addingTimeInterval(40)
+        session.sampleTraffic()
+        XCTAssertEqual(session.speedHistory.count, 1, "a delayed sample prunes by elapsed time too")
+    }
+
+    func testSpeedHistoryClearsAcrossBackgroundAndHotspotRestart() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        XCTAssertFalse(session.speedHistory.isEmpty)
+        session.leftScreen()
+        XCTAssertTrue(session.speedHistory.isEmpty)
+        now = now.addingTimeInterval(600)
+        session.cameOnScreen()
+        session.sampleTraffic()
+        XCTAssertTrue(session.speedHistory.isEmpty, "returning establishes a fresh baseline")
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        XCTAssertEqual(session.speedHistory.count, 1)
+        address = "172.20.10.3"
+        session.syncWithHotspot()
+        XCTAssertTrue(session.speedHistory.isEmpty)
+        session.sampleTraffic()
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        address = nil
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        XCTAssertTrue(session.speedHistory.isEmpty)
+    }
 
     // MARK: A config that no longer works
 

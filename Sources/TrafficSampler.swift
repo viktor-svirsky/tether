@@ -1,5 +1,14 @@
 import Foundation
 
+/// One on-screen reading. The graph keeps at most thirty seconds, without filling gaps with traffic.
+struct SpeedSample: Equatable, Identifiable {
+    static let historyDuration: TimeInterval = 30
+    let at: Date
+    let up: Double
+    let down: Double
+    var id: Date { at }
+}
+
 /// The speeds from how far the server's totals moved since the last sample. `HotspotSession` samples
 /// every second on screen and resets it when the time since the last sample means nothing (off
 /// screen, a new hotspot), so the first speed back doesn't average the time away in.

@@ -71,6 +71,7 @@ final class HotspotSession {
     /// Download and upload speed now, in bits per second. Zero until there are two samples to compare.
     private(set) var downSpeed = 0.0 { willSet { willChange() } }
     private(set) var upSpeed = 0.0 { willSet { willChange() } }
+    private(set) var speedHistory: [SpeedSample] = [] { willSet { willChange() } }
     /// The devices that have connected, in the order they first did.
     private(set) var wireGuardPeers: [WireGuardSetup.Peer] = [] { willSet { willChange() } }
     /// Behind the QR code in the Add a device sheet, see `WireGuardSetup.ready`. Only ever a saved one,
@@ -256,6 +257,7 @@ final class HotspotSession {
         // A restart (hotspot address change) never passes through running == false in the
         // sampler, so start the session's counters afresh here.
         sampler.reset()
+        speedHistory = []
         downSpeed = 0
         upSpeed = 0
         running = true
@@ -438,6 +440,7 @@ final class HotspotSession {
         log("Tether left the screen")
         addWindow.leftScreen(now: now())
         sampler.reset() // or the first speed back on screen averages the whole time away
+        speedHistory = []
         watchedConnected = wireGuardConnected // not a list from an earlier time away, until the next round reads
     }
 
@@ -844,6 +847,7 @@ final class HotspotSession {
         guard running else {
             // A new session starts with zero speeds and nobody connected.
             sampler.reset()
+            if !speedHistory.isEmpty { speedHistory = [] }
             if downSpeed != 0 { downSpeed = 0 }
             if upSpeed != 0 { upSpeed = 0 }
             tunnelsUp = []
@@ -865,6 +869,10 @@ final class HotspotSession {
         absorb(snap.peers)
         countUsage(snap)
         guard let speeds = sampler.sample(snap.totals, at: now) else { return } // nothing to compare with yet
+        // Keep zero and unchanged readings too, so an idle graph still moves to the left.
+        let cutoff = now.addingTimeInterval(-SpeedSample.historyDuration)
+        speedHistory = Array((speedHistory.filter { $0.at >= cutoff && $0.at < now }
+            + [SpeedSample(at: now, up: speeds.up, down: speeds.down)]).suffix(31))
         // Only a change: every publish redraws every view that watches the model, each second (#166).
         if speeds.up != upSpeed { upSpeed = speeds.up }
         if speeds.down != downSpeed { downSpeed = speeds.down }
