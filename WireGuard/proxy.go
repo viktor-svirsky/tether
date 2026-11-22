@@ -807,7 +807,7 @@ func (r *proxyRun) dial(ctx context.Context, host string, port uint16, counts *t
 		if gone {
 			return nil, net.ErrClosed
 		}
-		c, err := s.dialTCP(ctx, dst, func(bool) {})
+		c, err := s.diagDial(ctx, dst, func() (net.Conn, error) { return s.dialTCP(ctx, dst, func(bool) {}) })
 		if err != nil {
 			last = err
 			if ctx.Err() != nil {
