@@ -104,11 +104,17 @@ struct ProxyProgress: Equatable {
     /// proxy, since a server that just started knows none yet and Go marks a busy device again
     /// every 10 s. With the server stopped or a read failed, the list is empty and says nothing,
     /// and the next listening read starts the `settling` again. A device leaves once Go drops it
-    /// after 2 minutes without traffic, so it counts as new again.
+    /// after 2 minutes without traffic, so it counts as new again. After the proxy stopped, Go's
+    /// list may start empty (a rebuilt server knows nobody), so for `forgets` after it came back a
+    /// device missing from it may only be quiet, and stays.
     private var opened: Set<String> = []
     private var listeningSince: Date?
+    private var stopped = false
+    private var keepUntil: Date?
     private(set) var working = false
     static let settling: TimeInterval = 12
+    /// How long Go keeps a quiet device in the list, `servedFor` in proxy.go.
+    static let forgets: TimeInterval = 120
 
     init(at stats: ProxyStats, now: Date = .now) {
         follow(stats, now: now)
@@ -116,9 +122,11 @@ struct ProxyProgress: Equatable {
 
     mutating func follow(_ stats: ProxyStats, now: Date = .now) {
         guard !stats.addresses.isEmpty else {
+            if listeningSince != nil { stopped = true }
             listeningSince = nil
             return
         }
+        if listeningSince == nil, stopped { keepUntil = now.addingTimeInterval(Self.forgets) }
         let since = listeningSince ?? now
         listeningSince = since
         if now.timeIntervalSince(since) < Self.settling {
@@ -126,6 +134,10 @@ struct ProxyProgress: Equatable {
             return
         }
         if !stats.served.isSubset(of: opened) { working = true }
-        opened.formIntersection(stats.served)
+        if let keepUntil, now < keepUntil {
+            opened.formUnion(stats.served)
+        } else {
+            opened.formIntersection(stats.served)
+        }
     }
 }

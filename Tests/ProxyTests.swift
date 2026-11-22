@@ -430,6 +430,38 @@ final class ProxyTests: XCTestCase {
         XCTAssertFalse(progress.working)
     }
 
+    /// The TV stays known across the outage, so coming back only after the new 12 s doesn't make it
+    /// look new: the step waits for a device that wasn't on the proxy when the sheet opened.
+    func testTheProxyPathWaitsForATVBackAfterTheOutagesTwelveSeconds() {
+        let tv = "172.20.10.3", laptop = "172.20.10.5", at = ["172.20.10.1:8118"], t0 = Date(timeIntervalSince1970: 1000)
+        var progress = ProxyProgress(at: ProxyStats(addresses: at, served: [tv]), now: t0)
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 60)
+        progress.follow(ProxyStats(), now: t0 + 70)
+        progress.follow(ProxyStats(addresses: at), now: t0 + 80)
+        progress.follow(ProxyStats(addresses: at), now: t0 + 92)
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 95)
+        XCTAssertFalse(progress.working, "the TV was on the proxy when the sheet opened")
+        progress.follow(ProxyStats(addresses: at, served: [tv, laptop]), now: t0 + 100)
+        XCTAssertTrue(progress.working, "the laptop is new")
+    }
+
+    /// The TV is kept only for Go's 2 minutes after the proxy came back: quiet past that, it left,
+    /// and a page after that counts as new, as it does without an outage.
+    func testTheProxyPathForgetsATVQuietForTwoMinutesAfterTheOutage() {
+        let tv = "172.20.10.3", at = ["172.20.10.1:8118"], t0 = Date(timeIntervalSince1970: 1000)
+        var progress = ProxyProgress(at: ProxyStats(addresses: at, served: [tv]), now: t0)
+        progress.follow(ProxyStats(), now: t0 + 70)
+        progress.follow(ProxyStats(addresses: at), now: t0 + 80)
+        progress.follow(ProxyStats(addresses: at), now: t0 + 199)
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 199.5)
+        XCTAssertFalse(progress.working, "still inside the 2 minutes")
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 210)
+        XCTAssertFalse(progress.working, "past the 2 minutes, still listed")
+        progress.follow(ProxyStats(addresses: at), now: t0 + 340)
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 345)
+        XCTAssertTrue(progress.working, "quiet past Go's 2 minutes, then back")
+    }
+
     /// The edge of the first 12 s: a device first served at 11 s is already on the proxy, one
     /// first served at 13 s is new, even if it was on the proxy before and only came back then.
     func testTheProxyPathLearnsForTwelveSeconds() {
