@@ -236,6 +236,7 @@ final class Model: ObservableObject {
                            return !LocalNetworks.allowed(in: settings)
                        }, usageDefaults: settings,
                        resetDay: { ResetDay.saved(in: settings) }, hostName: MDNSHostName(log: Self.append),
+                       localNetworkIntroduced: { UserDefaults.standard.bool(forKey: LocalNetworkIntro.key) },
                        cellular: { "\(Interfaces.pdpIp0(in: Interfaces.addresses())), \(cellular.dataLine())" },
                        log: Self.append)
     }

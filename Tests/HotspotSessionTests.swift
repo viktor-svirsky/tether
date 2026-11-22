@@ -22,6 +22,8 @@ final class HotspotSessionTests: XCTestCase {
     private var blockLocal = true
     /// mDNS for the iPhone's name, nil for none, see `HostName`.
     private var names: FakeHostName?
+    /// Continue on the screen before iOS asks for Local Network access, see `LocalNetworkIntro`.
+    private var introduced = true
     private let usageDefaults: UserDefaults = {
         let defaults = UserDefaults(suiteName: "HotspotSessionTests.usage")!
         defaults.removePersistentDomain(forName: "HotspotSessionTests.usage")
@@ -44,7 +46,8 @@ final class HotspotSessionTests: XCTestCase {
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
                                  carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
                                  dns: { [unowned self] in dns }, blockLocal: { [unowned self] in blockLocal }, usageDefaults: usageDefaults,
-                                 now: { [unowned self] in now }, hostName: names, cellular: cellular, log: log)
+                                 now: { [unowned self] in now }, hostName: names,
+                                 localNetworkIntroduced: { [unowned self] in introduced }, cellular: cellular, log: log)
     }
 
     private func minutes(_ m: Double) -> Date { start.addingTimeInterval(m * 60) }
@@ -682,6 +685,23 @@ final class HotspotSessionTests: XCTestCase {
         address = nil
         session.syncWithHotspot()
         XCTAssertEqual(names?.changes.last, "\(name) -", "taken down with the hotspot")
+    }
+
+    /// Answering the name with mDNS can make iOS ask for Local Network access, so it waits for
+    /// Continue on the screen before that question. WireGuard starts on the hotspot all the same.
+    func testTheNameWaitsForTheLocalNetworkScreen() {
+        names = FakeHostName()
+        introduced = false
+        makeSession()
+        let a = "2607:fb91:88a2:e822::a"
+        address = a
+        session.syncWithHotspot()
+        XCTAssertTrue(server.running, "WireGuard is not held back")
+        XCTAssertEqual(names?.changes, [], "no mDNS before Continue")
+
+        introduced = true
+        session.syncWithHotspot()
+        XCTAssertEqual(names?.changes, ["\(name()) \(a)"], "the next round answers the name")
     }
 
     /// Over IPv4 nothing changes: no name, no Mac link, and every config points at 172.20.10.1. On an

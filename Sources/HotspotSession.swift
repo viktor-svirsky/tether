@@ -144,6 +144,9 @@ final class HotspotSession {
     private let now: () -> Date
     /// mDNS for the iPhone's name on IPv6, see `HostName`. Nil gives the devices the address itself.
     private let hostName: HostNamePublishing?
+    /// Continue on the screen before iOS asks for Local Network access. Answering the name can make
+    /// iOS ask, so it waits for that, see `LocalNetworkIntro`. WireGuard doesn't.
+    private let localNetworkIntroduced: () -> Bool
     /// What the cellular data has, like "pdp_ip0: IPv6, data line: LTE", read for the log when the
     /// hotspot goes away (#191).
     private let cellular: @MainActor () -> String
@@ -187,7 +190,8 @@ final class HotspotSession {
          idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> DNSChoice.Upstream = { DNSChoice.defaultUpstream },
          blockLocal: @escaping () -> Bool = { false },
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
-         resetDay: @escaping () -> ResetDay = { .default }, hostName: HostNamePublishing? = nil, cellular: @escaping @MainActor () -> String = { "" },
+         resetDay: @escaping () -> ResetDay = { .default }, hostName: HostNamePublishing? = nil,
+         localNetworkIntroduced: @escaping () -> Bool = { true }, cellular: @escaping @MainActor () -> String = { "" },
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -206,6 +210,7 @@ final class HotspotSession {
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
         self.hostName = hostName
+        self.localNetworkIntroduced = localNetworkIntroduced
         self.cellular = cellular
         self.log = log
         // A device on the name says something else once mDNS fails or answers again, see `newConfig`.
@@ -748,7 +753,7 @@ final class HotspotSession {
 
     /// Each round: the name answers with the IPv6 address Tether listens on, and goes with it.
     private func followHostName() {
-        guard let hostName, let name else { return }
+        guard let hostName, let name, localNetworkIntroduced() else { return }
         hostName.publish(name, at: listeningIPv6)
     }
 
