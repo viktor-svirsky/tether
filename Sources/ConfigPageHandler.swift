@@ -21,6 +21,10 @@ struct ConfigPageHandler {
         /// iPhone itself, so a stale config isn't its.
         let hosts: [String]
         let now: Date
+        /// The iPhone's name, while it works for this client, and the ready device's config for it.
+        /// The page then offers a Mac that config too, see `ConfigPage.macConfigPath`.
+        var name: String? = nil
+        var nameConfig: String? = nil
     }
 
     enum Decision: Equatable {
@@ -34,7 +38,8 @@ struct ConfigPageHandler {
     /// key (#160).
     static let repeatWithin: TimeInterval = 5
 
-    private var lastDownload: (client: String, at: Date, response: ConfigPage.Response)?
+    /// `mac`: the Mac link's config, see `ConfigPage.macConfigPath`. The usual one right after it isn't a repeat.
+    private var lastDownload: (client: String, mac: Bool, at: Date, response: ConfigPage.Response)?
     /// Why the page last failed, so a page that fails every round is logged once.
     private var problem: String?
 
@@ -48,14 +53,16 @@ struct ConfigPageHandler {
             : knocks.contains { $0.kind == .server } ? .oldKeys : nil
         // Only while a download could happen anyway: a closed window or Tether off screen hands out
         // no key, a repeated one neither (#160).
+        let mac = request == .macConfig || request == .macConfigHead
         let repeated = state != .ready ? nil : lastDownload.flatMap {
-            $0.client == client && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil
+            $0.client == client && $0.mac == mac && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil
         }
+        let name = inputs.nameConfig == nil ? nil : inputs.name
         switch request {
         case .page:
-            return .answer(ConfigPage.page(state, stale: stale))
+            return .answer(ConfigPage.page(state, stale: stale, name: name))
         case .pageHead:
-            return .answer(ConfigPage.page(state, stale: stale).forHead)
+            return .answer(ConfigPage.page(state, stale: stale, name: name).forHead)
         case .configHead:
             if let repeated { return .answer(repeated.forHead) }
             guard state == .ready, let config = inputs.config else { return .answer(ConfigPage.page(state, stale: stale, status: .notFound).forHead) }
@@ -66,6 +73,18 @@ struct ConfigPageHandler {
                 return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
             }
             return .download(ready, host: host, config: config)
+        case .macConfigHead:
+            if let repeated { return .answer(repeated.forHead) }
+            guard state == .ready, name != nil, let config = inputs.nameConfig else {
+                return .answer(ConfigPage.page(state, stale: stale, status: .notFound).forHead)
+            }
+            return .answer(ConfigPage.config(config, fileName: WireGuardSetup.fileName(for: "")).forHead)
+        case .macConfig:
+            if let repeated { return .answer(repeated) }
+            guard state == .ready, let ready = inputs.ready, let name, let config = inputs.nameConfig else {
+                return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
+            }
+            return .download(ready, host: name, config: config)
         case .configWithoutToken: return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
         case .notFound: return .answer(ConfigPage.notFound)
         case .notGet: return .answer(ConfigPage.notGet)
@@ -74,8 +93,8 @@ struct ConfigPageHandler {
     }
 
     /// The session saved the device and answers with `response`.
-    mutating func downloaded(_ response: ConfigPage.Response, by client: String, at now: Date) {
-        lastDownload = (client, now, response)
+    mutating func downloaded(_ response: ConfigPage.Response, by client: String, forMac mac: Bool = false, at now: Date) {
+        lastDownload = (client, mac, now, response)
     }
 
     /// That config mustn't be handed out again: the hotspot went, the keys started over, or a device was removed.
