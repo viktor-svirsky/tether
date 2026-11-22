@@ -5,16 +5,17 @@ import SwiftUI
 /// on a line that fills with the icon's colours as each one ticks off by itself: join the hotspot,
 /// give it the config, turn its tunnel on. Without it, the proxy's three steps, see `proxySteps`.
 /// The WireGuard way follows the code that
-/// was ready when it opened, see `AddDeviceProgress`. The page and the connected list keep up only
-/// while Tether is on screen, so in the background the steps wait, and they catch up when it's back.
+/// was ready when it opened, see `AddDeviceFollow` and `AddDeviceProgress`. The page and the
+/// connected list keep up only while Tether is on screen, so in the background the steps wait, and
+/// they catch up when it's back.
 /// The code works only while the sheet is on screen and for 10 minutes after, see
 /// `AddWindow`, so opening it after that shows a new code. Once the device connects, it asks for
 /// its name, filled with the one it got ("Device 2") and selected, so typing replaces it (#173).
 struct AddDeviceSheet: View {
     @ObservedObject var model: Model
     @Environment(\.dismiss) private var dismiss
-    /// The device behind the code. Until it's claimed, a new code (after starting over, say) takes its place.
-    @State private var readyID: WireGuardSetup.Peer.ID?
+    /// The device behind the code, see `AddDeviceFollow`.
+    @State private var follow: AddDeviceFollow
     /// Which way the device gets its config: a phone or tablet scans, a computer or a travel router
     /// gets the file (#171).
     @State private var kind = Kind.phone
@@ -33,13 +34,13 @@ struct AddDeviceSheet: View {
 
     init(model: Model) {
         self.model = model
-        _readyID = State(initialValue: model.addDeviceFollows ?? model.wireGuardReady?.id)
+        _follow = State(initialValue: AddDeviceFollow(follows: model.addDeviceFollows, ready: model.wireGuardReady?.id))
         _kind = State(initialValue: model.addDeviceStartsOnComputer ? .computer : .phone)
         _path = State(initialValue: model.addDeviceOpensOn.map { [$0] } ?? [])
     }
 
     private var progress: AddDeviceProgress {
-        AddDeviceProgress(ready: readyID, peers: model.wireGuardPeers, connected: model.wireGuardConnected, hotspotOn: model.running)
+        follow.progress(peers: model.wireGuardPeers, connected: model.wireGuardConnected, hotspotOn: model.running)
     }
 
     var body: some View {
@@ -56,9 +57,7 @@ struct AddDeviceSheet: View {
                     }
                 }
         }
-        .onChange(of: model.wireGuardReady?.id) { _, new in
-            if self.progress.device == nil { readyID = new }
-        }
+        .onChange(of: model.wireGuardReady?.id) { _, new in follow.readyChanged(to: new, peers: model.wireGuardPeers) }
         // The demos that open on the sheet open the window the same way.
         .onAppear {
             model.openAddWindow()
@@ -90,9 +89,7 @@ struct AddDeviceSheet: View {
         }
     }
 
-    /// Only on the WireGuard steps: the page hands out the config only while Tether is on screen. The
-    /// proxy works with the screen off.
-    private var keepsScreenAwake: Bool { path.last == .wireGuard && progress.keepsScreenAwake }
+    private var keepsScreenAwake: Bool { AddDeviceFollow.keepsScreenAwake(on: path.last, progress) }
 
     /// The same close button as Settings, on every page of the sheet.
     @ToolbarContentBuilder private var closeButton: some ToolbarContent {
