@@ -1614,7 +1614,8 @@ func TestATunnelKeepsMarkingItsClientServed(t *testing.T) {
 }
 
 // A plain request that upgrades, a websocket say, goes through with its body as it is, which
-// ReverseProxy needs to carry the connection, and marks its client served once (#285).
+// ReverseProxy needs to carry the connection, and marks its client served, and again while bytes
+// come back, so a websocket open past servedFor keeps its client served (#285).
 func TestAnUpgradeGoesThroughAndServesItsClient(t *testing.T) {
 	s, proxy := proxyOn(t)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1648,10 +1649,39 @@ func TestAnUpgradeGoesThroughAndServesItsClient(t *testing.T) {
 	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
 		t.Fatalf("got %v, %v, want 101", resp, err)
 	}
+	if got := s.statsMessage().Proxy.Served; !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Fatalf("served %v, want the client", got)
+	}
+	s.mu.Lock()
+	s.proxy.served = map[netip.Addr]time.Time{} // as servedFor on
+	s.mu.Unlock()
 	if !echoes(c, r) {
 		t.Fatal("the upgraded connection doesn't carry bytes")
 	}
 	if got := s.statsMessage().Proxy.Served; !slices.Equal(got, []string{"127.0.0.1"}) {
-		t.Fatalf("served %v, want the client", got)
+		t.Fatalf("served %v after bytes came back, want the client", got)
+	}
+}
+
+// Tether's own config page answers from the iPhone, not the far end, so loading it through the
+// proxy, as a GET or a tunnel, doesn't mark its client served: Add a device's last step waits for
+// an answer from the internet (#285).
+func TestTheConfigPageDoesNotServeItsClient(t *testing.T) {
+	s, proxy := proxyOn(t)
+	ownAre(s, "172.20.10.1/28")
+	s.refreshLocal()
+	page := "172.20.10.1:" + port(tcpPage(t, 10))
+	echo := "172.20.10.1:" + port(echoFarEnd(t))
+	s.SetPage([]netip.AddrPort{netip.MustParseAddrPort(page), netip.MustParseAddrPort(echo)})
+	blockLocal(s, true) // so the page is the only way in
+	if status, _ := rawGet(t, proxy, "http://"+page+"/"); status != http.StatusOK {
+		t.Fatalf("a GET of the page got %d", status)
+	}
+	conn, r, status := tunnel(t, proxy, echo)
+	if status != http.StatusOK || !echoes(conn, r) {
+		t.Fatalf("a tunnel to the page got %d", status)
+	}
+	if got := s.statsMessage().Proxy.Served; len(got) != 0 {
+		t.Fatalf("served %v after only the page answered, want none", got)
 	}
 }

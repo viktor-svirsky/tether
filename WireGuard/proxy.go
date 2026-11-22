@@ -360,13 +360,18 @@ func (s *Server) newProxyRun() *proxyRun {
 			w.WriteHeader(statusFor(err))
 		},
 		// A response came from the far end: the client is served, see markServed, and again while
-		// its body comes.
+		// its body comes. Tether's own page isn't the far end, see toPage.
 		ModifyResponse: func(resp *http.Response) error {
 			if from, ok := resp.Request.Context().Value(proxyClient{}).(netip.Addr); ok {
+				if host, port, _ := proxyTarget(resp.Request); r.s.toPage(host, port) {
+					return nil
+				}
 				r.s.markServed(from)
 				if resp.StatusCode == http.StatusSwitchingProtocols {
-					// An upgrade's body is the connection, which ReverseProxy writes to, so it's marked
-					// only here and drops out after servedFor even while bytes flow.
+					// An upgrade's body is the connection, which ReverseProxy writes to and half-closes.
+					if conn, ok := resp.Body.(io.ReadWriteCloser); ok {
+						resp.Body = servedUpgrade{conn, r.s.servedReader(conn, from)}
+					}
 					return nil
 				}
 				resp.Body = struct {
@@ -666,6 +671,7 @@ type outConn struct {
 	keptConn
 	s      *Server
 	counts *traffic
+	page   bool // to Tether's config page
 }
 
 func (c *outConn) Read(b []byte) (int, error) {
@@ -842,6 +848,7 @@ func (r *proxyRun) dial(ctx context.Context, host string, port uint16, counts *t
 			c.Close()
 			return nil, errRefused
 		}
+		out.page = page
 		return out, nil
 	}
 	if refused {
@@ -1110,7 +1117,10 @@ func (r *proxyRun) relay(client *proxyConn, in io.Reader, out *outConn) {
 	})
 	wg.Go(func() {
 		defer close(farEndRead)
-		farEnd := s.servedReader(out, client.from)
+		var farEnd io.Reader = out
+		if !out.page { // Tether's own page isn't the far end, see toPage
+			farEnd = s.servedReader(out, client.from)
+		}
 		if err, writing := s.copy(client, farEnd, counts, false, nil); err != io.EOF {
 			fail(writing)
 		} else {
@@ -1228,6 +1238,31 @@ const (
 // come, at most every servedEvery.
 func (s *Server) servedReader(r io.Reader, from netip.Addr) io.Reader {
 	return &servedReading{Reader: r, mark: func() { s.markServed(from) }, now: s.now}
+}
+
+// servedUpgrade is an upgraded connection whose reads, from the far end, go through a servedReader.
+// Writes and Close go to the connection as they are, and so does CloseWrite, which ReverseProxy
+// uses to pass on the device's half-close.
+type servedUpgrade struct {
+	io.ReadWriteCloser
+	read io.Reader
+}
+
+func (u servedUpgrade) Read(b []byte) (int, error) { return u.read.Read(b) }
+
+func (u servedUpgrade) CloseWrite() error {
+	if cw, ok := u.ReadWriteCloser.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return http.ErrNotSupported
+}
+
+// toPage is whether host:port is Tether's own config page, which answers from the iPhone, so a
+// response from it doesn't mark its client served. The page goes by its address, as its link and
+// QR code give it.
+func (s *Server) toPage(host string, port uint16) bool {
+	a, err := netip.ParseAddr(host)
+	return err == nil && slices.Contains(*s.page.Load(), netip.AddrPortFrom(a.Unmap(), port))
 }
 
 type servedReading struct {
