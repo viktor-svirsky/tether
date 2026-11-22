@@ -1258,11 +1258,11 @@ func (s *Server) forwardTCP(r forwardRequest) {
 		}
 		if deviceFailed {
 			resetIn()
-			s.drain(func() int { return sendQueue(out) })
+			s.drain(s.ctx, func() int { return sendQueue(out) })
 			resetOut()
 		} else {
 			resetOut()
-			s.drain(nil) // gVisor doesn't say what's left in its send queue
+			s.drain(s.ctx, nil) // gVisor doesn't say what's left in its send queue
 			resetIn()
 		}
 	}
@@ -1529,9 +1529,8 @@ type closer struct{ f func() }
 func (c *closer) Close() error { c.f(); return nil }
 
 // drain waits for what is queued to a side to reach it: until queued says nothing is left, or
-// drainGrace passes, or the server closes. A nil queued means the side can't say, so it waits
-// out the grace.
-func (s *Server) drain(queued func() int) {
+// drainGrace passes, or ctx ends. A nil queued means the side can't say, so it waits out the grace.
+func (s *Server) drain(ctx context.Context, queued func() int) {
 	grace := time.NewTimer(drainGrace)
 	defer grace.Stop()
 	var tick <-chan time.Time // nil, so never, when there's nothing to ask
@@ -1544,7 +1543,7 @@ func (s *Server) drain(queued func() int) {
 		select {
 		case <-grace.C:
 			return
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-tick:
 			if queued() == 0 {

@@ -980,3 +980,24 @@ func endUnclaimed(s *Server) int {
 	}
 	return n
 }
+
+// A drain ends when what it's for stops, the proxy turned off say, not only the server: otherwise a
+// relay draining a closed socket, whose queue can't be read any more, holds stopProxy for drainGrace (#287).
+func TestADrainEndsWhenItsRunStops(t *testing.T) {
+	s := startAlone(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.drain(ctx, func() int { return -1 }) // a closed socket says nothing
+		close(done)
+	}()
+	began := time.Now()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(drainGrace):
+	}
+	if took := time.Since(began); took > drainGrace/2 {
+		t.Fatalf("the drain went on %v after its run stopped", took)
+	}
+}
