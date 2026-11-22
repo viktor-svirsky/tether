@@ -1793,6 +1793,22 @@ final class HotspotSessionTests: XCTestCase {
         session.watch()
     }
 
+    /// An idle stop takes the name down in the same round: iOS may suspend Tether before the next.
+    func testAnIdleStopTakesTheNameDown() {
+        names = FakeHostName()
+        idleAfter = .tenMinutes
+        makeSession(sceneActive: false)
+        let a = "2607:fb91:88a2:e822::a"
+        address = a
+        session.wake()
+        session.watch()
+        XCTAssertEqual(names?.changes, ["\(name()) \(a)"])
+        now = minutes(10)
+        session.watch()
+        XCTAssertFalse(server.running)
+        XCTAssertEqual(names?.changes.last, "\(name()) -", "withdrawn with WireGuard")
+    }
+
     func testSharingStopsAfterTheIdleTimeInTheBackground() {
         idleAfter = .tenMinutes
         shareInTheBackground()

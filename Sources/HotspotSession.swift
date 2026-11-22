@@ -308,6 +308,7 @@ final class HotspotSession {
         running = false
         startProblem = nil // the next hotspot gets a new try
         showProblem()
+        followHostName() // now, not next round: after an idle stop iOS may suspend Tether first
     }
 
     /// Stops sharing once no device has been connected in the background for the set time, see

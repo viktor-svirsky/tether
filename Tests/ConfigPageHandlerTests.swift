@@ -82,8 +82,7 @@ final class ConfigPageHandlerTests: XCTestCase {
                        .download(ready, host: "172.20.10.1", config: config))
     }
 
-    /// The Mac link right after the usual download, or the other way round, is another config, not a
-    /// repeat: each is kept apart (#65).
+    /// The Mac link right after the usual download is another config, not a repeat (#65).
     func testTheMacLinkIsntARepeatOfTheUsualDownload() {
         var handler = ConfigPageHandler()
         var named = inputs(at: start.addingTimeInterval(1))
@@ -97,7 +96,38 @@ final class ConfigPageHandlerTests: XCTestCase {
         handler.downloaded(mac, by: "172.20.10.3", forMac: true, at: start)
         XCTAssertEqual(handler.answer(.macConfig, from: "172.20.10.3", named), .answer(mac))
         XCTAssertEqual(handler.answer(.macConfigHead, from: "172.20.10.3", named), .answer(mac.forHead))
+    }
+
+    /// The usual download again right after a Mac download in between is still a repeat: each link
+    /// keeps its own last download, so the browser fetching twice doesn't list a third device (#65).
+    func testEachLinkKeepsItsOwnRepeat() {
+        var handler = ConfigPageHandler()
+        var named = inputs(at: start.addingTimeInterval(2))
+        named.name = "tether-2a9a.local"
+        named.nameConfig = "[Interface]\nName\n"
+        let usual = ConfigPage.config(config, fileName: "Tether-Device.conf")
+        let mac = ConfigPage.config("[Interface]\nName\n", fileName: "Tether-Device-2.conf")
+        handler.downloaded(usual, by: "172.20.10.3", at: start)
+        handler.downloaded(mac, by: "172.20.10.3", forMac: true, at: start.addingTimeInterval(1))
+        XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", named), .answer(usual))
+        XCTAssertEqual(handler.answer(.configHead, from: "172.20.10.3", named), .answer(usual.forHead))
+        XCTAssertEqual(handler.answer(.macConfig, from: "172.20.10.3", named), .answer(mac))
+        handler.forget()
         XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", named), .download(ready, host: "172.20.10.1", config: config))
+        XCTAssertEqual(handler.answer(.macConfig, from: "172.20.10.3", named),
+                       .download(ready, host: "tether-2a9a.local", config: "[Interface]\nName\n"))
+    }
+
+    /// Once mDNS stops answering the name, the Mac link gives nothing, a repeat neither: that config
+    /// would point at a name that doesn't work (#65).
+    func testNoMacRepeatOnceTheNameFails() {
+        var handler = ConfigPageHandler()
+        let mac = ConfigPage.config("[Interface]\nName\n", fileName: "Tether-Device.conf")
+        handler.downloaded(mac, by: "172.20.10.3", forMac: true, at: start)
+        let failed = inputs(at: start.addingTimeInterval(1)) // no name: mDNS failed
+        XCTAssertEqual(handler.answer(.macConfig, from: "172.20.10.3", failed), .answer(ConfigPage.page(.ready, status: .notFound)))
+        XCTAssertEqual(handler.answer(.macConfigHead, from: "172.20.10.3", failed),
+                       .answer(ConfigPage.page(.ready, status: .notFound).forHead))
     }
 
     /// The hotspot going, a reset or a removal: that config mustn't be handed out again.

@@ -38,8 +38,10 @@ struct ConfigPageHandler {
     /// key (#160).
     static let repeatWithin: TimeInterval = 5
 
-    /// `mac`: the Mac link's config, see `ConfigPage.macConfigPath`. The usual one right after it isn't a repeat.
-    private var lastDownload: (client: String, mac: Bool, at: Date, response: ConfigPage.Response)?
+    /// The last download from each link, the usual one and the Mac one (`ConfigPage.macConfigPath`),
+    /// kept apart: one link right after the other isn't a repeat, and doesn't end the other's.
+    private var lastDownload: (client: String, at: Date, response: ConfigPage.Response)?
+    private var lastMacDownload: (client: String, at: Date, response: ConfigPage.Response)?
     /// Why the page last failed, so a page that fails every round is logged once.
     private var problem: String?
 
@@ -54,10 +56,11 @@ struct ConfigPageHandler {
         // Only while a download could happen anyway: a closed window or Tether off screen hands out
         // no key, a repeated one neither (#160).
         let mac = request == .macConfig || request == .macConfigHead
-        let repeated = state != .ready ? nil : lastDownload.flatMap {
-            $0.client == client && $0.mac == mac && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil
-        }
         let name = inputs.nameConfig == nil ? nil : inputs.name
+        // A Mac config only while the name works: once mDNS fails it points nowhere.
+        let repeated = state != .ready || mac && name == nil ? nil : (mac ? lastMacDownload : lastDownload).flatMap {
+            $0.client == client && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil
+        }
         switch request {
         case .page:
             return .answer(ConfigPage.page(state, stale: stale, name: name))
@@ -94,12 +97,13 @@ struct ConfigPageHandler {
 
     /// The session saved the device and answers with `response`.
     mutating func downloaded(_ response: ConfigPage.Response, by client: String, forMac mac: Bool = false, at now: Date) {
-        lastDownload = (client, mac, now, response)
+        if mac { lastMacDownload = (client, now, response) } else { lastDownload = (client, now, response) }
     }
 
     /// That config mustn't be handed out again: the hotspot went, the keys started over, or a device was removed.
     mutating func forget() {
         lastDownload = nil
+        lastMacDownload = nil
     }
 
     /// The line to log for this failure, nil when the last one said the same.
