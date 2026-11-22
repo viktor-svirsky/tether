@@ -14,9 +14,10 @@ final class ConfigPageHandlerTests: XCTestCase {
 
     private func inputs(letIn: Bool = true, onScreen: Bool = true, noReady: Bool = false,
                         host: String? = "172.20.10.1", config: String? = nil, stale: [StaleConfig] = [],
-                        at: Date? = nil) -> ConfigPageHandler.Inputs {
+                        connected: [String] = [], at: Date? = nil) -> ConfigPageHandler.Inputs {
         ConfigPageHandler.Inputs(letIn: letIn, onScreen: onScreen, ready: noReady ? nil : ready, host: host,
-                                 config: config ?? self.config, stale: stale, hosts: ["172.20.10.1", "2001:db8::1"], now: at ?? start)
+                                 config: config ?? self.config, stale: stale, hosts: ["172.20.10.1", "2001:db8::1"], now: at ?? start,
+                                 connected: connected)
     }
 
     func testThePageSaysWhatsMissing() {
@@ -29,8 +30,8 @@ final class ConfigPageHandlerTests: XCTestCase {
             (inputs(), .ready, #line),
         ]
         for (inputs, state, line) in cases {
-            XCTAssertEqual(handler.answer(.page, from: "172.20.10.3", inputs), .answer(ConfigPage.page(state)), line: line)
-            XCTAssertEqual(handler.answer(.pageHead, from: "172.20.10.3", inputs), .answer(ConfigPage.page(state).forHead), line: line)
+            XCTAssertEqual(handler.answer(.page, from: "172.20.10.3", inputs), .answer(ConfigPage.page(state, tunnel: .notConnected)), line: line)
+            XCTAssertEqual(handler.answer(.pageHead, from: "172.20.10.3", inputs), .answer(ConfigPage.page(state, tunnel: .notConnected).forHead), line: line)
         }
     }
 
@@ -49,7 +50,7 @@ final class ConfigPageHandlerTests: XCTestCase {
             (inputs(host: nil), .ready, #line),
         ]
         for (inputs, state, line) in cases {
-            XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs), .answer(ConfigPage.page(state, status: .notFound)), line: line)
+            XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs), .answer(ConfigPage.page(state, tunnel: .notConnected, status: .notFound)), line: line)
         }
     }
 
@@ -59,7 +60,7 @@ final class ConfigPageHandlerTests: XCTestCase {
         XCTAssertEqual(handler.answer(.configHead, from: "172.20.10.3", inputs()),
                        .answer(ConfigPage.config(config, fileName: WireGuardSetup.fileName(for: "")).forHead))
         XCTAssertEqual(handler.answer(.configHead, from: "172.20.10.3", inputs(onScreen: false)),
-                       .answer(ConfigPage.page(.openTether, status: .notFound).forHead))
+                       .answer(ConfigPage.page(.openTether, tunnel: .notConnected, status: .notFound).forHead))
     }
 
     /// A browser or download manager that fetches twice mustn't list a second device.
@@ -71,9 +72,9 @@ final class ConfigPageHandlerTests: XCTestCase {
         XCTAssertEqual(handler.answer(.configHead, from: "172.20.10.3", inputs(at: start.addingTimeInterval(ConfigPageHandler.repeatWithin - 1))), .answer(saved.forHead))
         // Not once the window has closed or Tether left the screen: no key goes out then (#160).
         XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(letIn: false, at: start.addingTimeInterval(1))),
-                       .answer(ConfigPage.page(.openAddDevice, status: .notFound)))
+                       .answer(ConfigPage.page(.openAddDevice, tunnel: .notConnected, status: .notFound)))
         XCTAssertEqual(handler.answer(.config, from: "172.20.10.3", inputs(onScreen: false, at: start.addingTimeInterval(1))),
-                       .answer(ConfigPage.page(.openTether, status: .notFound)))
+                       .answer(ConfigPage.page(.openTether, tunnel: .notConnected, status: .notFound)))
         // Another device, or a few seconds later (a second computer behind a travel router), is a new download.
         XCTAssertLessThanOrEqual(ConfigPageHandler.repeatWithin, 5)
         XCTAssertEqual(handler.answer(.config, from: "172.20.10.4", inputs(at: start.addingTimeInterval(1))),
@@ -114,10 +115,10 @@ final class ConfigPageHandlerTests: XCTestCase {
         ]
         for c in cases {
             XCTAssertEqual(handler.answer(.page, from: c.client, inputs(stale: [knock], at: c.at)),
-                           .answer(ConfigPage.page(.ready, stale: c.said)), line: c.line)
+                           .answer(ConfigPage.page(.ready, stale: c.said, tunnel: .notConnected)), line: c.line)
         }
         XCTAssertEqual(handler.answer(.page, from: "172.20.10.3", inputs(stale: [StaleConfig(kind: .device, at: start)])),
-                       .answer(ConfigPage.page(.ready)), "a knock that says nowhere is no device's")
+                       .answer(ConfigPage.page(.ready, tunnel: .notConnected)), "a knock that says nowhere is no device's")
         let v6 = StaleConfig(kind: .device, at: start, from: "[2001:db8::5]:51820")
         XCTAssertEqual(handler.answer(.page, from: "2001:db8::5", inputs(stale: [v6])), .answer(ConfigPage.page(.ready, stale: .thisDevice)),
                        "a handshake's endpoint has brackets and a port, a page client doesn't")
@@ -139,7 +140,7 @@ final class ConfigPageHandlerTests: XCTestCase {
         ]
         for c in cases {
             XCTAssertEqual(handler.answer(.page, from: c.client, inputs(stale: c.stale, at: start.addingTimeInterval(10))),
-                           .answer(ConfigPage.page(.ready, stale: c.said)), line: c.line)
+                           .answer(ConfigPage.page(.ready, stale: c.said, tunnel: .notConnected)), line: c.line)
         }
     }
 
@@ -158,7 +159,28 @@ final class ConfigPageHandlerTests: XCTestCase {
         ]
         for c in cases {
             XCTAssertEqual(handler.answer(.page, from: c.client, inputs(stale: [knock], at: c.at)),
-                           .answer(ConfigPage.page(.ready, stale: c.said)), line: c.line)
+                           .answer(ConfigPage.page(.ready, stale: c.said, tunnel: ["172.20.10.1", "2001:db8::1"].contains(c.client) ? .connected : .notConnected)), line: c.line)
+        }
+    }
+
+    /// Whether this device's tunnel works (#63). A request from where Tether listens came through
+    /// Tether: a tunnel, or the proxy. A device that sends the page's address around its tunnel (wg-quick
+    /// on Linux does) asks from where its handshake comes from. Anything else on the hotspot isn't
+    /// connected.
+    func testThePageSaysWhetherThisDeviceIsConnected() {
+        let handler = ConfigPageHandler()
+        let cases: [(client: String, connected: [String], said: ConfigPage.Tunnel?, line: UInt)] = [
+            ("172.20.10.1", [], .connected, #line),
+            ("2001:db8::1", [], .connected, #line),
+            ("172.20.10.3", ["172.20.10.3"], .connected, #line),
+            ("2001:db8::5", ["2001:db8::5"], .connected, #line),
+            ("172.20.10.3", ["172.20.10.4"], .notConnected, #line),
+            ("172.20.10.3", [], .notConnected, #line),
+            ("not an address", [], nil, #line),
+        ]
+        for c in cases {
+            XCTAssertEqual(handler.answer(.page, from: c.client, inputs(connected: c.connected)),
+                           .answer(ConfigPage.page(.ready, tunnel: c.said)), line: c.line)
         }
     }
 

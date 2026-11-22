@@ -755,10 +755,12 @@ final class HotspotSession {
         let ready = wireGuardReady
         let now = self.now()
         let host = host(reachedFrom: client)
+        // Read now: only the on-screen sampler keeps the knock.
+        let snap = server.snapshot()
         let inputs = ConfigPageHandler.Inputs(letIn: readyLetIn, onScreen: sceneActive, ready: ready, host: host,
                                               config: ready.flatMap { wireGuardConfig(for: $0, host: host) },
-                                              // Read now: only the on-screen sampler keeps the knock.
-                                              stale: server.snapshot().recentStale, hosts: boundHosts, now: now)
+                                              stale: snap.recentStale, hosts: boundHosts, now: now,
+                                              connected: snap.peers.values.filter(\.connected).compactMap { PeerStats.address($0.endpoint) })
         switch pageHandler.answer(request, from: client, inputs) {
         case let .answer(response):
             return response
