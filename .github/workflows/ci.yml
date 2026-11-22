@@ -19,6 +19,9 @@ defaults:
   run:
     shell: bash # named explicitly, so steps run with pipefail and a failed build can't hide behind tail
 
+permissions:
+  contents: read
+
 jobs:
   # A commit goes through its issue branch, a batch branch, the release branch and main. The same
   # commit is the same tree, so once a push run passed on any branch, the macOS jobs aren't run again:
