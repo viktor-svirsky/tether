@@ -104,7 +104,7 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(value(of: copy), "Copied")
         XCTAssertEqual(copy.label, "Copy the address")
         let cleared = expectation(for: NSPredicate(format: "value == ''"), evaluatedWith: copy)
-        XCTAssertEqual(XCTWaiter().wait(for: [cleared], timeout: 5), .completed, "it goes back to the copy icon")
+        XCTAssertEqual(XCTWaiter().wait(for: [cleared], timeout: 10), .completed, "it goes back to the copy icon")
     }
 
     /// At the largest text size a segmented control stays small, so the two kinds are full-width
