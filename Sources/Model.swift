@@ -29,7 +29,8 @@
 //   Shortcuts.swift     the Shortcuts actions; ShortcutReply.swift has what they say, Foundation only
 //   WireGuardSetup.swift  the hotspot address, WireGuard keys, devices and client configs, Foundation only
 //   WireGuardServer.swift  runs the WireGuard server (WireGuard/, Go)
-//   KeepAlive.swift, KeepAlivePolicy.swift  the silent sound that keeps Tether running
+//   KeepAlive.swift, KeepAlivePolicy.swift  the silent sound that keeps Tether running before iOS 26
+//   BackgroundSession.swift  the iOS 26 background task that keeps it running instead (#229 prototype)
 
 import OSLog
 import SwiftUI
@@ -197,6 +198,7 @@ final class Model: ObservableObject {
         callWatch = CallWatch(calls: calls, cellular: Self.cellular, log: Self.append)
         session.callOn = { calls.calls.contains { !$0.ended } }
         observeScene()
+        if session.sceneActive { Self.requestBackground() }
         localNetwork.onChange = { [weak self] denied in
             self?.localNetworkDenied = denied
             Self.append("Local Network access: \(denied ? "denied" : "allowed")")
@@ -226,10 +228,23 @@ final class Model: ObservableObject {
                              savedSetup: { try secrets.load() })
     }
 
+    /// What keeps Tether running in the background: the iOS 26 background task (#229 prototype,
+    /// from ktg3769/tether@1201199), or the silent sound before iOS 26.
+    private static let keepAlive: KeepAliveSound = {
+        if #available(iOS 26.0, *) { return BackgroundSession(log: Model.append) }
+        return KeepAlive(log: Model.append)
+    }()
+
+    /// iOS takes the background task only while Tether is on screen, so it's asked for at each
+    /// launch onto the screen and each time Tether comes back on screen.
+    private static func requestBackground() {
+        if #available(iOS 26.0, *) { (keepAlive as? BackgroundSession)?.request() }
+    }
+
     /// The session with the real server, sound, page and hotspot.
     private static func session(secrets: SecretStore, settings: UserDefaults) -> HotspotSession {
         HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(log: Self.append),
-                       keepAlive: KeepAlive(log: Self.append), page: ConfigPageServer(),
+                       keepAlive: keepAlive, page: ConfigPageServer(),
                        sceneActive: UIApplication.shared.applicationState != .background,
                        hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,
                        carrierIPv6Only: Interfaces.carrierIPv6Only,
@@ -490,6 +505,7 @@ final class Model: ObservableObject {
         }
         observe(UIApplication.didBecomeActiveNotification) { model in
             model.session.cameOnScreen()
+            Self.requestBackground()
             model.localNetworkIntro.check() // afresh, for a change made in Settings
             model.startSampler() // samples at once, then every second again
             model.startKnocking()
