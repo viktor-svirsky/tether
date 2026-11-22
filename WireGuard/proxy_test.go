@@ -1718,3 +1718,26 @@ func TestTheConfigPageDoesNotServeItsClient(t *testing.T) {
 		t.Fatalf("served %v after only the page answered, want none", got)
 	}
 }
+
+// A name that leads to the page is the page too: what counts is the address dialed.
+func TestTheConfigPageByNameDoesNotServeItsClient(t *testing.T) {
+	s := proxyReady(t)
+	ownAre(s, "172.20.10.1/28")
+	s.refreshLocal()
+	page := tcpPage(t, 10)
+	s.SetPage([]netip.AddrPort{netip.MustParseAddrPort("172.20.10.1:" + port(page))})
+	s.mu.Lock()
+	s.proxy.systemLookup = func(_ context.Context, host string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("172.20.10.1")}, nil
+	}
+	s.mu.Unlock()
+	s.SetProxy(true, false)
+	proxy := proxyListening(t, s)
+	blockLocal(s, true) // so the page is the only way in
+	if status, _ := rawGet(t, proxy, "http://iphone.example:"+port(page)+"/"); status != http.StatusOK {
+		t.Fatalf("a GET of the page by name got %d", status)
+	}
+	if got := s.statsMessage().Proxy.Served; len(got) != 0 {
+		t.Fatalf("served %v after only the page answered, want none", got)
+	}
+}

@@ -27,6 +27,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/http/httputil"
 	"net/netip"
 	"slices"
@@ -363,10 +364,10 @@ func (s *Server) newProxyRun() *proxyRun {
 			w.WriteHeader(statusFor(err))
 		},
 		// A response came from the far end: the client is served, see markServed, and again while
-		// its body comes. Tether's own page isn't the far end, see toPage.
+		// its body comes. Tether's own page isn't the far end, see outConn.page.
 		ModifyResponse: func(resp *http.Response) error {
 			if from, ok := resp.Request.Context().Value(proxyClient{}).(netip.Addr); ok {
-				if host, port, _ := proxyTarget(resp.Request); r.s.toPage(host, port) {
+				if page, _ := resp.Request.Context().Value(proxyPage{}).(*bool); page != nil && *page {
 					return nil
 				}
 				r.s.markServed(from)
@@ -674,7 +675,9 @@ type outConn struct {
 	keptConn
 	s      *Server
 	counts *traffic
-	page   bool // to Tether's config page
+	// To Tether's config page, by the address dialed, so a name that leads there counts too. The
+	// page answers from the iPhone, so a response from it doesn't mark its client served.
+	page bool
 }
 
 func (c *outConn) Read(b []byte) (int, error) {
@@ -717,6 +720,14 @@ func (r *proxyRun) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer context.AfterFunc(r.ctx, cancel)()
 	req = req.WithContext(ctx)
 	if req.Method != http.MethodConnect {
+		// The connection the request goes out on, new or kept, says whether the page answers.
+		page := new(bool)
+		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(i httptrace.GotConnInfo) {
+			out, ok := i.Conn.(*outConn)
+			*page = ok && out.page
+		}})
+		ctx = context.WithValue(ctx, proxyPage{}, page)
+		req = req.WithContext(ctx)
 		if a, err := netip.ParseAddrPort(req.RemoteAddr); err == nil {
 			req = req.WithContext(context.WithValue(ctx, proxyClient{}, a.Addr().Unmap()))
 		}
@@ -990,6 +1001,9 @@ var errTooManyDials = errors.New("too many dials at once")
 // proxyClient is the context key of the client a plain request came from, see takeDial.
 type proxyClient struct{}
 
+// proxyPage is the context key of whether a plain request went to the page, see outConn.page.
+type proxyPage struct{}
+
 // takeDial counts a plain request's dial from client from against the proxy's maxDials and the
 // client's share of it, or refuses it at either cap.
 func (s *Server) takeDial(from netip.Addr) error {
@@ -1121,7 +1135,7 @@ func (r *proxyRun) relay(client *proxyConn, in io.Reader, out *outConn) {
 	wg.Go(func() {
 		defer close(farEndRead)
 		var farEnd io.Reader = out
-		if !out.page { // Tether's own page isn't the far end, see toPage
+		if !out.page { // Tether's own page isn't the far end, see outConn.page
 			farEnd = s.servedReader(out, client.from)
 		}
 		if err, writing := s.copy(client, farEnd, counts, false, nil); err != io.EOF {
@@ -1258,14 +1272,6 @@ func (u servedUpgrade) CloseWrite() error {
 		return cw.CloseWrite()
 	}
 	return http.ErrNotSupported
-}
-
-// toPage is whether host:port is Tether's own config page, which answers from the iPhone, so a
-// response from it doesn't mark its client served. The page goes by its address, as its link and
-// QR code give it.
-func (s *Server) toPage(host string, port uint16) bool {
-	a, err := netip.ParseAddr(host)
-	return err == nil && slices.Contains(*s.page.Load(), netip.AddrPortFrom(a.Unmap(), port))
 }
 
 type servedReading struct {
