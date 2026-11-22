@@ -1164,7 +1164,7 @@ final class HotspotSessionTests: XCTestCase {
         let head = page.ask(.configHead)
         XCTAssertEqual(head.status, .ok)
         XCTAssertTrue(head.headOnly)
-        XCTAssertEqual(page.ask(.pageHead), ConfigPage.page(.ready).forHead)
+        XCTAssertEqual(page.ask(.pageHead), ConfigPage.page(.ready, tunnel: .notConnected).forHead)
         XCTAssertTrue(session.wireGuardPeers.isEmpty)
         XCTAssertEqual(session.wireGuardReady, ready)
         session.leftScreen()
@@ -1297,13 +1297,13 @@ final class HotspotSessionTests: XCTestCase {
         makeSession()
         address = hotspot
         session.syncWithHotspot()
-        XCTAssertEqual(page.ask(.page), ConfigPage.page(.openAddDevice))
+        XCTAssertEqual(page.ask(.page), ConfigPage.page(.openAddDevice, tunnel: .notConnected))
         let closed = page.ask(.config)
         XCTAssertEqual(closed.status, .notFound)
         XCTAssertFalse(body(closed).contains("PrivateKey"))
         XCTAssertTrue(session.wireGuardPeers.isEmpty)
         session.openAddWindow()
-        XCTAssertEqual(page.ask(.page), ConfigPage.page(.ready))
+        XCTAssertEqual(page.ask(.page), ConfigPage.page(.ready, tunnel: .notConnected))
         session.closeAddWindow()
         now = minutes(9.9)
         XCTAssertEqual(page.ask(.config, from: "172.20.10.3").status, .ok)
@@ -1756,6 +1756,38 @@ final class HotspotSessionTests: XCTestCase {
         server.stale = StaleConfig(kind: .server, at: now)
         XCTAssertTrue(body(page.ask(.page, from: "172.20.10.4")).contains("A device here has an old config."))
         XCTAssertFalse(body(page.ask(.page, from: hotspot)).contains("old config"), "it came through a tunnel that works")
+    }
+
+    /// The page says a device is connected when it asks from where a device whose tunnel is live
+    /// connects from (#63): its WireGuard sends the page's address around the tunnel. Live is an
+    /// unpaused device that sent anything in the last minute, keepalives too, see `PeerActivity`.
+    func testThePageSaysWhetherThisDeviceIsConnected() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        let ipad = try XCTUnwrap(devices.connectReady())
+        let laptop = try XCTUnwrap(devices.connectReady())
+        // Both behind one travel router: one address for both.
+        server.connected = [ipad.address, laptop.address]
+        server.endpoints = [ipad.address: "172.20.10.3:51820", laptop.address: "172.20.10.3:51821"]
+        server.received = [ipad.address: 100, laptop.address: 100]
+        session.sampleTraffic()
+        let connected = "This device is connected to Tether."
+        let notConnected = "This device isn't connected to Tether."
+        XCTAssertTrue(body(page.ask(.page, from: "172.20.10.3")).contains(notConnected), "a count read once says nothing of when it went up")
+        now = now.addingTimeInterval(10)
+        server.received[ipad.address] = 132
+        session.sampleTraffic()
+        XCTAssertTrue(body(page.ask(.page, from: "172.20.10.3")).contains(connected), "one live device at that address is enough")
+        XCTAssertTrue(body(page.ask(.page, from: hotspot)).contains(connected), "through a tunnel or the proxy")
+        XCTAssertTrue(body(page.ask(.page, from: "172.20.10.4")).contains(notConnected))
+        now = now.addingTimeInterval(PeerActivity.liveFor + 1)
+        XCTAssertTrue(body(page.ask(.page, from: "172.20.10.3")).contains(notConnected), "quiet for a minute: its tunnel is off")
+        server.received[ipad.address] = 164
+        session.sampleTraffic()
+        XCTAssertTrue(body(page.ask(.page, from: "172.20.10.3")).contains(connected))
+        session.pauseWireGuardDevice(ipad.id)
+        XCTAssertTrue(body(page.ask(.page, from: "172.20.10.3")).contains(notConnected), "nothing gets through a paused device")
     }
 
     func testSpeedsAreBitsPerSecondBetweenTwoSamples() {

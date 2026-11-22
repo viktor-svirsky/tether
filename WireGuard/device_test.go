@@ -104,8 +104,11 @@ func TestStatsSayWhenAndWhereADeviceConnected(t *testing.T) {
 	if ep, err := netip.ParseAddrPort(pa.Endpoint); err != nil || !ep.Addr().IsLoopback() {
 		t.Fatalf("endpoint %q, want the device's loopback address and port: %v", pa.Endpoint, err)
 	}
-	if pb.Handshake != 0 || pb.Endpoint != "" || pb.Connected {
+	if pb.Handshake != 0 || pb.Endpoint != "" || pb.Connected || pb.Rx != 0 {
 		t.Fatalf("%+v, want nothing for a device that never connected", pb)
+	}
+	if pa.Rx <= pa.Up {
+		t.Fatalf("rx %d, want more than its flows' %d bytes: wireguard-go counts every packet", pa.Rx, pa.Up)
 	}
 }
 
