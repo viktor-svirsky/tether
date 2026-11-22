@@ -70,6 +70,20 @@ final class HotspotSessionTests: XCTestCase {
         }
     }
 
+    /// A new hotspot address restarts the server in one round, so no read sees it stop. The proxy's
+    /// stats say it's a new run, whose served list starts empty, see ProxyProgress (#285).
+    func testARestartGivesTheProxyStatsANewRun() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        let first = session.proxyStats.run
+        address = "172.20.10.3"
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        XCTAssertNotEqual(session.proxyStats.run, first)
+    }
+
     func testTheHotspotAddressIsOnABridgeInTheHotspotSubnet() {
         let cases: [(interfaces: [String], hotspot: String?, line: UInt)] = [
             ([], nil, #line),

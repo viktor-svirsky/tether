@@ -430,6 +430,18 @@ final class ProxyTests: XCTestCase {
         XCTAssertFalse(progress.working)
     }
 
+    /// The server restarted with no read that showed it stopped, the hotspot's address changing in
+    /// one round say: its new run knows no one, so the TV back in it is kept, as after an outage.
+    func testTheProxyPathWaitsWhenTheServerRestartsBetweenReads() {
+        let tv = "172.20.10.3", at = ["172.20.10.1:8118"], t0 = Date(timeIntervalSince1970: 1000)
+        var progress = ProxyProgress(at: ProxyStats(addresses: at, served: [tv]), now: t0)
+        progress.follow(ProxyStats(addresses: at, served: [tv]), now: t0 + 60)
+        progress.follow(ProxyStats(addresses: at, run: 1), now: t0 + 70)
+        progress.follow(ProxyStats(addresses: at, run: 1), now: t0 + 90)
+        progress.follow(ProxyStats(addresses: at, served: [tv], run: 1), now: t0 + 95)
+        XCTAssertFalse(progress.working, "the TV was on the proxy when the sheet opened")
+    }
+
     /// The TV stays known across the outage, so coming back only after the new 12 s doesn't make it
     /// look new: the step waits for a device that wasn't on the proxy when the sheet opened.
     func testTheProxyPathWaitsForATVBackAfterTheOutagesTwelveSeconds() {
