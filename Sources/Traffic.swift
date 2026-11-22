@@ -122,6 +122,9 @@ struct ProxyStats: Equatable {
     var served: Set<String> = []
     /// Its bytes, the same ones as the totals. They only grow, across restarts, like a device's.
     var traffic = TrafficTotals()
+    /// Which start of the server these come from, counted by HotspotSession. A new one's `served`
+    /// starts empty, also after a restart no read saw stop, so Add a device can tell (#285).
+    var run = 0
 }
 
 /// The server's counters for the Diagnostics screen in Settings (#256), see diagStats in

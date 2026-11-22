@@ -102,6 +102,8 @@ final class HotspotSession {
     private(set) var proxy: WireGuardSetup.Proxy? { willSet { willChange() } }
     /// What the server says about the proxy, read with the speeds, and by the watcher in the background.
     private(set) var proxyStats = ProxyStats() { willSet { willChange() } }
+    /// The server's starts, for `ProxyStats.run`.
+    private var serverRuns = 0
     /// Turning the proxy on or off couldn't be saved, until a turn saves.
     private(set) var proxyProblem: String? { willSet { willChange() } }
     /// The addresses on the hotspot that answer a knock and aren't on WireGuard or the proxy (#109),
@@ -380,6 +382,7 @@ final class HotspotSession {
         let hosts = Self.hosts(for: hotspot)
         do {
             try server.start(hosts: hosts, setup: serverSetup, dns: dns(), blockLocal: blockLocal(), port: WireGuardSetup.port)
+            serverRuns += 1
             page.start(hosts: hosts, port: ConfigPage.port)
             startProblem = nil
             showProblem()
@@ -616,6 +619,8 @@ final class HotspotSession {
     var serverDiagnostics: ServerDiagnostics { server.snapshot().diagnostics }
 
     private func publishProxyStats(_ stats: ProxyStats) {
+        var stats = stats
+        stats.run = serverRuns
         if stats != proxyStats { proxyStats = stats }
     }
 

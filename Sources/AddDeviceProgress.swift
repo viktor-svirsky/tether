@@ -106,10 +106,12 @@ struct ProxyProgress: Equatable {
     /// and the next listening read starts the `settling` again. A device leaves once Go drops it
     /// after 2 minutes without traffic, so it counts as new again. After the proxy stopped, Go's
     /// list may start empty (a rebuilt server knows nobody), so for `forgets` after it came back a
-    /// device missing from it may only be quiet, and stays.
+    /// device missing from it may only be quiet, and stays. A new `run` is a stop too, for a restart
+    /// no read saw.
     private var opened: Set<String> = []
     private var listeningSince: Date?
     private var stopped = false
+    private var run = 0
     private var keepUntil: Date?
     private(set) var working = false
     static let settling: TimeInterval = 12
@@ -121,6 +123,11 @@ struct ProxyProgress: Equatable {
     }
 
     mutating func follow(_ stats: ProxyStats, now: Date = .now) {
+        if stats.run != run, listeningSince != nil {
+            stopped = true
+            listeningSince = nil
+        }
+        run = stats.run
         guard !stats.addresses.isEmpty else {
             if listeningSince != nil { stopped = true }
             listeningSince = nil
