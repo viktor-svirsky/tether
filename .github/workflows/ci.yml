@@ -129,8 +129,10 @@ jobs:
           covered, count = sum(l["covered"] for l in lines), sum(l["count"] for l in lines)
           print(f"Swift coverage: {100 * covered / count:.1f}% of lines in Sources/")
           EOF
-          xctest=$(swift build --show-bin-path)/TetherTests.xctest
-          xcrun llvm-cov export -format=lcov "$xctest/Contents/MacOS/TetherTests" \
+          # The bundle's name depends on the Xcode version (TetherTests or TetherPackageTests).
+          xctests=("$(swift build --show-bin-path)"/*.xctest)
+          xctest=${xctests[0]}
+          xcrun llvm-cov export -format=lcov "$xctest/Contents/MacOS/$(basename "$xctest" .xctest)" \
             -instr-profile "$(swift build --show-bin-path)/codecov/default.profdata" \
             -ignore-filename-regex='(\.build|/Tests/)' > "$RUNNER_TEMP/swift.lcov"
       - name: Upload the Swift coverage to Codecov
