@@ -21,8 +21,10 @@ struct ConfigPageHandler {
         /// iPhone itself, so a stale config isn't its.
         let hosts: [String]
         let now: Date
-        /// Where each connected device's handshake comes from, the address alone. A device whose
-        /// tunnel sends the page's address around it (wg-quick on Linux does) asks from there.
+        /// Where each connected device's handshake comes from, the address alone. A request from
+        /// there gets no tunnel line: it may be a tunnel that sends the page's address around it
+        /// (wg-quick on Linux does), one turned off in the last minutes, or another client behind
+        /// the same NAT.
         var connected: [String] = []
     }
 
@@ -49,7 +51,9 @@ struct ConfigPageHandler {
         let knocks = address.map(inputs.hosts.contains) == true ? [] : inputs.stale.filter { $0.shown(at: inputs.now) }
         let stale: ConfigPage.Stale? = knocks.contains { $0.kind == .device && address != nil && PeerStats.address($0.from) == address } ? .thisDevice
             : knocks.contains { $0.kind == .server } ? .oldKeys : nil
-        let tunnel: ConfigPage.Tunnel? = address.map { inputs.hosts.contains($0) || inputs.connected.contains($0) ? .connected : .notConnected }
+        let tunnel: ConfigPage.Tunnel? = address.flatMap {
+            inputs.hosts.contains($0) ? .connected : inputs.connected.contains($0) ? nil : .notConnected
+        }
         // Only while a download could happen anyway: a closed window or Tether off screen hands out
         // no key, a repeated one neither (#160).
         let repeated = state != .ready ? nil : lastDownload.flatMap {

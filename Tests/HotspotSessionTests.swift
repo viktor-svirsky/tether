@@ -1766,7 +1766,7 @@ final class HotspotSessionTests: XCTestCase {
         session.leftScreen()
         server.connected = ["10.7.0.2"]
         server.endpoints = ["10.7.0.2": "172.20.10.3:51820"]
-        XCTAssertTrue(body(page.ask(.page, from: "172.20.10.3")).contains("This device is connected to Tether."))
+        XCTAssertFalse(body(page.ask(.page, from: "172.20.10.3")).contains("id=\"tunnel\""), "can't be told")
         XCTAssertTrue(body(page.ask(.page, from: "172.20.10.4")).contains("This device isn't connected to Tether."))
         XCTAssertTrue(body(page.ask(.page, from: hotspot)).contains("This device is connected to Tether."))
         server.connected = []

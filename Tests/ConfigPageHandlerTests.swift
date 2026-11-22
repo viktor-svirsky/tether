@@ -164,16 +164,17 @@ final class ConfigPageHandlerTests: XCTestCase {
     }
 
     /// Whether this device's tunnel works (#63). A request from where Tether listens came through
-    /// Tether: a tunnel, or the proxy. A device that sends the page's address around its tunnel (wg-quick
-    /// on Linux does) asks from where its handshake comes from. Anything else on the hotspot isn't
-    /// connected.
+    /// Tether: a tunnel, or the proxy. One from where a connected device's handshake comes from can't
+    /// be told: wg-quick on Linux sends the page's address around its tunnel, a tunnel turned off
+    /// keeps showing connected for minutes, and clients behind one NAT share an address. So no line.
+    /// Anything else on the hotspot isn't connected.
     func testThePageSaysWhetherThisDeviceIsConnected() {
         let handler = ConfigPageHandler()
         let cases: [(client: String, connected: [String], said: ConfigPage.Tunnel?, line: UInt)] = [
             ("172.20.10.1", [], .connected, #line),
             ("2001:db8::1", [], .connected, #line),
-            ("172.20.10.3", ["172.20.10.3"], .connected, #line),
-            ("2001:db8::5", ["2001:db8::5"], .connected, #line),
+            ("172.20.10.3", ["172.20.10.3"], nil, #line),
+            ("2001:db8::5", ["2001:db8::5"], nil, #line),
             ("172.20.10.3", ["172.20.10.4"], .notConnected, #line),
             ("172.20.10.3", [], .notConnected, #line),
             ("not an address", [], nil, #line),
