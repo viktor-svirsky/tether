@@ -7,7 +7,7 @@ import Foundation
 //
 // A demo runs the real HotspotSession once, against the fakes in Fakes.swift, so a screen shows only
 // what the session itself publishes. Nothing runs after that: no WireGuard server, keep-alive audio,
-// hotspot watcher, 1 s sampler or scene observers. Model.swift has the few hooks, all inside
+// hotspot watcher, 1 s sampler, knock or scene observers. Model.swift has the few hooks, all inside
 // `#if DEBUG`. Foundation only, and compiled out of Release builds.
 
 enum DemoScenario: String, CaseIterable {
@@ -63,6 +63,9 @@ enum DemoScenario: String, CaseIterable {
     case oldAddress
     /// Like `sharing`, but the iPad is paused: its tunnel is up, and nothing gets through.
     case paused
+    /// Like `sharing`, and a device at 172.20.10.3 on the hotspot isn't on WireGuard or the proxy
+    /// (#109). The iPad answers the knock too, from where its handshake comes, so it isn't listed.
+    case notUsingTether
     /// Like `sharing`, with the proxy on (#78): two connections open, 85 MB this month.
     case proxy
     /// Like `proxy`, on a carrier that gives the iPhone IPv6 only: the proxy listens at 172.20.10.1 and
@@ -144,7 +147,7 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .localNetworkDenied, .oldAddress, .staleConfig, .paused,
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .localNetworkDenied, .oldAddress, .staleConfig, .paused, .notUsingTether,
              .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking:
             var setup = WireGuardSetup.new()
             let ipad = setup.addPeer(name: "iPad")
@@ -197,7 +200,7 @@ struct DemoState {
     /// The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states. In `paused` the
     /// session shows the iPad paused instead.
     var connected: Set<String> {
-        ([.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .staleConfig, .paused] + Self.proxyOn).contains(scenario) ? ["10.7.0.2"] : []
+        ([.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .staleConfig, .paused, .notUsingTether] + Self.proxyOn).contains(scenario) ? ["10.7.0.2"] : []
     }
 
     /// The demos with the proxy on.
@@ -256,6 +259,10 @@ struct DemoState {
         server.totals = TrafficTotals(bytesUp: UInt64(upSpeed / 8), bytesDown: UInt64(downSpeed / 8))
         session.sampleTraffic()
         if scenario == .addDeviceProxyWorking { loadAPage(through: server, session) }
+        if scenario == .notUsingTether {
+            session.neighborsAnswered([HotspotKnock(address: "172.20.10.2", answer: .open),
+                                       HotspotKnock(address: "172.20.10.3", answer: .refused)])
+        }
         return session
     }
 

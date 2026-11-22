@@ -205,4 +205,18 @@ final class FakeSound: KeepAliveSound {
     func start() { playing = true }
     func stop() { playing = false }
 }
+
+/// The TCP knock (#109), with the answers a test sets and what each round asked for.
+final class FakeKnocker: HotspotKnocker, @unchecked Sendable {
+    var answers: [HotspotKnock] = []
+    /// Runs while a round knocks, before it answers: what happens on the main actor meanwhile.
+    var meanwhile: (@MainActor () -> Void)?
+    private(set) var rounds: [(addresses: [String], ports: [UInt16], timeout: TimeInterval)] = []
+
+    func knock(_ addresses: [String], ports: [UInt16], timeout: TimeInterval) async -> [HotspotKnock] {
+        rounds.append((addresses, ports, timeout))
+        if let meanwhile { await meanwhile() }
+        return answers
+    }
+}
 #endif

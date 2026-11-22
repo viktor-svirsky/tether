@@ -27,6 +27,7 @@ final class HotspotSessionTests: XCTestCase {
     }()
     private var now = Date(timeIntervalSince1970: 1_800_000_000)
     private var session: HotspotSession!
+    private var knocker: FakeKnocker!
 
     /// `saved` is a setup already in the Keychain at launch.
     private func makeSession(sceneActive: Bool = true, locked: Bool = false, saved: WireGuardSetup? = nil,
@@ -38,11 +39,12 @@ final class HotspotSessionTests: XCTestCase {
         secrets.failing = locked
         secrets.data = saved.flatMap { try? JSONEncoder().encode($0) }
         devices = WireGuardDevices(secrets: secrets)
+        knocker = FakeKnocker()
         session = HotspotSession(devices: devices, server: server, keepAlive: sound, page: page,
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
                                  carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
                                  dns: { [unowned self] in dns }, blockLocal: { [unowned self] in blockLocal }, usageDefaults: usageDefaults,
-                                 now: { [unowned self] in now }, cellular: cellular, log: log)
+                                 now: { [unowned self] in now }, cellular: cellular, knocker: knocker, log: log)
     }
 
     private func minutes(_ m: Double) -> Date { start.addingTimeInterval(m * 60) }
@@ -1852,6 +1854,120 @@ final class HotspotSessionTests: XCTestCase {
         session.syncWithHotspot()
         session.sampleTraffic()
         XCTAssertTrue(session.wireGuardConnected.isEmpty)
+    }
+
+    // MARK: Devices not using Tether (#109)
+
+    /// Sharing on screen, with the iPad on WireGuard from .2 and a laptop on the proxy from .3.
+    private func shareWithNeighbors() throws -> FakeKnocker {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertTrue(session.setProxy(on: true))
+        session.openAddWindow()
+        let ipad = try XCTUnwrap(session.wireGuardReady).address
+        server.connected = [ipad]
+        server.endpoints = [ipad: "172.20.10.2:52345"]
+        server.handshakes = [ipad: now]
+        server.proxyServed = ["172.20.10.3"]
+        session.sampleTraffic()
+        knocker.answers = [HotspotKnock(address: "172.20.10.2", answer: .open),
+                           HotspotKnock(address: "172.20.10.3", answer: .refused),
+                           HotspotKnock(address: "172.20.10.4", answer: .nobody),
+                           HotspotKnock(address: "172.20.10.6", answer: .refused)]
+        return knocker
+    }
+
+    func testTheKnockListsWhoIsOnTheHotspotButNotOnWireGuardOrTheProxy() async throws {
+        let knocker = try shareWithNeighbors()
+        await session.knockNeighbors()
+        XCTAssertEqual(session.notUsingTether, ["172.20.10.6"])
+        XCTAssertEqual(knocker.rounds.count, 1)
+        XCTAssertEqual(knocker.rounds.first?.addresses, HotspotNeighbors.addresses)
+        XCTAssertEqual(knocker.rounds.first?.ports, [62078, 9])
+        XCTAssertEqual(knocker.rounds.first?.timeout, 1.5)
+    }
+
+    /// Only the on-screen line shows it, so nothing knocks off screen or while not sharing.
+    func testNoKnockOffScreenOrWithoutSharing() async {
+        makeSession(sceneActive: false)
+        address = hotspot
+        session.syncWithHotspot()
+        knocker.answers = [HotspotKnock(address: "172.20.10.6", answer: .open)]
+        await session.knockNeighbors()
+        XCTAssertTrue(knocker.rounds.isEmpty)
+        XCTAssertEqual(session.notUsingTether, [])
+        makeSession()
+        knocker.answers = [HotspotKnock(address: "172.20.10.6", answer: .open)]
+        await session.knockNeighbors() // no hotspot
+        XCTAssertTrue(knocker.rounds.isEmpty)
+        XCTAssertEqual(session.notUsingTether, [])
+    }
+
+    /// Leaving the screen or the hotspot going away empties the list, and the next round starts from
+    /// nothing: an address that answered before isn't held for `holdFor` after.
+    func testTheListStartsOverWhenSharingStopsOrTetherLeavesTheScreen() async throws {
+        let knocker = try shareWithNeighbors()
+        await session.knockNeighbors()
+        XCTAssertEqual(session.notUsingTether, ["172.20.10.6"])
+        session.leftScreen()
+        XCTAssertEqual(session.notUsingTether, [])
+        session.cameOnScreen()
+        knocker.answers = []
+        await session.knockNeighbors()
+        XCTAssertEqual(session.notUsingTether, [], "not the answer from before leaving")
+        knocker.answers = [HotspotKnock(address: "172.20.10.6", answer: .refused)]
+        await session.knockNeighbors()
+        XCTAssertEqual(session.notUsingTether, ["172.20.10.6"])
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertEqual(session.notUsingTether, [])
+    }
+
+    /// A round still knocking when Tether leaves the screen is dropped, even if it's back by the time it answers.
+    func testARoundOvertakenByLeavingTheScreenIsDropped() async throws {
+        let knocker = try shareWithNeighbors()
+        knocker.meanwhile = { [unowned self] in
+            session.leftScreen()
+            session.cameOnScreen()
+        }
+        await session.knockNeighbors()
+        XCTAssertEqual(session.notUsingTether, [])
+    }
+
+    /// The same for sharing stopping and starting again while a round knocks.
+    func testARoundOvertakenBySharingStoppingIsDropped() async throws {
+        let knocker = try shareWithNeighbors()
+        knocker.meanwhile = { [unowned self] in
+            address = nil
+            session.syncWithHotspot()
+            address = hotspot
+            session.syncWithHotspot()
+        }
+        await session.knockNeighbors()
+        XCTAssertEqual(session.notUsingTether, [])
+    }
+
+    /// Every round would redraw the screen otherwise (#166), also the watcher's while not sharing.
+    func testTheListIsPublishedOnlyWhenItChanges() async throws {
+        makeSession()
+        var changes = 0
+        session.willChange = { changes += 1 }
+        session.syncWithHotspot()
+        session.syncWithHotspot()
+        await session.knockNeighbors()
+        XCTAssertEqual(changes, 0, "nothing to clear while not sharing")
+        let knocker = try shareWithNeighbors()
+        await session.knockNeighbors()
+        changes = 0
+        session.willChange = { changes += 1 }
+        now = now.addingTimeInterval(10)
+        await session.knockNeighbors()
+        XCTAssertEqual(changes, 0)
+        knocker.answers.append(HotspotKnock(address: "172.20.10.9", answer: .open))
+        await session.knockNeighbors()
+        XCTAssertEqual(changes, 1)
+        XCTAssertEqual(session.notUsingTether, ["172.20.10.6", "172.20.10.9"])
     }
 
     func testACounterGoingBackwardsIsNoSpeed() {

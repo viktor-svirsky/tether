@@ -2,6 +2,13 @@ import Foundation
 
 /// Byte counts, speeds and times as text.
 enum Format {
+    /// The Devices section's line for the devices on the hotspot not using Tether (#109): their
+    /// addresses, or how many once there are more than two, so it stays short.
+    static func notUsingTether(_ addresses: [String]) -> String {
+        let who = addresses.count > 2 ? "\(addresses.count) devices" : addresses.joined(separator: ", ")
+        return "On your hotspot, not using Tether: \(who)"
+    }
+
     /// "0 bytes" for nothing, not "Zero KB", so a column of numbers stays numbers.
     static func bytes(_ n: UInt64) -> String {
         let formatter = ByteCountFormatter()
