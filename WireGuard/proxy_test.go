@@ -1655,3 +1655,36 @@ func TestAnUpgradeGoesThroughAndServesItsClient(t *testing.T) {
 		t.Fatalf("served %v, want the client", got)
 	}
 }
+
+// Turning the proxy off ends a relay that's draining at once, not when drainGrace runs out (#287).
+// On loopback a send queue empties at once, so the test's queue never does: the relay stays in
+// drain until something ends it.
+func TestTurningTheProxyOffEndsADrainingRelayAtOnce(t *testing.T) {
+	s := proxyReady(t)
+	draining := make(chan struct{})
+	var once sync.Once
+	s.mu.Lock()
+	s.proxy.queued = func(net.Conn) int { once.Do(func() { close(draining) }); return 1 }
+	s.mu.Unlock()
+	s.SetProxy(true, false)
+	proxy := proxyListening(t, s)
+	reset := make(chan struct{})
+	target := farEnd(t, func(conn *net.TCPConn) {
+		<-reset
+		conn.SetLinger(0) // the deferred Close sends a reset, so the relay drains toward the client
+	})
+	if _, _, status := tunnel(t, proxy, target); status != http.StatusOK {
+		t.Fatalf("got %d", status)
+	}
+	close(reset)
+	select {
+	case <-draining:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the relay never started draining")
+	}
+	start := time.Now()
+	s.SetProxy(false, false)
+	if took := time.Since(start); took > drainGrace/2 {
+		t.Fatalf("turning the proxy off took %v", took)
+	}
+}
