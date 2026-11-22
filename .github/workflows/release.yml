@@ -37,6 +37,9 @@ defaults:
   run:
     shell: bash
 
+# Nothing by default: each job asks for what it needs.
+permissions: {}
+
 jobs:
   # Whether this run releases, and what goes up. A small Linux job, since CI ending on main for a
   # refactor or a test starts this workflow too, and that shouldn't wait for a Mac.

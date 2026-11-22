@@ -11,6 +11,9 @@ defaults:
   run:
     shell: bash
 
+# Nothing by default: each job asks for what it needs.
+permissions: {}
+
 jobs:
   ui-tests:
     name: UI tests, iOS ${{ matrix.ios }} on ${{ matrix.device }}
