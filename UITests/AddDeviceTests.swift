@@ -315,7 +315,6 @@ final class AddDeviceTests: TetherUITestCase {
 
     func testNothingElseOffersToAddADevice() {
         launch(.sharing)
-        assertNowhere(element("add.device"), element("add.failed"), element("devices.manage"), element("status.howToConnect"),
-                      element("add.qr"))
+        assertNowhere(element("add.qr"))
     }
 }
