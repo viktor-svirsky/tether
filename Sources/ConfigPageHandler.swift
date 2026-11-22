@@ -51,7 +51,9 @@ struct ConfigPageHandler {
         let knocks = address.map(inputs.hosts.contains) == true ? [] : inputs.stale.filter { $0.shown(at: inputs.now) }
         let stale: ConfigPage.Stale? = knocks.contains { $0.kind == .device && address != nil && PeerStats.address($0.from) == address } ? .thisDevice
             : knocks.contains { $0.kind == .server } ? .oldKeys : nil
-        let tunnel: ConfigPage.Tunnel? = address.map { inputs.hosts.contains($0) || inputs.live.contains($0) ? .connected : .notConnected }
+        let tunnel: ConfigPage.Tunnel? = address.map { address in
+            (inputs.hosts + inputs.live).contains { ConfigPage.sameAddress($0, address) } ? .connected : .notConnected
+        }
         // Only while a download could happen anyway: a closed window or Tether off screen hands out
         // no key, a repeated one neither (#160).
         let repeated = state != .ready ? nil : lastDownload.flatMap {

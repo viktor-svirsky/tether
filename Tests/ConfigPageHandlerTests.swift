@@ -174,6 +174,8 @@ final class ConfigPageHandlerTests: XCTestCase {
             ("2001:db8::1", [], .connected, #line),
             ("172.20.10.3", ["172.20.10.3"], .connected, #line),
             ("2001:db8::5", ["2001:db8::5"], .connected, #line),
+            ("2001:db8:0:0::5", ["2001:db8::5"], .connected, #line), // the same address, written another way
+            ("2001:db8:0::1", [], .connected, #line),
             ("172.20.10.3", ["172.20.10.4"], .notConnected, #line),
             ("172.20.10.3", [], .notConnected, #line),
             ("not an address", [], nil, #line),
