@@ -122,6 +122,8 @@ final class ConfigPageHandlerTests: XCTestCase {
         let v6 = StaleConfig(kind: .device, at: start, from: "[2001:db8::5]:51820")
         XCTAssertEqual(handler.answer(.page, from: "2001:db8::5", inputs(stale: [v6])), .answer(ConfigPage.page(.ready, stale: .thisDevice)),
                        "a handshake's endpoint has brackets and a port, a page client doesn't")
+        XCTAssertEqual(handler.answer(.page, from: "2001:db8:0:0::5", inputs(stale: [v6])), .answer(ConfigPage.page(.ready, stale: .thisDevice)),
+                       "the same address written another way (#303)")
     }
 
     /// Two removed devices may keep trying at once, and each hears about its own config, whichever

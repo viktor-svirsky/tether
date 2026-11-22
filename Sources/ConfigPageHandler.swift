@@ -48,8 +48,11 @@ struct ConfigPageHandler {
             : inputs.ready == nil ? .noConfig : .ready
         let address = PeerStats.address(client)
         // Its own knock first (#63): other devices may knock too, and old keys may be anyone's.
-        let knocks = address.map(inputs.hosts.contains) == true ? [] : inputs.stale.filter { $0.shown(at: inputs.now) }
-        let stale: ConfigPage.Stale? = knocks.contains { $0.kind == .device && address != nil && PeerStats.address($0.from) == address } ? .thisDevice
+        let knocks = address.map { address in inputs.hosts.contains { ConfigPage.sameAddress($0, address) } } == true ? []
+            : inputs.stale.filter { $0.shown(at: inputs.now) }
+        let stale: ConfigPage.Stale? = knocks.contains { knock in
+            knock.kind == .device && address.map { ConfigPage.sameAddress(PeerStats.address(knock.from) ?? "", $0) } == true
+        } ? .thisDevice
             : knocks.contains { $0.kind == .server } ? .oldKeys : nil
         let tunnel: ConfigPage.Tunnel? = address.map { address in
             (inputs.hosts + inputs.live).contains { ConfigPage.sameAddress($0, address) } ? .connected : .notConnected
