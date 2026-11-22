@@ -54,6 +54,7 @@ jobs:
     runs-on: macos-26
     permissions:
       contents: read
+      id-token: write # Codecov's upload signs in with OIDC on a push, so no token is stored
     timeout-minutes: 30 # an estimate of about 12 minutes: the race run about 3 since #135, fuzzing 4.5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,6 +67,16 @@ jobs:
         run: |
           go -C WireGuard test -coverprofile="$RUNNER_TEMP/go.cover" ./...
           echo "Go coverage: $(go -C WireGuard tool cover -func="$RUNNER_TEMP/go.cover" | awk 'END { print $NF }') of statements" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Per pull request: how much of the changed code the tests reach. A fork's pull request gets
+      # no OIDC token, so it uploads without one, which Codecov allows for a public repo. A failed
+      # upload doesn't fail CI.
+      - name: Upload the Go coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: ${{ runner.temp }}/go.cover
+          flags: go
+          disable_search: true
+          use_oidc: ${{ github.event_name != 'pull_request' }}
       - name: WireGuard server tests under the race detector
         # go test stops a run at 10 minutes by default. This one came close to that before #135.
         run: go -C WireGuard test -race -timeout 20m ./...
@@ -97,6 +108,7 @@ jobs:
     runs-on: macos-26
     permissions:
       contents: read
+      id-token: write # Codecov's upload, as in the Go job
     timeout-minutes: 30 # an estimate of about 4 minutes
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -117,6 +129,17 @@ jobs:
           covered, count = sum(l["covered"] for l in lines), sum(l["count"] for l in lines)
           print(f"Swift coverage: {100 * covered / count:.1f}% of lines in Sources/")
           EOF
+          xctest=$(swift build --show-bin-path)/TetherTests.xctest
+          xcrun llvm-cov export -format=lcov "$xctest/Contents/MacOS/TetherTests" \
+            -instr-profile "$(swift build --show-bin-path)/codecov/default.profdata" \
+            -ignore-filename-regex='(\.build|/Tests/)' > "$RUNNER_TEMP/swift.lcov"
+      - name: Upload the Swift coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: ${{ runner.temp }}/swift.lcov
+          flags: swift
+          disable_search: true
+          use_oidc: ${{ github.event_name != 'pull_request' }}
       - name: Release script tests
         run: |
           python3 scripts/test_make_source.py
