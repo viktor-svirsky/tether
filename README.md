@@ -1,6 +1,8 @@
 # Tether
 
 [![CI](https://github.com/viktor-svirsky/tether/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/viktor-svirsky/tether/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/viktor-svirsky/tether/graph/badge.svg)](https://codecov.io/gh/viktor-svirsky/tether)
+[![CodeRabbit reviews](https://img.shields.io/coderabbit/prs/github/viktor-svirsky/tether?label=CodeRabbit%20reviews)](https://coderabbit.ai)
 [![Latest release](https://img.shields.io/github/v/release/viktor-svirsky/tether)](https://github.com/viktor-svirsky/tether/releases/latest)
 [![Add to SideStore or AltStore](https://img.shields.io/badge/SideStore%20%7C%20AltStore-add%20source-0069b8)](https://viktor-svirsky.github.io/tether/add/)
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-blue)
