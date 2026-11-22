@@ -35,6 +35,16 @@ final class DevicesTests: TetherUITestCase {
                       app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "device.")).firstMatch)
     }
 
+    /// A device on the hotspot that isn't on WireGuard or the proxy is named by its address, and the
+    /// line opens Add a device to set it up (#109).
+    func testADeviceNotUsingTetherOpensAddADevice() {
+        launch(.notUsingTether)
+        let line = reveal(element("devices.notUsingTether"))
+        XCTAssertEqual(line.label, "On your hotspot, not using Tether: 172.20.10.3")
+        line.tap()
+        XCTAssertTrue(element("add.question").waitForExistence(timeout: 5), "the sheet did not open")
+    }
+
     func testShowsTheCurrentSpeeds() {
         launch(.sharing)
         XCTAssertEqual(reveal(element("traffic.speeds")).label, "Download 3.2 Mbit/s, upload 400 kbit/s")

@@ -2,6 +2,15 @@ import XCTest
 @testable import TetherCore
 
 final class FormatTests: XCTestCase {
+    /// The Devices section's line (#109): the addresses while they fit, else how many.
+    func testNotUsingTetherNamesUpToTwoAddresses() {
+        XCTAssertEqual(Format.notUsingTether(["172.20.10.2"]), "On your hotspot, not using Tether: 172.20.10.2")
+        XCTAssertEqual(Format.notUsingTether(["172.20.10.2", "172.20.10.14"]),
+                       "On your hotspot, not using Tether: 172.20.10.2, 172.20.10.14")
+        XCTAssertEqual(Format.notUsingTether(["172.20.10.2", "172.20.10.3", "172.20.10.4"]),
+                       "On your hotspot, not using Tether: 3 devices")
+    }
+
     func testSpeedUsesTheUnitOfASpeedTest() {
         let us = Locale(identifier: "en_US")
         XCTAssertEqual(Format.speed(0, locale: us), "0 bit/s")

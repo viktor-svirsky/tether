@@ -66,6 +66,8 @@ final class Model: ObservableObject {
     var serverDiagnostics: ServerDiagnostics { session.serverDiagnostics }
     /// On, so it has a row under Devices.
     var proxyOn: Bool { proxy?.on == true }
+    /// The devices on the hotspot that aren't using Tether (#109), see `HotspotSession.notUsingTether`.
+    var notUsingTether: [String] { session.notUsingTether }
 
     /// iOS blocks Tether's replies to the devices, see `LocalNetworkCheck`. Checked while on screen.
     @Published private(set) var localNetworkDenied = false
@@ -212,7 +214,10 @@ final class Model: ObservableObject {
                 try? await Task.sleep(for: interval.every, tolerance: interval.tolerance)
             }
         }
-        if session.sceneActive { startSampler() }
+        if session.sceneActive {
+            startSampler()
+            startKnocking()
+        }
     }
 
     /// See `LocalNetworks.settle`. It does nothing once the setting is saved.
@@ -250,6 +255,20 @@ final class Model: ObservableObject {
         }
     }
 
+    /// Every 10 s while the app is on screen: who on the hotspot isn't using Tether, see
+    /// `HotspotSession.knockNeighbors`. Only the Devices section shows it, and each round is 26 TCP
+    /// connects that wake Tether and the hotspot's Wi-Fi, so like the sampler it stops off screen,
+    /// where nobody sees the result, to save battery.
+    private func startKnocking() {
+        knocking?.cancel()
+        knocking = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.session.knockNeighbors()
+                try? await Task.sleep(for: .seconds(HotspotNeighbors.every))
+            }
+        }
+    }
+
     /// Publishes only when the text changes, so the sampler doesn't redraw the screen every second.
     func refreshExpiryWarning(now: Date = Date()) {
         var now = now
@@ -266,6 +285,7 @@ final class Model: ObservableObject {
     /// Shared, so the call lines and the hotspot line number the lines the same way.
     private static let cellular = Cellular(radio: SystemRadio())
     private var sampler: Task<Void, Never>?
+    private var knocking: Task<Void, Never>?
 
     /// After each watcher round: what to tell, see `Notifier`. In the background the round has just
     /// read who is connected, so this costs no more reads of the server. On screen, the first thing it
@@ -472,6 +492,7 @@ final class Model: ObservableObject {
             model.session.cameOnScreen()
             model.localNetworkIntro.check() // afresh, for a change made in Settings
             model.startSampler() // samples at once, then every second again
+            model.startKnocking()
             // Before Settings opens, or it shows "Allow notifications" for a moment (#184).
             Task { await model.refreshNoticePermission() }
         }
@@ -480,6 +501,7 @@ final class Model: ObservableObject {
             model.session.saveUsage() // iOS may end Tether in the background with no warning
             model.localNetwork.stop()
             model.sampler?.cancel()
+            model.knocking?.cancel()
         }
         observe(UIApplication.didReceiveMemoryWarningNotification) { $0.session.freeMemory() }
     }

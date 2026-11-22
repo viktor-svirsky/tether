@@ -104,6 +104,9 @@ final class HotspotSession {
     private(set) var proxyStats = ProxyStats() { willSet { willChange() } }
     /// Turning the proxy on or off couldn't be saved, until a turn saves.
     private(set) var proxyProblem: String? { willSet { willChange() } }
+    /// The addresses on the hotspot that answer a knock and aren't on WireGuard or the proxy (#109),
+    /// in address order. Only while sharing on screen, see `knockNeighbors`.
+    private(set) var notUsingTether: [String] = [] { willSet { willChange() } }
     /// Who was connected at the last read, for the notifications: the sampler's on screen, the
     /// watcher's in the background. Nothing on screen shows the watcher's, so it isn't published.
     var connectedNow: Set<String> { sceneActive ? wireGuardConnected : watchedConnected }
@@ -146,6 +149,11 @@ final class HotspotSession {
     /// hotspot goes away (#191).
     private let cellular: @MainActor () -> String
     private let log: @MainActor (String) -> Void
+    private let knocker: HotspotKnocker
+    /// What the knocks found so far, see `HotspotNeighbors`.
+    private var neighbors = HotspotNeighbors()
+    /// Goes up with each `forgetNeighbors`, so a round that was still knocking then is dropped.
+    private var knockRun = 0
 
     /// When the hotspot went away, or Tether was last on screen since. Nil while the hotspot is on.
     /// A launch starts long past, so only opening Tether or Start Tether (`wake`) gives it the 10
@@ -186,7 +194,7 @@ final class HotspotSession {
          blockLocal: @escaping () -> Bool = { false },
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
          resetDay: @escaping () -> ResetDay = { .default }, cellular: @escaping @MainActor () -> String = { "" },
-         log: @escaping @MainActor (String) -> Void = { _ in }) {
+         knocker: HotspotKnocker = NetworkKnocker(), log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
         self.keepAlive = keepAlive
@@ -204,6 +212,7 @@ final class HotspotSession {
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
         self.cellular = cellular
+        self.knocker = knocker
         self.log = log
         publishSetup()
         showSetupProblem() // from launch, before any device joins the hotspot
@@ -410,6 +419,7 @@ final class HotspotSession {
             log("WireGuard not started: \(error)")
         }
         if problem != wireGuardProblem { wireGuardProblem = problem }
+        if !sharing { forgetNeighbors() } // also when sharing stops, which comes through here
     }
 
     /// The same as opening Tether, for Start Tether in Shortcuts: the 10 minutes' wait for the hotspot
@@ -437,6 +447,7 @@ final class HotspotSession {
         log("Tether left the screen")
         addWindow.leftScreen(now: now())
         sampler.reset() // or the first speed back on screen averages the whole time away
+        forgetNeighbors()
         watchedConnected = wireGuardConnected // not a list from an earlier time away, until the next round reads
     }
 
@@ -922,6 +933,44 @@ final class HotspotSession {
         publishProxyStats(snap.proxy) // for the idle stop
         absorb(snap.peers)
         countUsage(snap)
+    }
+
+    // MARK: Devices not using Tether (#109)
+
+    /// One round of the knock, every `HotspotNeighbors.every` while on screen, see `Model`. The knock
+    /// waits up to `HotspotNeighbors.timeout` off the main actor, and a round that sharing stopping or
+    /// Tether leaving the screen overtook is dropped, even if it's back on screen by then, and so is
+    /// one a newer round overtook: coming on screen at launch starts the loop a second time.
+    func knockNeighbors() async {
+        guard sharing, sceneActive else { return forgetNeighbors() }
+        knockRun += 1
+        let run = knockRun
+        let knocks = await knocker.knock(HotspotNeighbors.addresses, ports: HotspotNeighbors.ports,
+                                         timeout: HotspotNeighbors.timeout)
+        guard run == knockRun else { return }
+        neighborsAnswered(knocks)
+    }
+
+    /// Adds a round of knocks and publishes who isn't using Tether, only when that changed: every
+    /// round would redraw the screen otherwise (#166). The demos call it with their own knocks.
+    func neighborsAnswered(_ knocks: [HotspotKnock]) {
+        guard sharing, sceneActive else { return forgetNeighbors() }
+        let now = self.now()
+        neighbors.record(knocks, at: now)
+        // Go names the proxy's devices without a time, only the ones it served in the last 2 minutes
+        // (servedFor in proxy.go), so each counts as served now. A device then counts as using Tether
+        // while Go lists it, and stops 2 minutes after its last page rather than the 3 minutes of
+        // `usingWithin`: close enough, with no times of its own to keep here.
+        let proxyClients = Dictionary(proxyStats.served.map { ($0, now) }, uniquingKeysWith: { a, _ in a })
+        let list = neighbors.notUsingTether(wireGuard: wireGuardPeerStats, proxyClients: proxyClients, now: now)
+        if list != notUsingTether { notUsingTether = list }
+    }
+
+    /// Sharing stopped or Tether left the screen: the list goes, and the next round starts from nothing.
+    private func forgetNeighbors() {
+        knockRun += 1
+        neighbors = HotspotNeighbors()
+        if !notUsingTether.isEmpty { notUsingTether = [] }
     }
 
     // MARK: Data per month

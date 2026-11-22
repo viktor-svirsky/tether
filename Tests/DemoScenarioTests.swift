@@ -11,9 +11,18 @@ final class DemoScenarioTests: XCTestCase {
     /// The list shows both states: the iPad connected, the Windows PC not.
     private let iPadConnected: Set<DemoScenario> = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying,
                                                     .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .staleConfig,
-                                                    .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
+                                                    .notUsingTether, .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
     private let noSpeed: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro, .noDevices, .wireGuardUnsaved,
                                               .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6]
+
+    /// Only its own demo has a device on the hotspot that isn't using Tether. The iPad answers the
+    /// knock too, from where its handshake comes, so it isn't listed (#109).
+    func testOnlyItsDemoHasADeviceNotUsingTether() {
+        for scenario in DemoScenario.allCases {
+            let session = DemoState(scenario).makeSession()
+            XCTAssertEqual(session.notUsingTether, scenario == .notUsingTether ? ["172.20.10.3"] : [], "\(scenario)")
+        }
+    }
 
     func testTheHotspotIsOnExceptWhileWaiting() {
         for scenario in DemoScenario.allCases {
