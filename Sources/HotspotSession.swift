@@ -155,6 +155,9 @@ final class HotspotSession {
     /// The proxy's bytes at the last idle check, see `stopWhenIdle`.
     private var idleProxyTraffic: TrafficTotals?
     private var sampler = TrafficSampler()
+    /// When each device last sent anything, for the config page (#63). Not published: it changes
+    /// with every keepalive, and only the page reads it (#166).
+    private var activity = PeerActivity()
     /// Who was connected at the watcher's last read in the background, see `readInBackground`.
     private var watchedConnected: Set<String> = []
     /// Whose tunnel was up at the last read, the sampler's or the watcher's, paused devices too, so a
@@ -754,12 +757,14 @@ final class HotspotSession {
         let ready = wireGuardReady
         let now = self.now()
         let host = host(reachedFrom: client)
-        // Read now: only the on-screen sampler keeps the knock.
+        // Read now: only the on-screen sampler keeps the knock, and the counts can be 20 s old.
         let snap = server.snapshot()
+        activity.read(snap.peers, at: now)
+        let live = unpaused(Set(snap.peers.keys)).filter { activity.live($0, at: now) }
         let inputs = ConfigPageHandler.Inputs(letIn: readyLetIn, onScreen: sceneActive, ready: ready, host: host,
                                               config: ready.flatMap { wireGuardConfig(for: $0, host: host) },
                                               stale: snap.recentStale, hosts: boundHosts, now: now,
-                                              connected: snap.peers.values.filter(\.connected).compactMap { PeerStats.address($0.endpoint) })
+                                              live: live.compactMap { PeerStats.address(snap.peers[$0]?.endpoint) })
         switch pageHandler.answer(request, from: client, inputs) {
         case let .answer(response):
             return response
@@ -873,10 +878,12 @@ final class HotspotSession {
 
     /// What each read of who is connected does, on screen (the sampler) or off (the watcher): a
     /// device that connected with the QR code is listed, and each connected device's config is
-    /// known to point where Tether listens. Paused devices too: their tunnels reach Tether.
+    /// known to point where Tether listens. Paused devices too: their tunnels reach Tether. Each
+    /// device's count goes to `activity`.
     private func absorb(_ peers: [String: PeerStats]) {
         claimReady(peers)
         rememberHosts(peers)
+        activity.read(peers, at: now())
     }
 
     /// A device that connected with the QR code is listed, and the code changes for the next one.

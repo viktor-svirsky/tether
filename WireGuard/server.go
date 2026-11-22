@@ -238,6 +238,7 @@ type Server struct {
 	// handshakeEvery again, after a suspension or a clock jump. See sessionOver.
 	readAt, watchingSince time.Time
 	endpoints             map[netip.Addr]string                 // tunnel address -> where it last connected from, ip:port
+	received              map[netip.Addr]uint64                 // tunnel address -> wireguard-go's rx_bytes, keepalives too
 	knocks                knocks                                // handshakes from configs that no longer work, see stale.go
 	traffic               map[netip.Addr]*traffic               // each device's bytes, see trafficOfLocked
 	flows                 map[netip.Addr]map[io.Closer]struct{} // open connections, to close a removed, paused or gone device's
@@ -769,6 +770,7 @@ func (s *Server) readHandshakes() {
 	}
 	handshakes := map[[32]byte]time.Time{}
 	endpoints := map[[32]byte]string{}
+	received := map[[32]byte]uint64{}
 	var key [32]byte
 	sc := bufio.NewScanner(strings.NewReader(status))
 	for sc.Scan() {
@@ -784,11 +786,16 @@ func (s *Server) readHandshakes() {
 			}
 		case "endpoint":
 			endpoints[key] = v
+		case "rx_bytes":
+			if n, err := strconv.ParseUint(v, 10, 64); err == nil {
+				received[key] = n
+			}
 		}
 	}
 	s.mu.Lock()
 	shaken := map[netip.Addr]time.Time{}
 	where := map[netip.Addr]string{}
+	rx := map[netip.Addr]uint64{}
 	for key, addr := range s.peers {
 		if at, ok := handshakes[key]; ok {
 			shaken[addr] = at
@@ -796,9 +803,13 @@ func (s *Server) readHandshakes() {
 		if ep, ok := endpoints[key]; ok {
 			where[addr] = ep
 		}
+		if n, ok := received[key]; ok {
+			rx[addr] = n
+		}
 	}
 	s.shaken = shaken
 	s.endpoints = where
+	s.received = rx
 	// A device whose session ended can't take or send anything more, so its connections only hold
 	// memory. Keepalive finds an idle one, but it waits while data waits for the device's ack, so a
 	// device gone mid-download kept its connections and their full send buffers while gVisor resent

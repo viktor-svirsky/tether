@@ -190,7 +190,7 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertEqual(stats.connected, ["10.7.0.2"])
         XCTAssertEqual(stats.peers["10.7.0.2"], PeerStats(traffic: TrafficTotals(bytesUp: 1840, bytesDown: 5262), connected: true,
                                                           lastHandshake: Date(timeIntervalSince1970: 1_793_718_000),
-                                                          endpoint: "172.20.10.3:51820"))
+                                                          endpoint: "172.20.10.3:51820", received: 6000))
         XCTAssertEqual(stats.peers["10.7.0.3"], PeerStats(), "never connected: no handshake, no endpoint")
         XCTAssertEqual(stats.stale, StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_030), from: "172.20.10.9:51820"))
         XCTAssertEqual(stats.recentStale, [StaleConfig(kind: .device, at: Date(timeIntervalSince1970: 1_793_718_010), from: "172.20.10.4:51820"),

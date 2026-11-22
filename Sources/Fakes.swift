@@ -35,6 +35,8 @@ final class FakeServer: WireGuardServing {
     /// Each device's last handshake, by tunnel address. Reported only while running, as the real
     /// server forgets them when it stops.
     var handshakes: [String: Date] = [:]
+    /// Every byte each device sent, keepalives too, by tunnel address. Reported only while running.
+    var received: [String: UInt64] = [:]
     /// Reported only while running, as the real server's knocks go with it.
     var stale: StaleConfig?
     /// Other addresses' configs that knocked before `stale`, which the config page reads with it.
@@ -114,6 +116,7 @@ final class FakeServer: WireGuardServing {
                 peers[address]?.endpoint = endpoints[address]
             }
             for (address, handshake) in handshakes { peers[address, default: PeerStats()].lastHandshake = handshake }
+            for (address, bytes) in received { peers[address, default: PeerStats()].received = bytes }
         }
         var proxy = ProxyStats(traffic: proxyTraffic)
         if running, let on = lastSetup?.proxy, on.on {

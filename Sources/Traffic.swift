@@ -41,6 +41,8 @@ struct PeerStats: Equatable {
     /// Where it last connected from, "ip:port", or "[ip]:port" for IPv6. Its screen shows the
     /// address alone while it's connected (#73).
     var endpoint: String?
+    /// Every byte the server took from it, keepalives too, see `PeerActivity`.
+    var received: UInt64 = 0
 
     /// The address alone, from an endpoint or a config page client's "ip", which has no port:
     /// "172.20.10.2" or "2600:380:abcd::1". Without an IPv6 zone, which names an interface of this
@@ -57,6 +59,34 @@ struct PeerStats: Equatable {
         }
         let ip = String(host.prefix { $0 != "%" })
         return IPv4Address(ip) != nil || IPv6Address(ip) != nil ? ip : nil
+    }
+}
+
+/// When each device last sent anything (#63). Its WireGuard sends a keepalive at least every 25 s
+/// while its tunnel is on (PersistentKeepalive in the config), so a device whose count didn't go up
+/// for `liveFor` has its tunnel off, or is gone. A count read once says nothing of when it went up.
+/// Go reads the counts with the handshakes, every 10 s. The session reads them every second on
+/// screen, on each watcher round in the background (up to 20 s apart), and when the page is asked.
+/// A rise is seen up to 30 s late, so with a keepalive every 25 s a live tunnel stays within
+/// `liveFor`. A tunnel turned off still counts as live for up to a minute.
+struct PeerActivity {
+    static let liveFor: TimeInterval = 60
+
+    private var seen: [String: (received: UInt64, rose: Date?)] = [:]
+
+    /// The server's devices now, by tunnel address. One it no longer has is forgotten. A count that
+    /// went down is a server that started again, not the device sending.
+    mutating func read(_ peers: [String: PeerStats], at now: Date) {
+        var next: [String: (received: UInt64, rose: Date?)] = [:]
+        for (address, stats) in peers {
+            let old = seen[address]
+            next[address] = (stats.received, old.map { stats.received > $0.received ? now : $0.rose } ?? nil)
+        }
+        seen = next
+    }
+
+    func live(_ address: String, at now: Date) -> Bool {
+        seen[address]?.rose.map { now.timeIntervalSince($0) < Self.liveFor } ?? false
     }
 }
 

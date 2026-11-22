@@ -191,6 +191,7 @@ final class WireGuardServer {
                 let down: UInt64
                 let handshake: Int64 // Unix seconds, 0 for never
                 let endpoint: String // "" for never
+                let rx: UInt64? // added later, so the version stays
             }
 
             /// proxyStats in WireGuard/proxy.go.
@@ -229,7 +230,7 @@ final class WireGuardServer {
             for p in m.peers {
                 peers[p.address] = PeerStats(traffic: TrafficTotals(bytesUp: p.up, bytesDown: p.down), connected: p.connected,
                                              lastHandshake: p.handshake > 0 ? Date(timeIntervalSince1970: TimeInterval(p.handshake)) : nil,
-                                             endpoint: p.endpoint.isEmpty ? nil : p.endpoint)
+                                             endpoint: p.endpoint.isEmpty ? nil : p.endpoint, received: p.rx ?? 0)
             }
             // A kind this app doesn't know says nothing, like one that isn't there.
             func stale(_ s: Message.Stale) -> StaleConfig? {

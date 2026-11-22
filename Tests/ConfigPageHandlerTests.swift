@@ -14,10 +14,10 @@ final class ConfigPageHandlerTests: XCTestCase {
 
     private func inputs(letIn: Bool = true, onScreen: Bool = true, noReady: Bool = false,
                         host: String? = "172.20.10.1", config: String? = nil, stale: [StaleConfig] = [],
-                        connected: [String] = [], at: Date? = nil) -> ConfigPageHandler.Inputs {
+                        live: [String] = [], at: Date? = nil) -> ConfigPageHandler.Inputs {
         ConfigPageHandler.Inputs(letIn: letIn, onScreen: onScreen, ready: noReady ? nil : ready, host: host,
                                  config: config ?? self.config, stale: stale, hosts: ["172.20.10.1", "2001:db8::1"], now: at ?? start,
-                                 connected: connected)
+                                 live: live)
     }
 
     func testThePageSaysWhatsMissing() {
@@ -164,23 +164,22 @@ final class ConfigPageHandlerTests: XCTestCase {
     }
 
     /// Whether this device's tunnel works (#63). A request from where Tether listens came through
-    /// Tether: a tunnel, or the proxy. One from where a connected device's handshake comes from can't
-    /// be told: wg-quick on Linux sends the page's address around its tunnel, a tunnel turned off
-    /// keeps showing connected for minutes, and clients behind one NAT share an address. So no line.
-    /// Anything else on the hotspot isn't connected.
+    /// Tether: the proxy, or a tunnel that routes the page's address through it. WireGuard on Apple
+    /// devices and wg-quick send it around the tunnel, so those ask from where a device whose tunnel
+    /// is live connects from (see `PeerActivity`). Anything else on the hotspot isn't connected.
     func testThePageSaysWhetherThisDeviceIsConnected() {
         let handler = ConfigPageHandler()
-        let cases: [(client: String, connected: [String], said: ConfigPage.Tunnel?, line: UInt)] = [
+        let cases: [(client: String, live: [String], said: ConfigPage.Tunnel?, line: UInt)] = [
             ("172.20.10.1", [], .connected, #line),
             ("2001:db8::1", [], .connected, #line),
-            ("172.20.10.3", ["172.20.10.3"], nil, #line),
-            ("2001:db8::5", ["2001:db8::5"], nil, #line),
+            ("172.20.10.3", ["172.20.10.3"], .connected, #line),
+            ("2001:db8::5", ["2001:db8::5"], .connected, #line),
             ("172.20.10.3", ["172.20.10.4"], .notConnected, #line),
             ("172.20.10.3", [], .notConnected, #line),
             ("not an address", [], nil, #line),
         ]
         for c in cases {
-            XCTAssertEqual(handler.answer(.page, from: c.client, inputs(connected: c.connected)),
+            XCTAssertEqual(handler.answer(.page, from: c.client, inputs(live: c.live)),
                            .answer(ConfigPage.page(.ready, tunnel: c.said)), line: c.line)
         }
     }

@@ -199,9 +199,9 @@ enum ConfigPage {
     /// A request through Tether, by a tunnel or the proxy, comes from the iPhone, whichever device
     /// sent it, so that one is connected.
     enum Tunnel: Equatable {
-        /// It came through Tether.
+        /// It came through Tether, or from where a device whose tunnel is live connects from.
         case connected
-        /// From elsewhere on the hotspot, and not where a connected device's handshake comes from.
+        /// From elsewhere on the hotspot.
         case notConnected
 
         var line: String {
