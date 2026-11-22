@@ -18,9 +18,18 @@ final class AccessibilityTests: TetherUITestCase {
     // MARK: Dynamic Type
 
     private let accessibilityXL = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"]
+    private let largestText = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
 
     func testLargeTextKeepsTheKeyTexts() {
-        launch(.sharing, arguments: accessibilityXL)
+        assertKeyTextsFit(textSize: accessibilityXL)
+    }
+
+    func testLargestTextKeepsTheKeyTexts() {
+        assertKeyTextsFit(textSize: largestText)
+    }
+
+    private func assertKeyTextsFit(textSize: [String]) {
+        launch(.sharing, arguments: textSize)
         let window = app.windows.firstMatch.frame
         for id in ["status.title", "status.headline"] {
             let e = element(id)
@@ -76,7 +85,7 @@ final class AccessibilityTests: TetherUITestCase {
     /// At the largest text size the two speeds stack, so each stays on one line (#176). Side by side
     /// they broke over three lines each, which made the row at least three lines tall.
     func testTheSpeedsStackAtTheLargestTextSize() throws {
-        launch(.sharing, arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
+        launch(.sharing, arguments: largestText)
         let speeds = reveal(element("traffic.speeds"))
         let line = UIFont.preferredFont(forTextStyle: .headline,
                                         compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge)).lineHeight
@@ -188,7 +197,15 @@ final class AccessibilityTests: TetherUITestCase {
     }
 
     func testLargeTextKeepsTheQRSectionAndDeviceRowsReachable() {
-        launch(.sharing, arguments: accessibilityXL)
+        assertQRSectionAndDeviceRowsReachable(textSize: accessibilityXL)
+    }
+
+    func testLargestTextKeepsTheQRSectionAndDeviceRowsReachable() {
+        assertQRSectionAndDeviceRowsReachable(textSize: largestText)
+    }
+
+    private func assertQRSectionAndDeviceRowsReachable(textSize: [String]) {
+        launch(.sharing, arguments: textSize)
         XCTAssertTrue(reveal(element("device.iPad"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("device.Windows PC"), maxSwipes: 30).isHittable)
         openAddDevice(maxSwipes: 30)
