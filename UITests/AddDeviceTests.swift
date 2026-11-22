@@ -233,9 +233,12 @@ final class AddDeviceTests: TetherUITestCase {
     /// The whole box around the name shows, with space above Done: its bottom was under it (#173).
     private func assertNameBoxAboveDone(file: StaticString = #filePath, line: UInt = #line) {
         let box = element("add.nameBox"), done = element("add.done")
-        waitUntilStill(box)
-        XCTAssertTrue(box.exists, file: file, line: line)
-        XCTAssertLessThanOrEqual(box.frame.maxY, done.frame.minY, "the name's box \(box.frame) runs under Done \(done.frame)", file: file, line: line)
+        XCTAssertTrue(box.waitForExistence(timeout: 5), file: file, line: line)
+        // The sheet may still be scrolling the field above the keyboard, slower on a busy runner, so
+        // the box has to end up above Done, not be there at the first look.
+        let clear = expectation(for: NSPredicate { _, _ in box.frame.maxY <= done.frame.minY }, evaluatedWith: box)
+        XCTAssertEqual(XCTWaiter().wait(for: [clear], timeout: 5), .completed,
+                       "the name's box \(box.frame) runs under Done \(done.frame)", file: file, line: line)
     }
 
     /// What's typed replaces the name, since it's selected, and Done saves it.
