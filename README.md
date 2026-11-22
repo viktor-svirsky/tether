@@ -5,6 +5,7 @@
 [![Add to SideStore or AltStore](https://img.shields.io/badge/SideStore%20%7C%20AltStore-add%20source-0069b8)](https://viktor-svirsky.github.io/tether/add/)
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-blue)
 [![License: MIT](https://img.shields.io/github/license/viktor-svirsky/tether)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/viktor-svirsky/tether/badge)](https://scorecard.dev/viewer/?uri=github.com/viktor-svirsky/tether)
 [![Website](https://img.shields.io/badge/website-viktor--svirsky.github.io%2Ftether-0069b8)](https://viktor-svirsky.github.io/tether/)
 
 <img src="Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png" width="96" alt="Tether icon">
