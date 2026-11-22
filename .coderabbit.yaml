@@ -1,0 +1,6 @@
+# CodeRabbit reviews pull requests into the default branch only, unless told otherwise.
+# Features merge into release-X.Y first, so review those too. Values are regexes.
+reviews:
+  auto_review:
+    base_branches:
+      - "^release-.*$"
