@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"strings"
 	"testing"
@@ -216,5 +218,63 @@ func TestDiagnosticsShowTheNAT64Prefix(t *testing.T) {
 	d := diagWithin(t, s, func(d diagStats) bool { return d.NAT64 != "" })
 	if d.NAT64 != carrierNAT64.String() || d.TCPTried != 1 || d.TCPFailed != 0 {
 		t.Fatalf("diagnostics %+v, want the carrier's prefix and one connection that worked", d)
+	}
+}
+
+// The proxy's connections count in Diagnostics like a tunnel device's: tried, failed, and why (#284).
+func TestDiagnosticsCountTheProxysConnections(t *testing.T) {
+	s, proxy := proxyOn(t)
+	conn, r, status := tunnel(t, proxy, echoFarEnd(t))
+	if status != http.StatusOK || !echoes(conn, r) {
+		t.Fatalf("the tunnel got %d", status)
+	}
+	if d := diagWithin(t, s, func(d diagStats) bool { return d.TCPTried == 1 }); d.TCPFailed != 0 || d.LastError != "" {
+		t.Fatalf("diagnostics %+v, want one connection tried and none failed", d)
+	}
+	refused := refusedPort(t)
+	if _, _, status := tunnel(t, proxy, refused); status != http.StatusBadGateway {
+		t.Fatalf("got %d, want 502", status)
+	}
+	d := diagWithin(t, s, func(d diagStats) bool { return d.TCPFailed == 1 })
+	if d.TCPTried != 2 || !strings.HasPrefix(d.LastError, "TCP to "+refused+": ") {
+		t.Fatalf("diagnostics %+v, want the refused connection as the last error", d)
+	}
+}
+
+// A plain http:// request through the proxy counts its connection too.
+func TestDiagnosticsCountTheProxysPlainRequests(t *testing.T) {
+	s, proxy := proxyOn(t)
+	refused := refusedPort(t)
+	resp, err := viaProxy(proxy).Get("http://" + refused + "/")
+	if err != nil || resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("a GET got %v %v, want 502", resp, err)
+	}
+	resp.Body.Close()
+	d := diagWithin(t, s, func(d diagStats) bool { return d.TCPFailed == 1 })
+	if d.TCPTried != 1 || !strings.HasPrefix(d.LastError, "TCP to "+refused+": ") {
+		t.Fatalf("diagnostics %+v, want the refused connection as the last error", d)
+	}
+}
+
+// A proxy dial called off, by turning the proxy off here, counts as tried but didn't fail.
+func TestDiagnosticsDontCountACalledOffProxyDialAsFailed(t *testing.T) {
+	s, proxy := proxyOn(t)
+	s.mu.Lock()
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	s.mu.Unlock()
+	conn, err := net.Dial("tcp", proxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	to := viaRemote("127.0.0.1:9")
+	fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", to, to)
+	diagWithin(t, s, func(d diagStats) bool { return d.TCPTried == 1 })
+	s.SetProxy(false, false)
+	if d := s.diagStats(); d.TCPTried != 1 || d.TCPFailed != 0 || d.LastError != "" {
+		t.Fatalf("diagnostics %+v, want the dial tried and not failed", d)
 	}
 }
