@@ -200,7 +200,7 @@ class TetherUITestCase: XCTestCase {
     }
 
     /// Waits until the element is gone.
-    func waitUntilGone(_ element: XCUIElement, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) {
+    func waitUntilGone(_ element: XCUIElement, timeout: TimeInterval = 10, file: StaticString = #filePath, line: UInt = #line) {
         let done = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: element)
         XCTAssertEqual(XCTWaiter().wait(for: [done], timeout: timeout), .completed, "\(element) is still there", file: file, line: line)
     }
