@@ -22,6 +22,9 @@ struct AddDeviceSheet: View {
     /// The device's name, typed once it connects and saved when the sheet closes.
     @State private var naming = AddDeviceNaming()
     @FocusState private var nameFocused: Bool
+    /// Where the name box ends and Done starts on screen, to see when the box runs under Done.
+    @State private var nameBoxBottom: CGFloat = 0
+    @State private var doneTop: CGFloat = .infinity
     /// Selects the name when the field starts editing, once, see `SelectsAllOnEdit`.
     @State private var selectsName = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -235,6 +238,7 @@ struct AddDeviceSheet: View {
                 .padding(.vertical, 8)
                 // Large text scrolls the connected message under it.
                 .background(.bar)
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY.rounded() } action: { doneTop = $0 }
                 .accessibilityIdentifier("add.done")
             }
         }
@@ -243,12 +247,13 @@ struct AddDeviceSheet: View {
         .toolbar { closeButton }
         // It connected while another page showed: the keyboard comes up for its name here.
         .onAppear { if naming.device != nil { nameFocused = true } }
-        // iOS scrolls the focused field above the keyboard itself, but on a busy device it can do
-        // that before it knows about Done, which then covers the box. Once the keyboard is up,
-        // the box goes above Done here too (#173).
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
-            guard naming.device != nil, nameFocused else { return }
-            withAnimation { scroll.scrollTo(Self.nameBoxID, anchor: .bottom) }
+        // iOS scrolls only the focused field's text above the keyboard, and on a slow device it can
+        // leave the box under Done. Whenever the box is seen under Done while typing, it goes above
+        // it (#173). This runs on the measured overlap, not on a keyboard event, which can come
+        // before the layout settles.
+        .onChange(of: max(0, nameBoxBottom - doneTop)) { _, under in
+            guard under > 0, nameFocused else { return }
+            scroll.scrollTo(Self.nameBoxID, anchor: .bottom)
         }
         } // ScrollViewReader
     }
@@ -298,6 +303,7 @@ struct AddDeviceSheet: View {
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("add.nameBox")
                     .id(Self.nameBoxID)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY.rounded() } action: { nameBoxBottom = $0 }
             }
         }
         .padding(.top, 12)
