@@ -120,6 +120,8 @@ final class HotspotSession {
     /// CallKit has a call on. The keep-alive sound plays again right after a call starts, so it can't
     /// say so itself (#191).
     var callOn: () -> Bool = { false }
+    /// False until Continue on the Local Network screen: a knock could make iOS ask before it.
+    var localNetworkIntroduced: () -> Bool = { true }
 
     private let devices: WireGuardDevices
     private let server: WireGuardServing
@@ -956,7 +958,7 @@ final class HotspotSession {
     /// Tether leaving the screen overtook is dropped, even if it's back on screen by then, and so is
     /// one a newer round overtook: coming on screen at launch starts the loop a second time.
     func knockNeighbors() async {
-        guard sharing, sceneActive else { return forgetNeighbors() }
+        guard sharing, sceneActive, localNetworkIntroduced() else { return forgetNeighbors() }
         knockRun += 1
         let run = knockRun
         let knocks = await knocker.knock(HotspotNeighbors.addresses, ports: HotspotNeighbors.ports,

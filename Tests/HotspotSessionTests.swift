@@ -1902,6 +1902,20 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(knocker.rounds.first?.timeout, 1.5)
     }
 
+    /// A knock can make iOS ask about Local Network, so none goes out before Continue on the screen
+    /// that comes first.
+    func testNoKnockBeforeTheLocalNetworkScreensContinue() async throws {
+        let knocker = try shareWithNeighbors()
+        session.localNetworkIntroduced = { false }
+        await session.knockNeighbors()
+        XCTAssertTrue(knocker.rounds.isEmpty)
+        XCTAssertEqual(session.notUsingTether, [])
+        session.localNetworkIntroduced = { true }
+        await session.knockNeighbors()
+        XCTAssertEqual(knocker.rounds.count, 1)
+        XCTAssertEqual(session.notUsingTether, ["172.20.10.6"])
+    }
+
     /// Only the on-screen line shows it, so nothing knocks off screen or while not sharing.
     func testNoKnockOffScreenOrWithoutSharing() async {
         makeSession(sceneActive: false)
