@@ -159,7 +159,7 @@ struct AddDeviceSheet: View {
     private var wireGuardSteps: some View {
         let progress = progress
         let current = Self.current(progress)
-        return ScrollView {
+        return ScrollViewReader { scroll in ScrollView {
             VStack(spacing: 24) {
                 // Above the steps: a device scanned first would only learn after that it can't work.
                 if model.localNetworkDenied && !progress.finished {
@@ -243,6 +243,14 @@ struct AddDeviceSheet: View {
         .toolbar { closeButton }
         // It connected while another page showed: the keyboard comes up for its name here.
         .onAppear { if naming.device != nil { nameFocused = true } }
+        // iOS scrolls the focused field above the keyboard itself, but on a busy device it can do
+        // that before it knows about Done, which then covers the box. Once the keyboard is up,
+        // the box goes above Done here too (#173).
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+            guard naming.device != nil, nameFocused else { return }
+            withAnimation { scroll.scrollTo(Self.nameBoxID, anchor: .bottom) }
+        }
+        } // ScrollViewReader
     }
 
     /// Once it connects: that it did, and its name to type.
@@ -289,6 +297,7 @@ struct AddDeviceSheet: View {
                     // The box, for the tests: the text field's own frame is only the text.
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("add.nameBox")
+                    .id(Self.nameBoxID)
             }
         }
         .padding(.top, 12)
@@ -296,6 +305,7 @@ struct AddDeviceSheet: View {
 
     /// The name box's padding under the text, and the space between the box and Done.
     private static let nameBoxRoom: CGFloat = 12 + 16
+    private static let nameBoxID = "nameBox"
 
     /// Done: saves the name and closes, or stays with the draft when it couldn't be saved.
     private func finish() {
