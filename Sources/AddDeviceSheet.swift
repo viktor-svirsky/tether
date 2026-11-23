@@ -247,13 +247,12 @@ struct AddDeviceSheet: View {
         .toolbar { closeButton }
         // It connected while another page showed: the keyboard comes up for its name here.
         .onAppear { if naming.device != nil { nameFocused = true } }
-        // iOS scrolls only the focused field's text above the keyboard, and on a slow device it can
-        // leave the box under Done. Whenever the box is seen under Done while typing, it goes above
-        // it (#173). This runs on the measured overlap, not on a keyboard event, which can come
-        // before the layout settles.
-        .onChange(of: max(0, nameBoxBottom - doneTop)) { _, under in
-            guard under > 0, nameFocused else { return }
-            scroll.scrollTo(Self.nameBoxID, anchor: .bottom)
+        // iOS keeps the focused field's text above the keyboard, but on a slow device it can leave
+        // the box around it under Done. Whenever the box is seen under Done while typing, or typing
+        // starts with it there, it goes above Done (#173). This runs on the measured overlap, not on
+        // a keyboard event, which can come before the layout settles.
+        .onChange(of: nameFocused ? max(0, nameBoxBottom - doneTop) : 0) { _, under in
+            if under > 0 { scroll.scrollTo(Self.nameBoxID, anchor: .bottom) }
         }
         } // ScrollViewReader
     }
