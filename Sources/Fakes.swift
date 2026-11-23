@@ -35,15 +35,18 @@ final class FakeServer: WireGuardServing {
     /// Each device's last handshake, by tunnel address. Reported only while running, as the real
     /// server forgets them when it stops.
     var handshakes: [String: Date] = [:]
+    /// Every byte each device sent, keepalives too, by tunnel address. Reported only while running.
+    var received: [String: UInt64] = [:]
     /// Reported only while running, as the real server's knocks go with it.
     var stale: StaleConfig?
     /// Other addresses' configs that knocked before `stale`, which the config page reads with it.
     var earlierStale: [StaleConfig] = []
     /// The proxy's counters, always reported, like a device's.
     var proxyTraffic = TrafficTotals()
-    /// Its open connections and where it listens, reported only while running with the proxy on, as
-    /// Go does. Nil listens where Go does on a usual hotspot.
+    /// Its open connections, the devices the far end answered, and where it listens, reported only
+    /// while running with the proxy on, as Go does. Nil listens where Go does on a usual hotspot.
     var proxyOpen = 0
+    var proxyServed: Set<String> = []
     var proxyAddresses: [String]?
     /// The Diagnostics screen's counters, reported only while running, as the real server's start
     /// from zero with each run. With no `listening` set, it listens where the last start said.
@@ -113,12 +116,14 @@ final class FakeServer: WireGuardServing {
                 peers[address]?.endpoint = endpoints[address]
             }
             for (address, handshake) in handshakes { peers[address, default: PeerStats()].lastHandshake = handshake }
+            for (address, bytes) in received { peers[address, default: PeerStats()].received = bytes }
         }
         var proxy = ProxyStats(traffic: proxyTraffic)
         if running, let on = lastSetup?.proxy, on.on {
             proxy.addresses = proxyAddresses ?? ["\(Hotspot.host):8118"]
             proxy.paused = on.paused != nil
             proxy.open = proxyOpen
+            proxy.served = proxyServed
         }
         return ServerSnapshot(totals: totals, peers: peers, proxy: proxy, stale: running ? stale : nil,
                               recentStale: running ? earlierStale + [stale].compactMap(\.self) : [],
@@ -199,5 +204,19 @@ final class FakeSound: KeepAliveSound {
     }
     func start() { playing = true }
     func stop() { playing = false }
+}
+
+/// The TCP knock (#109), with the answers a test sets and what each round asked for.
+final class FakeKnocker: HotspotKnocker, @unchecked Sendable {
+    var answers: [HotspotKnock] = []
+    /// Runs while a round knocks, before it answers: what happens on the main actor meanwhile.
+    var meanwhile: (@MainActor () -> Void)?
+    private(set) var rounds: [(addresses: [String], ports: [UInt16], timeout: TimeInterval)] = []
+
+    func knock(_ addresses: [String], ports: [UInt16], timeout: TimeInterval) async -> [HotspotKnock] {
+        rounds.append((addresses, ports, timeout))
+        if let meanwhile { await meanwhile() }
+        return answers
+    }
 }
 #endif

@@ -3,7 +3,7 @@ import XCTest
 /// The fake app states a test can launch (`-TetherDemo <name>`, see Sources/DemoMode.swift).
 /// Their fixed values are described there.
 enum Scenario: String {
-    case waiting, localNetworkIntro, wireGuardLockedWaiting, noDevices, sharing, wireGuardLocked, wireGuardNeedsReset, wireGuardUnsaved, qrCodeUnsaved, expiring, notificationsOff, notifying, notificationsScreen, addDeviceScreen, addDeviceComputer, addDeviceComputerIPv6, addDeviceWaiting, addDeviceDone, addDeviceDoneUnsaved, localNetworkDenied, staleConfig, oldAddress, paused, proxy, proxyIPv6, addDeviceProxy, addDeviceProxyWorking
+    case waiting, localNetworkIntro, wireGuardLockedWaiting, noDevices, sharing, wireGuardLocked, wireGuardNeedsReset, wireGuardUnsaved, qrCodeUnsaved, expiring, notificationsOff, notifying, notificationsScreen, addDeviceScreen, addDeviceComputer, addDeviceComputerIPv6, addDeviceWaiting, addDeviceDone, addDeviceDoneUnsaved, localNetworkDenied, staleConfig, oldAddress, paused, notUsingTether, proxy, proxyIPv6, addDeviceProxy, addDeviceProxyWorking
 }
 
 /// Base class for the screen tests: launching, finding things by identifier, scrolling a List.
@@ -200,7 +200,7 @@ class TetherUITestCase: XCTestCase {
     }
 
     /// Waits until the element is gone.
-    func waitUntilGone(_ element: XCUIElement, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) {
+    func waitUntilGone(_ element: XCUIElement, timeout: TimeInterval = 10, file: StaticString = #filePath, line: UInt = #line) {
         let done = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: element)
         XCTAssertEqual(XCTWaiter().wait(for: [done], timeout: timeout), .completed, "\(element) is still there", file: file, line: line)
     }

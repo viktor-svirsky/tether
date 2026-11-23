@@ -76,7 +76,7 @@ struct MainView: View {
                     }
                 }
 
-                if !model.wireGuardPeers.isEmpty || model.proxyOn {
+                if !model.wireGuardPeers.isEmpty || model.proxyOn || !model.notUsingTether.isEmpty {
                     Section("Devices") {
                         ForEach(model.wireGuardPeers) { peer in
                             NavigationLink { DeviceView(model: model, peer: peer) } label: {
@@ -99,6 +99,15 @@ struct MainView: View {
                         }
                         if model.proxyOn, let proxy = model.proxy {
                             proxyRow(proxy)
+                        }
+                        // Opens Add a device, to set that device up (#109).
+                        if !model.notUsingTether.isEmpty {
+                            Button { addingDevice = true } label: {
+                                Text(Format.notUsingTether(model.notUsingTether))
+                                    .font(.subheadline)
+                            }
+                            .accessibilityHint("Opens Add a device")
+                            .accessibilityIdentifier("devices.notUsingTether")
                         }
                     }
                 }

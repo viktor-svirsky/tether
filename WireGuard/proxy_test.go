@@ -1555,3 +1555,189 @@ func TestTurningTheProxyOffEndsADrainingRelayAtOnce(t *testing.T) {
 		t.Fatalf("turning the proxy off took %v", took)
 	}
 }
+
+// Served lists the clients the far end answered, so Add a device can tell a new device from one
+// already on the proxy (#285). A request that fails doesn't serve its client, a tunnel's first
+// bytes back and a plain response do.
+func TestTheProxyListsTheClientsTheFarEndAnswered(t *testing.T) {
+	s, proxy := proxyOn(t)
+	served := func() []string { return s.statsMessage().Proxy.Served }
+	if got := served(); got == nil || len(got) != 0 {
+		t.Fatalf("served %v before anything, want an empty list", got)
+	}
+	if _, _, status := tunnel(t, proxy, refusedPort(t)); status != http.StatusBadGateway {
+		t.Fatalf("a tunnel to a closed port got %d", status)
+	}
+	resp, err := viaProxy(proxy).Get("http://" + refusedPort(t) + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := served(); len(got) != 0 {
+		t.Fatalf("served %v after two failed requests, want none", got)
+	}
+	conn, r, _ := tunnel(t, proxy, echoFarEnd(t))
+	defer conn.Close()
+	if !echoes(conn, r) {
+		t.Fatal("no echo")
+	}
+	if !waitFor(5*time.Second, func() bool { return slices.Equal(served(), []string{"127.0.0.1"}) }) {
+		t.Fatalf("served %v after a tunnel echoed, want 127.0.0.1", served())
+	}
+	s.mu.Lock()
+	s.proxy.served = map[netip.Addr]time.Time{}
+	s.mu.Unlock()
+	resp, err = viaProxy(proxy).Get("http://" + tcpPage(t, 10) + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := served(); !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Fatalf("served %v after a page, want 127.0.0.1", got)
+	}
+}
+
+// A client served longer than servedFor ago drops out of the list, so one that comes back counts as
+// new, and past maxServed clients the one served longest ago goes (#285).
+func TestTheServedClientsAgeOutAndAreCapped(t *testing.T) {
+	s, _ := proxyOn(t)
+	served := func() []string { return s.statsMessage().Proxy.Served }
+	laptop := netip.MustParseAddr("172.20.10.5")
+	s.markServed(laptop)
+	if got := served(); !slices.Equal(got, []string{"172.20.10.5"}) {
+		t.Fatalf("served %v, want the laptop", got)
+	}
+	s.mu.Lock()
+	s.proxy.served[laptop] = time.Now().Add(-servedFor - time.Second)
+	s.mu.Unlock()
+	if got := served(); len(got) != 0 {
+		t.Fatalf("served %v after the laptop was idle, want none", got)
+	}
+	s.markServed(laptop)
+	if got := served(); !slices.Equal(got, []string{"172.20.10.5"}) {
+		t.Fatalf("served %v after the laptop came back, want it", got)
+	}
+	s.mu.Lock()
+	s.proxy.served[laptop] = time.Now().Add(-time.Minute) // the oldest
+	s.mu.Unlock()
+	for i := range maxServed {
+		s.markServed(netip.AddrFrom16([16]byte{0x20, 0x01, 0x0d, 0xb8, 15: byte(i + 1)}))
+	}
+	got := served()
+	if len(got) != maxServed || slices.Contains(got, "172.20.10.5") {
+		t.Fatalf("%d served, laptop in it %v, want %d without the laptop", len(got), slices.Contains(got, "172.20.10.5"), maxServed)
+	}
+}
+
+// A long tunnel marks its client again while bytes keep coming, so a TV streaming through one
+// stays served past servedFor.
+func TestATunnelKeepsMarkingItsClientServed(t *testing.T) {
+	var now time.Time
+	marks := 0
+	r := &servedReading{Reader: strings.NewReader(strings.Repeat("x", 100)), mark: func() { marks++ }, now: func() time.Time { return now }}
+	now = time.Unix(1000, 0)
+	b := make([]byte, 10)
+	r.Read(b)
+	r.Read(b)
+	now = now.Add(servedEvery)
+	r.Read(b)
+	if marks != 2 {
+		t.Fatalf("%d marks, want one at the start and one after servedEvery", marks)
+	}
+}
+
+// A plain request that upgrades, a websocket say, goes through with its body as it is, which
+// ReverseProxy needs to carry the connection, and marks its client served, and again while bytes
+// come back, so a websocket open past servedFor keeps its client served (#285).
+func TestAnUpgradeGoesThroughAndServesItsClient(t *testing.T) {
+	s, proxy := proxyOn(t)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		br := bufio.NewReader(c)
+		if _, err := http.ReadRequest(br); err != nil {
+			return
+		}
+		io.WriteString(c, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n")
+		io.Copy(c, br)
+	}()
+	far := viaRemote(l.Addr().String())
+	c, err := net.Dial("tcp", proxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	fmt.Fprintf(c, "GET http://%s/ HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n", far, far)
+	r := bufio.NewReader(c)
+	resp, err := http.ReadResponse(r, nil)
+	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("got %v, %v, want 101", resp, err)
+	}
+	if got := s.statsMessage().Proxy.Served; !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Fatalf("served %v, want the client", got)
+	}
+	s.mu.Lock()
+	s.proxy.served = map[netip.Addr]time.Time{} // as servedFor on
+	s.mu.Unlock()
+	if !echoes(c, r) {
+		t.Fatal("the upgraded connection doesn't carry bytes")
+	}
+	if got := s.statsMessage().Proxy.Served; !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Fatalf("served %v after bytes came back, want the client", got)
+	}
+}
+
+// Tether's own config page answers from the iPhone, not the far end, so loading it through the
+// proxy, as a GET or a tunnel, doesn't mark its client served: Add a device's last step waits for
+// an answer from the internet (#285).
+func TestTheConfigPageDoesNotServeItsClient(t *testing.T) {
+	s, proxy := proxyOn(t)
+	ownAre(s, "172.20.10.1/28")
+	s.refreshLocal()
+	page := "172.20.10.1:" + port(tcpPage(t, 10))
+	echo := "172.20.10.1:" + port(echoFarEnd(t))
+	s.SetPage([]netip.AddrPort{netip.MustParseAddrPort(page), netip.MustParseAddrPort(echo)})
+	blockLocal(s, true) // so the page is the only way in
+	if status, _ := rawGet(t, proxy, "http://"+page+"/"); status != http.StatusOK {
+		t.Fatalf("a GET of the page got %d", status)
+	}
+	conn, r, status := tunnel(t, proxy, echo)
+	if status != http.StatusOK || !echoes(conn, r) {
+		t.Fatalf("a tunnel to the page got %d", status)
+	}
+	if got := s.statsMessage().Proxy.Served; len(got) != 0 {
+		t.Fatalf("served %v after only the page answered, want none", got)
+	}
+}
+
+// A name that leads to the page is the page too: what counts is the address dialed.
+func TestTheConfigPageByNameDoesNotServeItsClient(t *testing.T) {
+	s := proxyReady(t)
+	ownAre(s, "172.20.10.1/28")
+	s.refreshLocal()
+	page := tcpPage(t, 10)
+	s.SetPage([]netip.AddrPort{netip.MustParseAddrPort("172.20.10.1:" + port(page))})
+	s.mu.Lock()
+	s.proxy.systemLookup = func(_ context.Context, host string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("172.20.10.1")}, nil
+	}
+	s.mu.Unlock()
+	s.SetProxy(true, false)
+	proxy := proxyListening(t, s)
+	blockLocal(s, true) // so the page is the only way in
+	if status, _ := rawGet(t, proxy, "http://iphone.example:"+port(page)+"/"); status != http.StatusOK {
+		t.Fatalf("a GET of the page by name got %d", status)
+	}
+	if got := s.statsMessage().Proxy.Served; len(got) != 0 {
+		t.Fatalf("served %v after only the page answered, want none", got)
+	}
+}

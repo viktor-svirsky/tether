@@ -191,6 +191,7 @@ final class WireGuardServer {
                 let down: UInt64
                 let handshake: Int64 // Unix seconds, 0 for never
                 let endpoint: String // "" for never
+                let rx: UInt64? // added later, so the version stays
             }
 
             /// proxyStats in WireGuard/proxy.go.
@@ -199,6 +200,7 @@ final class WireGuardServer {
                 let cantListen: Bool?
                 let paused: Bool
                 let open: Int
+                let served: [String]
                 let up: UInt64
                 let down: UInt64
             }
@@ -228,7 +230,7 @@ final class WireGuardServer {
             for p in m.peers {
                 peers[p.address] = PeerStats(traffic: TrafficTotals(bytesUp: p.up, bytesDown: p.down), connected: p.connected,
                                              lastHandshake: p.handshake > 0 ? Date(timeIntervalSince1970: TimeInterval(p.handshake)) : nil,
-                                             endpoint: p.endpoint.isEmpty ? nil : p.endpoint)
+                                             endpoint: p.endpoint.isEmpty ? nil : p.endpoint, received: p.rx ?? 0)
             }
             // A kind this app doesn't know says nothing, like one that isn't there.
             func stale(_ s: Message.Stale) -> StaleConfig? {
@@ -237,7 +239,7 @@ final class WireGuardServer {
                 }
             }
             let proxy = m.proxy.map {
-                ProxyStats(addresses: $0.addresses ?? [], cantListen: $0.cantListen ?? false, paused: $0.paused, open: $0.open, traffic: TrafficTotals(bytesUp: $0.up, bytesDown: $0.down))
+                ProxyStats(addresses: $0.addresses ?? [], cantListen: $0.cantListen ?? false, paused: $0.paused, open: $0.open, served: Set($0.served), traffic: TrafficTotals(bytesUp: $0.up, bytesDown: $0.down))
             } ?? ProxyStats()
             return ServerSnapshot(totals: TrafficTotals(bytesUp: m.up, bytesDown: m.down), peers: peers, proxy: proxy,
                                   stale: m.stale.flatMap(stale), recentStale: (m.recent ?? []).compactMap(stale),

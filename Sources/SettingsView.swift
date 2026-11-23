@@ -115,7 +115,7 @@ struct SettingsView: View {
         } header: {
             Text("Sharing")
         } footer: {
-            Text("Idle means no device is connected. Stopping saves battery. Open Tether to share again. Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier.")
+            Text("Idle means no device is connected and nothing goes through the proxy. Stopping saves battery. Open Tether to share again. Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier.")
                 .accessibilityIdentifier("sharing.footer")
         }
     }

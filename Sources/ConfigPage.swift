@@ -180,8 +180,7 @@ enum ConfigPage {
     }
 
     /// A config that no longer works knocked in the last minute (#63), said before the rest: it's
-    /// why the device can't connect. Only these two can be told. Whether a tunnel works can't: a
-    /// request through one comes from the iPhone, whichever device sent it.
+    /// why the device can't connect. Only these two can be told.
     enum Stale: Equatable {
         /// A device key the server doesn't let in, from the address that asks.
         case thisDevice
@@ -196,11 +195,28 @@ enum ConfigPage {
         }
     }
 
-    static func page(_ state: State, stale: Stale? = nil, status: Status = .ok) -> Response {
-        Response(status: status, contentType: "text/html; charset=utf-8", body: Data(html(state, stale).utf8))
+    /// Whether the device that asks is connected (#63), said before the rest when no `Stale` is.
+    /// A request through Tether, by a tunnel or the proxy, comes from the iPhone, whichever device
+    /// sent it, so that one is connected.
+    enum Tunnel: Equatable {
+        /// It came through Tether, or from where a device whose tunnel is live connects from.
+        case connected
+        /// From elsewhere on the hotspot.
+        case notConnected
+
+        var line: String {
+            switch self {
+            case .connected: "This device is connected to Tether."
+            case .notConnected: "This device isn't connected to Tether. If it has a config, turn its tunnel on in WireGuard."
+            }
+        }
     }
 
-    private static func html(_ state: State, _ stale: Stale?) -> String {
+    static func page(_ state: State, stale: Stale? = nil, tunnel: Tunnel? = nil, status: Status = .ok) -> Response {
+        Response(status: status, contentType: "text/html; charset=utf-8", body: Data(html(state, stale, tunnel).utf8))
+    }
+
+    private static func html(_ state: State, _ stale: Stale?, _ tunnel: Tunnel?) -> String {
         let content = switch state {
         case .ready:
             """
@@ -234,7 +250,7 @@ enum ConfigPage {
         // A waiting page reloads until the iPhone is ready. It goes to the page, not to the URL it was
         // served at: that can be the download link, and each download claims the ready device.
         let refresh = state == .ready ? "" : "<meta http-equiv=\"refresh\" content=\"5; url=/\">\n"
-        let notice = stale.map { "<p class=\"stale\">\($0.line)</p>\n" } ?? ""
+        let notice = stale.map { "<p class=\"stale\">\($0.line)</p>\n" } ?? tunnel.map { "<p id=\"tunnel\">\($0.line)</p>\n" } ?? ""
         return """
         <!doctype html>
         <html lang="en">

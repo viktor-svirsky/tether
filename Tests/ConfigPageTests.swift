@@ -77,7 +77,7 @@ final class ConfigPageTests: XCTestCase {
         let inputs = ConfigPageHandler.Inputs(letIn: true, onScreen: true, ready: setup.ready, host: "172.20.10.1",
                                               config: "[Interface]\n", stale: [], hosts: ["172.20.10.1"], now: Date())
         XCTAssertEqual(handler.answer(.configWithoutToken, from: "172.20.10.3", inputs),
-                       .answer(ConfigPage.page(.ready, status: .notFound)), "the page with a 404, not a download")
+                       .answer(ConfigPage.page(.ready, tunnel: .notConnected, status: .notFound)), "the page with a 404, not a download")
         XCTAssertTrue(String(decoding: ConfigPage.page(.ready).body, as: UTF8.self).contains("href=\"\(ConfigPage.downloadPath)\""))
         XCTAssertGreaterThanOrEqual(ConfigPage.token.count, 16)
     }
@@ -242,6 +242,23 @@ final class ConfigPageTests: XCTestCase {
             let plain = try html(state, nil)
             XCTAssertFalse(plain.contains("no longer works") || plain.contains("old config"), "\(state)")
         }
+    }
+
+    /// Whether this device's tunnel works, in one line before the rest (#63). A config that no
+    /// longer works says more, so that line comes instead.
+    func testThePageSaysWhetherThisDeviceIsConnected() throws {
+        func html(_ tunnel: ConfigPage.Tunnel?, stale: ConfigPage.Stale? = nil) throws -> String {
+            try XCTUnwrap(String(data: parts(ConfigPage.page(.ready, stale: stale, tunnel: tunnel)).body, encoding: .utf8))
+        }
+        let connected = try html(.connected)
+        let line = try XCTUnwrap(connected.range(of: "<p id=\"tunnel\">This device is connected to Tether.</p>"))
+        XCTAssertLessThan(line.lowerBound, try XCTUnwrap(connected.range(of: "Download the config")).lowerBound)
+        XCTAssertTrue(try html(.notConnected).contains(
+            "<p id=\"tunnel\">This device isn't connected to Tether. If it has a config, turn its tunnel on in WireGuard.</p>"))
+        XCTAssertFalse(try html(nil).contains("id=\"tunnel\""))
+        let stale = try html(.notConnected, stale: .thisDevice)
+        XCTAssertTrue(stale.contains("This device's config no longer works."))
+        XCTAssertFalse(stale.contains("id=\"tunnel\""), "one line, and that one says more")
     }
 
     func testTheAddressLeavesOutPort80() {
