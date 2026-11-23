@@ -1,10 +1,13 @@
 # Tether
 
 [![CI](https://github.com/viktor-svirsky/tether/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/viktor-svirsky/tether/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/viktor-svirsky/tether/graph/badge.svg)](https://codecov.io/gh/viktor-svirsky/tether)
+[![CodeRabbit reviews](https://img.shields.io/coderabbit/prs/github/viktor-svirsky/tether?label=CodeRabbit%20reviews)](https://coderabbit.ai)
 [![Latest release](https://img.shields.io/github/v/release/viktor-svirsky/tether)](https://github.com/viktor-svirsky/tether/releases/latest)
 [![Add to SideStore or AltStore](https://img.shields.io/badge/SideStore%20%7C%20AltStore-add%20source-0069b8)](https://viktor-svirsky.github.io/tether/add/)
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-blue)
 [![License: MIT](https://img.shields.io/github/license/viktor-svirsky/tether)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/viktor-svirsky/tether/badge)](https://scorecard.dev/viewer/?uri=github.com/viktor-svirsky/tether)
 [![Website](https://img.shields.io/badge/website-viktor--svirsky.github.io%2Ftether-0069b8)](https://viktor-svirsky.github.io/tether/)
 
 <img src="Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png" width="96" alt="Tether icon">
@@ -52,6 +55,8 @@ Other ways to install (Feather, a paid certificate, building it on a Mac) are in
 4. Turn the tunnel on. The device shows up in Tether as Connected.
 
 The code works while Add a device is open and for 10 minutes after. No WireGuard app on the device, but a proxy setting? Pick No, use the proxy in Add a device, and set the server and port it shows as the device's proxy. Travel routers, IPv6-only carriers and per-device settings are in the [guide](docs/GUIDE.md#connect-a-device).
+
+A game console, TV or streaming stick can't run WireGuard. A travel router with WireGuard covers it, and every device behind the router. A Windows laptop can too: turn its tunnel on, then share it in Network Connections (the WireGuard tunnel's adapter > Properties > Sharing, tick Allow other network users to connect) with the console's Ethernet port, or with Mobile hotspot while it's on. If the console gets no internet, edit the tunnel in WireGuard and untick Block untunneled traffic. The console's traffic goes through the laptop, so the laptop has to stay on.
 
 ## Good to know
 

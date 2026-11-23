@@ -12,6 +12,9 @@ defaults:
   run:
     shell: bash
 
+# Nothing by default: each job asks for what it needs.
+permissions: {}
+
 jobs:
   rerun:
     # Only this repo's own branches, at most three attempts in all.
