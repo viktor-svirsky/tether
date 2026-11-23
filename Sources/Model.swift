@@ -196,6 +196,7 @@ final class Model: ObservableObject {
         let calls = SystemCalls()
         callWatch = CallWatch(calls: calls, cellular: Self.cellular, log: Self.append)
         session.callOn = { calls.calls.contains { !$0.ended } }
+        session.localNetworkIntroduced = { [weak self] in !(self?.localNetworkIntro.shown ?? true) }
         observeScene()
         localNetwork.onChange = { [weak self] denied in
             self?.localNetworkDenied = denied
