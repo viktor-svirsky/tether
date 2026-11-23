@@ -239,6 +239,11 @@ final class AddDeviceTests: TetherUITestCase {
         let clear = expectation(for: NSPredicate { _, _ in box.frame.maxY <= done.frame.minY }, evaluatedWith: box)
         XCTAssertEqual(XCTWaiter().wait(for: [clear], timeout: 5), .completed,
                        "the name's box \(box.frame) runs under Done \(done.frame)", file: file, line: line)
+        // And it stays there: a late layout pass could move it back under Done after the first clear look.
+        let under = expectation(for: NSPredicate { _, _ in box.frame.maxY > done.frame.minY }, evaluatedWith: box)
+        under.isInverted = true
+        XCTAssertEqual(XCTWaiter().wait(for: [under], timeout: 2), .completed,
+                       "the name's box \(box.frame) went back under Done \(done.frame)", file: file, line: line)
     }
 
     /// What's typed replaces the name, since it's selected, and Done saves it.
