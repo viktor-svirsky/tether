@@ -184,7 +184,8 @@ struct HotspotSettingsLink: View {
 
 /// Recent throughput, with the newest sample at the right edge and both directions on one scale.
 struct SpeedHistoryGraph: View {
-    let samples: [SpeedSample]
+    @ObservedObject var history: SpeedHistory
+    private var samples: [SpeedSample] { history.samples }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var end: Date { samples.last?.at ?? Date() }
@@ -364,7 +365,7 @@ struct StatusCard: View {
             } else if sharing {
                 Divider()
                 SpeedRow(down: model.downSpeed, up: model.upSpeed)
-                SpeedHistoryGraph(samples: model.speedHistory)
+                SpeedHistoryGraph(history: model.speedHistory)
                 hint {
                     Text("To stop, turn off Personal Hotspot.")
                         .accessibilityIdentifier("status.stopHint")

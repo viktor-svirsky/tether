@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// One on-screen reading. The graph keeps at most thirty seconds, without filling gaps with traffic.
@@ -7,6 +8,21 @@ struct SpeedSample: Equatable, Identifiable {
     let up: Double
     let down: Double
     var id: Date { at }
+}
+
+/// Only the graph observes these updates, including readings taken while traffic is idle.
+@MainActor
+final class SpeedHistory: ObservableObject {
+    @Published private(set) var samples: [SpeedSample] = []
+
+    func append(_ sample: SpeedSample) {
+        let cutoff = sample.at.addingTimeInterval(-SpeedSample.historyDuration)
+        samples = Array((samples.filter { $0.at >= cutoff && $0.at < sample.at } + [sample]).suffix(31))
+    }
+
+    func reset() {
+        if !samples.isEmpty { samples = [] }
+    }
 }
 
 /// The speeds from how far the server's totals moved since the last sample. `HotspotSession` samples
