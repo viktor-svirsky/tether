@@ -183,10 +183,15 @@ struct HotspotSettingsLink: View {
 }
 
 /// Recent throughput, with the newest sample at the right edge and both directions on one scale.
+/// It moves without an animation: a one-second animation per sample would redraw it every frame.
 struct SpeedHistoryGraph: View {
     @ObservedObject var history: SpeedHistory
     private var samples: [SpeedSample] { history.samples }
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var textSize
+    /// Grows with the text, so the speed labels at the side don't overlap at the larger sizes. Capped,
+    /// since at the accessibility sizes only one of them shows.
+    @ScaledMetric(relativeTo: .caption) private var scaledHeight: CGFloat = 120
+    private var height: CGFloat { min(scaledHeight, 200) }
 
     private var end: Date { samples.last?.at ?? Date() }
     private var peak: Double { max(1_000, samples.map { max($0.up, $0.down) }.max() ?? 0) }
@@ -216,11 +221,6 @@ struct SpeedHistoryGraph: View {
             .chartXScale(domain: end.addingTimeInterval(-SpeedSample.historyDuration)...end)
             .chartYScale(domain: 0...(peak * 1.15))
             .chartXAxis {
-                AxisMarks(preset: .aligned, values: [end.addingTimeInterval(-SpeedSample.historyDuration / 2)]) { _ in
-                    AxisValueLabel(centered: false, anchor: .top, collisionResolution: .disabled) {
-                        Text("Last 30 seconds").font(.caption)
-                    }
-                }
                 AxisMarks(preset: .aligned, values: [end]) { _ in
                     AxisValueLabel(centered: false, anchor: .topTrailing) {
                         Text("Now").font(.caption)
@@ -228,16 +228,25 @@ struct SpeedHistoryGraph: View {
                 }
             }
             .chartYAxis {
+                // At the accessibility sizes only the top line has a label, no bigger than at the largest
+                // size below them, so it can't take over the width. The speeds above say it in full.
                 AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
                     AxisGridLine()
-                    AxisValueLabel {
-                        if let speed = value.as(Double.self) { Text(Format.speed(speed)) }
+                    if !textSize.isAccessibilitySize || value.index == value.count - 1 {
+                        AxisValueLabel {
+                            if let speed = value.as(Double.self) {
+                                Text(Format.speed(speed)).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                            }
+                        }
                     }
                 }
             }
             .chartPlotStyle { plot in plot.clipped() }
-            .frame(height: 120)
-            .animation(reduceMotion ? nil : .linear(duration: 1), value: samples)
+            .frame(height: height)
+            // Under the chart, not an axis label, so it can't run into "Now".
+            Text("Last 30 seconds")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Speed history, last 30 seconds")

@@ -17,7 +17,7 @@ final class SpeedHistory: ObservableObject {
 
     func append(_ sample: SpeedSample) {
         let cutoff = sample.at.addingTimeInterval(-SpeedSample.historyDuration)
-        samples = Array((samples.filter { $0.at >= cutoff && $0.at < sample.at } + [sample]).suffix(31))
+        samples = samples.filter { $0.at >= cutoff && $0.at < sample.at } + [sample]
     }
 
     func reset() {
