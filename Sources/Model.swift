@@ -49,6 +49,7 @@ final class Model: ObservableObject {
     var running: Bool { session.running }
     var downSpeed: Double { session.downSpeed }
     var upSpeed: Double { session.upSpeed }
+    var speedHistory: SpeedHistory { session.speedHistory }
     var wireGuardConnected: Set<String> { session.wireGuardConnected }
     var wireGuardPeers: [WireGuardSetup.Peer] { session.wireGuardPeers }
     var wireGuardPeerStats: [String: PeerStats] { session.wireGuardPeerStats }

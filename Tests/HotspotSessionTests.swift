@@ -1714,6 +1714,58 @@ final class HotspotSessionTests: XCTestCase {
 
     // MARK: Speeds
 
+    func testSpeedHistoryKeepsThirtySecondsIncludingUnchangedAndIdleReadings() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        XCTAssertTrue(session.speedHistory.samples.isEmpty, "the baseline isn't a speed reading")
+        for second in 1...45 {
+            now = start.addingTimeInterval(Double(second))
+            server.totals = TrafficTotals(bytesUp: UInt64(second * 125), bytesDown: UInt64(second * 250))
+            session.sampleTraffic()
+        }
+        XCTAssertEqual(session.speedHistory.samples.count, 31)
+        XCTAssertEqual(session.speedHistory.samples.first?.at, start.addingTimeInterval(15))
+        XCTAssertTrue(session.speedHistory.samples.allSatisfy { $0.up == 1000 && $0.down == 2000 })
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        XCTAssertEqual(session.speedHistory.samples.last?.up, 0)
+        XCTAssertEqual(session.speedHistory.samples.last?.down, 0)
+        now = now.addingTimeInterval(40)
+        session.sampleTraffic()
+        XCTAssertEqual(session.speedHistory.samples.count, 1, "a delayed sample prunes by elapsed time too")
+    }
+
+    func testSpeedHistoryClearsAcrossBackgroundAndHotspotRestart() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        XCTAssertFalse(session.speedHistory.samples.isEmpty)
+        session.leftScreen()
+        XCTAssertTrue(session.speedHistory.samples.isEmpty)
+        now = now.addingTimeInterval(600)
+        session.cameOnScreen()
+        session.sampleTraffic()
+        XCTAssertTrue(session.speedHistory.samples.isEmpty, "returning establishes a fresh baseline")
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        XCTAssertEqual(session.speedHistory.samples.count, 1)
+        address = "172.20.10.3"
+        session.syncWithHotspot()
+        XCTAssertTrue(session.speedHistory.samples.isEmpty)
+        session.sampleTraffic()
+        now = now.addingTimeInterval(1)
+        session.sampleTraffic()
+        address = nil
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        XCTAssertTrue(session.speedHistory.samples.isEmpty)
+    }
+
     // MARK: A config that no longer works
 
     /// A device knocking with a config that no longer works shows for a minute after its last

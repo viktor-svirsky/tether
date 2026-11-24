@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 struct MainView: View {
     @ObservedObject private var model = Model.shared
@@ -181,6 +182,80 @@ struct HotspotSettingsLink: View {
     }
 }
 
+/// Recent throughput, with the newest sample at the right edge and both directions on one scale.
+/// It moves without an animation: a one-second animation per sample would redraw it every frame.
+struct SpeedHistoryGraph: View {
+    @ObservedObject var history: SpeedHistory
+    private var samples: [SpeedSample] { history.samples }
+    @Environment(\.dynamicTypeSize) private var textSize
+    /// Grows with the text, so the speed labels at the side don't overlap at the larger sizes. Capped,
+    /// since at the accessibility sizes only one of them shows.
+    @ScaledMetric(relativeTo: .caption) private var scaledHeight: CGFloat = 120
+    private var height: CGFloat { min(scaledHeight, 200) }
+
+    private var end: Date { samples.last?.at ?? Date() }
+    private var peak: Double { max(1_000, samples.map { max($0.up, $0.down) }.max() ?? 0) }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Chart {
+                ForEach(samples) { sample in
+                    LineMark(x: .value("Time", sample.at), y: .value("Download", sample.down),
+                             series: .value("Direction", "Download"))
+                        .foregroundStyle(Direction.download)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                    LineMark(x: .value("Time", sample.at), y: .value("Upload", sample.up),
+                             series: .value("Direction", "Upload"))
+                        .foregroundStyle(Direction.upload)
+                        .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
+                }
+                if let latest = samples.last {
+                    PointMark(x: .value("Time", latest.at), y: .value("Download", latest.down))
+                        .foregroundStyle(Direction.download)
+                        .symbolSize(16)
+                    PointMark(x: .value("Time", latest.at), y: .value("Upload", latest.up))
+                        .foregroundStyle(Direction.upload)
+                        .symbolSize(16)
+                }
+            }
+            .chartXScale(domain: end.addingTimeInterval(-SpeedSample.historyDuration)...end)
+            .chartYScale(domain: 0...(peak * 1.15))
+            .chartXAxis {
+                AxisMarks(preset: .aligned, values: [end]) { _ in
+                    AxisValueLabel(centered: false, anchor: .topTrailing) {
+                        Text("Now").font(.caption)
+                    }
+                }
+            }
+            .chartYAxis {
+                // At the accessibility sizes only the top line has a label, no bigger than at the largest
+                // size below them, so it can't take over the width. The speeds above say it in full.
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+                    AxisGridLine()
+                    if !textSize.isAccessibilitySize || value.index == value.count - 1 {
+                        AxisValueLabel {
+                            if let speed = value.as(Double.self) {
+                                Text(Format.speed(speed)).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                            }
+                        }
+                    }
+                }
+            }
+            .chartPlotStyle { plot in plot.clipped() }
+            .frame(height: height)
+            // Under the chart, not an axis label, so it can't run into "Now".
+            Text("Last 30 seconds")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Speed history, last 30 seconds")
+        .accessibilityValue(samples.isEmpty ? "Waiting for traffic samples" :
+            "Peak download \(Format.speed(samples.map(\.down).max() ?? 0)), peak upload \(Format.speed(samples.map(\.up).max() ?? 0))")
+        .accessibilityIdentifier("traffic.history")
+    }
+}
+
 /// How fast data moves right now, down and up. At the accessibility text sizes the two don't fit
 /// side by side, and each would break over three lines, so they stack (#176).
 struct SpeedRow: View {
@@ -299,6 +374,7 @@ struct StatusCard: View {
             } else if sharing {
                 Divider()
                 SpeedRow(down: model.downSpeed, up: model.upSpeed)
+                SpeedHistoryGraph(history: model.speedHistory)
                 hint {
                     Text("To stop, turn off Personal Hotspot.")
                         .accessibilityIdentifier("status.stopHint")
