@@ -248,7 +248,7 @@ struct Notifier {
 
     /// Each idle stop once. It happens only in the background, since on screen nothing stops.
     private mutating func checkIdleStop(_ round: Round) -> [Notice] {
-        guard let stopped = round.idleStopped, stopped != toldIdleStop else { return [] }
+        guard let stopped = round.idleStopped, !stopped.byYou, stopped != toldIdleStop else { return [] }
         toldIdleStop = stopped
         guard !round.onScreen, NoticeKind.idleStopped.isOn(in: defaults) else { return [] }
         return [Notice(kind: .idleStopped, id: "idleStop", title: "Sharing stopped while idle",

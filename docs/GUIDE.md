@@ -21,7 +21,7 @@ SideStore and AltStore install apps on your iPhone signed with your own Apple ID
 4. Find Tether in Browse and install it. New releases show up there as updates, and an update keeps your devices.
 5. Open Tether, then [connect a device](#connect-a-device).
 
-A free Apple ID has limits: 3 sideloaded apps at a time (SideStore or AltStore counts as one), and each app has to be refreshed every 7 days. SideStore and AltStore do that refresh for you, see their docs for what they need.
+A free Apple ID has limits: 3 sideloaded apps at a time (SideStore or AltStore counts as one), and each app has to be refreshed every 7 days. SideStore and AltStore do that refresh for you, see their docs for what they need. It also gets 10 App IDs per 7 days. Tether takes two, one for the app and one for its widgets, so an install can ask for one more than before, see [AltStore's App ID FAQ](https://faq.altstore.io/altstore-classic/app-ids).
 
 You can also skip the source: download `Tether.ipa` from the [latest release](https://github.com/viktor-svirsky/tether/releases/latest) and open it in SideStore or AltStore.
 
@@ -106,6 +106,17 @@ iOS has no automation for "Personal Hotspot turned on", so let one shortcut turn
 2. Run it instead of turning on the hotspot in Settings: from the Action button, a widget, or Siri ("Hotspot").
 3. To have it run by itself, add an automation in Shortcuts > Automation that runs Hotspot and is set to Run Immediately. For example, when your car's Bluetooth connects, when you arrive somewhere you share from, or at a time of day.
 
+## Widgets and the Live Activity
+
+Tether shows where it stands without being opened:
+
+- **Home Screen widget**, small or medium: sharing, waiting or stopped, how many devices are connected (named on the medium one), whether a VPN carries the iPhone's internet, and a Start or Stop button.
+- **Lock Screen widgets**, rectangular and circular.
+- **Control Center button** (iOS 18 and later): Tether on or off. It can also go on the Lock Screen or the Action button.
+- **Live Activity** on the Lock Screen and in the Dynamic Island while Tether shares: the connected devices and the VPN. It starts when sharing starts and ends when it stops.
+
+Start does what Start Tether in Shortcuts does. Stop stops sharing until you open Tether or start it again, with nothing told in a notification. To save the battery, the widgets and the Live Activity are redrawn only when something changes: sharing starts or stops, a device connects or leaves, or the VPN goes on or off. They show no speeds or data counts.
+
 ## DNS
 
 There's no account and nothing in the cloud. Traffic goes from your devices to your iPhone and out. Tether itself talks only to the DNS server you pick: your devices look names up through Tether at 10.7.0.1, and Tether asks Cloudflare's 1.1.1.1 unless you pick another. Settings > DNS for your devices picks another, and it applies to every device at once: Cloudflare with malware blocking, Quad9, AdGuard (blocks ads), your own Control D profile, or a server of your own. Tether asks the second server only when the first doesn't answer, so a second one under Other is a backup, and when no server answers, your devices are told so instead of waiting. With Control D, Tether asks your profile over HTTPS, so you pick the country sites see in Control D's dashboard (Redirect, on a paid plan). A device added before Tether 1.9.1 keeps the server its config names until you add it again, or set its DNS to 10.7.0.1 in WireGuard. If you narrow a device's Allowed IPs in WireGuard, keep 10.7.0.1/32 in them, or it can't look names up. Redirect works for sites and apps that look a name up first.
@@ -151,7 +162,7 @@ With the proxy on, Tether also runs an HTTP proxy on TCP port 8118, on `172.20.1
 Sources/WireGuardServer.swift  runs the WireGuard server; WireGuardSetup.swift has the keys and configs
 WireGuard/                   the WireGuard server in Go: wireguard-go plus a gVisor TCP/IP stack
 scripts/build-wireguard.sh   builds WireGuard/ into TetherWG.xcframework (xcodegen runs it)
-scripts/build-ipa.sh         builds the unsigned Tether.ipa; make_source.py writes source.json for it
+scripts/build-ipa.sh         builds Tether.ipa, signed with no identity, only to carry the widgets' app group; make_source.py writes source.json for it
 scripts/next-version.sh      picks the next release version from the last tag
 scripts/which-release.sh     says whether main is at a release branch, which releases it by itself
 scripts/release-notes.sh     lists the issues a release fixes, for its notes
@@ -165,6 +176,7 @@ Sources/Notices.swift        what to tell in a notification and when (tested on 
 Sources/DebugLog.swift       the log Settings shares, with the Go server's lines, and LogRedaction.swift what it leaves out (tested on the Mac)
 Sources/KeepAlive.swift      silent audio to stay alive in the background
 Sources/Shortcuts.swift      the Start Tether and Is Tether Sharing? actions for Shortcuts and Siri
+Widgets/                     the widgets, the Control Center button and the Live Activity; Sources/TetherShared.swift is what they share with the app
 Sources/DemoMode.swift       the UI tests' demo states, run through the real session (Debug builds only)
 Sources/Fakes.swift          the stand-in server, page and sound the unit tests and demos share (Debug builds only)
 Tests/                       unit tests, run on the Mac

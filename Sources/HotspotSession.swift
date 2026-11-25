@@ -551,8 +551,32 @@ final class HotspotSession {
         }
         let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running).inUse } ?? false
         return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem, proxyInUse: proxyInUse,
-                                   idleStopped: idleStopped != nil, keptAlive: !running || keepAlive.sounding,
-                                   blockedWithoutVPN: blockedWithoutVPN)
+                                   idleStopped: idleStopped != nil, stoppedByYou: idleStopped?.byYou == true,
+                                   keptAlive: !running || keepAlive.sounding, blockedWithoutVPN: blockedWithoutVPN)
+    }
+
+    /// For the widgets: sharing, or waiting for the hotspot with the sound keeping Tether running.
+    var awake: Bool { idleStopped == nil && (running || keepAlive.playing) }
+
+    /// The connected devices for the widgets, in the list's order, by the latest read.
+    var connectedPeers: [WireGuardSetup.Peer] {
+        let connected = connectedNow
+        return wireGuardPeers.filter { connected.contains($0.address) }
+    }
+
+    /// Stop on a widget or in Control Center: stops sharing now, as the idle stop does, and stays
+    /// stopped with the hotspot on until Tether is opened or started again (`wake`). The sound stops,
+    /// so iOS suspends Tether. Says whether it was sharing.
+    @discardableResult
+    func stopNow() -> Bool {
+        let was = running
+        guard idleStopped == nil || was else { return false }
+        log("stopped from a widget, until Tether is opened or started")
+        idleStopped = IdleStopped(at: now(), after: idleStopAfter(), byYou: true)
+        if running { stopSharing() }
+        waitingSince = .distantPast // so the next rounds don't start the sound again, see keepAliveWhileSharing
+        keepAlive.stop()
+        return was
     }
 
     var wireGuardNeedsReset: Bool { devices.needsReset }

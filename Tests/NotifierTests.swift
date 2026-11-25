@@ -338,6 +338,14 @@ final class NotifierTests: XCTestCase {
 
     // MARK: Stopping when idle
 
+    /// Stop on a widget is the person's own doing, so nothing is told.
+    func testAStopFromAWidgetIsNotTold() {
+        round(at: 0, [])
+        let stopped = IdleStopped(at: minutes(5), after: .never, byYou: true)
+        XCTAssertEqual(round(at: 5, [], sharing: false, idleStopped: stopped), [])
+        XCTAssertEqual(round(at: 15, [], sharing: false, idleStopped: stopped), [])
+    }
+
     /// Sharing stopped after the set time with nobody connected (#76): told once, with the time.
     func testSharingStoppedWhileIdleIsToldOnce() {
         round(at: 0, [])

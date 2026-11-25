@@ -11,6 +11,8 @@ enum ShortcutReply {
         var proxyInUse = false
         /// Sharing stopped after a time with no device connected, see `IdleStop`.
         var idleStopped = false
+        /// Stop on a widget or in Control Center stopped it, see `HotspotSession.stopNow`.
+        var stoppedByYou = false
         /// The silent sound plays while the hotspot is on. Without it iOS suspends Tether as soon as
         /// the action ends, so it isn't sharing for long (#164).
         var keptAlive = true
@@ -32,6 +34,7 @@ enum ShortcutReply {
     static func status(_ state: State) -> String {
         if state.running, let problem = state.problem { return "Personal Hotspot is on, but WireGuard isn't running. \(problem)" }
         if state.running, !state.keptAlive { return "Tether couldn't keep running in the background. Open it once." }
+        if state.stoppedByYou { return "Tether is stopped. Open it, or run Start Tether, to share again." }
         if state.idleStopped { return "Tether stopped sharing while idle. Open it, or run Start Tether, to share again." }
         // iOS makes the hotspot's network only while a device is on it, so no device and the hotspot off look the same.
         guard state.running else { return "Tether is waiting for a device to join Personal Hotspot." }

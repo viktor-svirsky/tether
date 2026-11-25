@@ -69,4 +69,6 @@ struct IdleStop {
 struct IdleStopped: Equatable {
     let at: Date
     let after: IdleStop.After
+    /// Stop on a widget or in Control Center, not the idle time. Nothing is told: the person asked for it.
+    var byYou = false
 }

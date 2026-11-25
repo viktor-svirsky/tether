@@ -22,9 +22,17 @@ targets:
     dependencies:
       - framework: WireGuard/build/TetherWG.xcframework
         embed: false # a static library, linked into the app
+      - target: TetherWidgets # the widgets, the Control Center button and the Live Activity
+    # The app group the widget extension reads Tether's state from, see SharedGroup in TetherShared.swift.
+    entitlements:
+      path: Sources/Tether.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.vsvirskyi.phoneshare]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
+        # TetherShared.swift runs the widgets' Start and Stop only in the app.
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) TETHER_APP
         TARGETED_DEVICE_FAMILY: "1" # iPhone only: an iPad runs it in an iPhone-sized window (#182)
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -38,7 +46,8 @@ targets:
     # outside the release says the last release's, from its tag, like 1.3.0. Without tags (a
     # shallow clone) it's 0.0. It runs before Xcode signs the app.
     postBuildScripts:
-      - name: Version and build number from git
+      - &version
+        name: Version and build number from git
         basedOnDependencyAnalysis: false
         # The processed Info.plist as input makes it wait for Xcode to write that file.
         # Without it the two can run in parallel, and Xcode overwrites the number.
@@ -62,7 +71,34 @@ targets:
       path: Sources/Info.plist
       properties:
         UIBackgroundModes: [audio]
+        NSSupportsLiveActivities: true
         NSBonjourServices: [_tether._tcp] # see LocalNetworkCheck
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+  TetherWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widgets
+      - Sources/TetherShared.swift
+    entitlements:
+      path: Widgets/TetherWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.vsvirskyi.phoneshare]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).widgets
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Tether
+    # The same version and build as the app: iOS wants an extension's to match its app's.
+    postBuildScripts:
+      - *version
+    info:
+      path: Widgets/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
   TetherUITests:

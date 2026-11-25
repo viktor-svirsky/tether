@@ -1672,6 +1672,41 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertNil(server.lastSetup?.proxy?.paused, "a VPN: it carries again")
     }
 
+    /// Stop on a widget stops at once, stays stopped with the hotspot on, and tells nothing.
+    func testStopFromAWidgetStopsUntilStartTether() {
+        shareInTheBackground()
+        XCTAssertTrue(session.awake)
+        XCTAssertTrue(session.stopNow(), "it was sharing")
+        XCTAssertFalse(session.sharing)
+        XCTAssertFalse(server.running)
+        XCTAssertFalse(sound.playing, "so iOS suspends Tether")
+        XCTAssertFalse(session.awake)
+        XCTAssertEqual(session.idleStopped?.byYou, true)
+        XCTAssertTrue(session.shortcutState().stoppedByYou)
+        now = minutes(5)
+        session.watch()
+        XCTAssertFalse(server.running, "the hotspot is still on, but it stays stopped")
+        XCTAssertFalse(session.stopNow(), "stopping again changes nothing")
+        XCTAssertTrue(session.wake())
+        XCTAssertTrue(server.running)
+        XCTAssertTrue(session.awake)
+        XCTAssertFalse(session.shortcutState().stoppedByYou)
+    }
+
+    /// The widgets list the connected devices in the list's order, and two with one name stay two.
+    func testTheWidgetsGetTheConnectedDevices() throws {
+        var saved = WireGuardSetup.new()
+        let first = try XCTUnwrap(saved.addPeer(name: "iPhone"))
+        let second = try XCTUnwrap(saved.addPeer(name: "iPhone"))
+        _ = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        makeSession(saved: saved)
+        server.connected = [second.address, first.address]
+        address = hotspot
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        XCTAssertEqual(session.connectedPeers.map(\.id), [first.id, second.id])
+    }
+
     func testStartTetherSharesAgain() {
         idleAfter = .tenMinutes
         shareInTheBackground()
