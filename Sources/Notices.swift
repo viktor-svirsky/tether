@@ -152,8 +152,7 @@ struct Notifier {
             stoppedSince = nil
             // Kept out for want of a VPN, a device that connects isn't using this iPhone's data, so
             // it's told once it gets through. Nothing is told as gone for the VPN going either.
-<<<<<<< HEAD
-            if !round.keptOut { notices += checkDevices(round) }
+            if round.keptOut { followKeptOut(round) } else { notices += checkDevices(round) }
         } else if round.idleStopped?.byYou == true {
             // Stop on a widget: the devices are gone because the person said so, nothing to tell.
             stoppedSince = nil
@@ -161,11 +160,6 @@ struct Notifier {
                 devices[id]?.told = false
                 devices[id]?.goneSince = nil
             }
-||||||| 7670615
-            if !round.keptOut { notices += checkDevices(round) }
-=======
-            if round.keptOut { followKeptOut(round) } else { notices += checkDevices(round) }
->>>>>>> 277-only-through-vpn
         } else {
             notices += checkStopped(round)
         }
