@@ -2081,7 +2081,18 @@ final class InternetVPNTests: XCTestCase {
         XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.180.2.3"]))
         XCTAssertNil(Interfaces.vpn(in: lines, local: ["192.168.1.158"]))
         XCTAssertNil(Interfaces.vpn(in: lines, local: []))
-        XCTAssertEqual(Interfaces.vpn(in: lines, local: ["10.180.2.3", "10.2.0.2"]), "utun5", "one of the two is enough")
+        XCTAssertEqual(Interfaces.vpn(in: lines, local: ["10.2.0.2", "10.9.0.4"]), "utun5", "both through a tunnel")
+    }
+
+    /// IPv4 over cellular and IPv6 through the tunnel, or the other way round: one of them would
+    /// leave without the VPN, so it doesn't count. With no route for the other, the one is enough.
+    func testAVPNThatCarriesOnlyIPv4OrOnlyIPv6IsNotOne() {
+        let lines = ["pdp_ip0: 10.180.2.3", "pdp_ip0: 2607:fb90:1234::5", "utun5: 10.2.0.2", "utun5: fd00::2"]
+        XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.180.2.3", "fd00::2"]), "IPv4 leaves over cellular")
+        XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.2.0.2", "2607:fb90:1234::5"]), "IPv6 leaves over cellular")
+        XCTAssertEqual(Interfaces.vpn(in: lines, local: ["10.2.0.2", "fd00::2"]), "utun5")
+        XCTAssertEqual(Interfaces.vpn(in: lines, local: ["fd00::2"]), "utun5", "an iPhone with no IPv4 route")
+        XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.2.0.2", "198.51.100.7"]), "an address on no interface")
     }
 
     /// Tailscale without an exit node holds its tailnet address on a utun interface, but the internet
