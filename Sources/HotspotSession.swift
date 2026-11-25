@@ -351,10 +351,7 @@ final class HotspotSession {
             return
         }
         log("no device connected for \(after.spelledOut), stopping until Tether is opened")
-        idleStopped = IdleStopped(at: now, after: after)
-        stopSharing()
-        waitingSince = .distantPast // so the next rounds don't start the sound again, see keepAliveWhileSharing
-        keepAlive.stop()
+        stop(IdleStopped(at: now, after: after))
     }
 
     /// Plays the silent sound while the hotspot is on, and for a while after it goes, see
@@ -567,8 +564,13 @@ final class HotspotSession {
                                    keptAlive: !running || keepAlive.sounding, blockedWithoutVPN: blockedWithoutVPN)
     }
 
-    /// For the widgets: sharing, or waiting for the hotspot with the sound keeping Tether running.
-    var awake: Bool { idleStopped == nil && (running || keepAlive.playing) }
+    /// On screen, or the sound sounds while the hotspot is on: without it iOS suspends Tether soon,
+    /// so it isn't sharing for long (#164), and the widgets mustn't say it is.
+    var staysRunning: Bool { sceneActive || !running || keepAlive.sounding }
+
+    /// For the widgets: sharing, or waiting for the hotspot, and staying so: on screen, or with the
+    /// sound keeping Tether running.
+    var awake: Bool { idleStopped == nil && (sceneActive || (running ? keepAlive.sounding : keepAlive.playing)) }
 
     /// The connected devices for the widgets, in the list's order, by the latest read.
     var connectedPeers: [WireGuardSetup.Peer] {
@@ -578,17 +580,23 @@ final class HotspotSession {
 
     /// Stop on a widget or in Control Center: stops sharing now, as the idle stop does, and stays
     /// stopped with the hotspot on until Tether is opened or started again (`wake`). The sound stops,
-    /// so iOS suspends Tether. Says whether it was sharing.
+    /// so iOS suspends Tether. Says whether it was sharing. Not while Tether is on screen, where
+    /// nothing stops it but the hotspot, like the idle stop: opening it is what starts it again.
     @discardableResult
     func stopNow() -> Bool {
+        guard !sceneActive, idleStopped == nil else { return false }
         let was = running
-        guard idleStopped == nil || was else { return false }
         log("stopped from a widget, until Tether is opened or started")
-        idleStopped = IdleStopped(at: now(), after: idleStopAfter(), byYou: true)
+        stop(IdleStopped(at: now(), after: idleStopAfter(), byYou: true))
+        return was
+    }
+
+    /// Stops sharing and the sound, and stays stopped with the hotspot on until `wake`.
+    private func stop(_ stopped: IdleStopped) {
+        idleStopped = stopped
         if running { stopSharing() }
         waitingSince = .distantPast // so the next rounds don't start the sound again, see keepAliveWhileSharing
         keepAlive.stop()
-        return was
     }
 
     var wireGuardNeedsReset: Bool { devices.needsReset }

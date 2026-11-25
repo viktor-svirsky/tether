@@ -83,6 +83,7 @@ targets:
     sources:
       - Widgets
       - Sources/TetherShared.swift
+      - Sources/WidgetState.swift
     entitlements:
       path: Widgets/TetherWidgets.entitlements
       properties:

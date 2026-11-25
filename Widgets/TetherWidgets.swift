@@ -19,7 +19,7 @@ struct StatusEntry: TimelineEntry {
     let state: WidgetState
 }
 
-/// One entry, from what the app wrote. The app asks for a new one whenever something changes.
+/// One entry, from what the app wrote.
 struct StatusProvider: TimelineProvider {
     func placeholder(in context: Context) -> StatusEntry {
         StatusEntry(date: Date(), state: WidgetState(sharing: true, awake: true, connected: [WidgetState.Device(id: UUID(), name: "MacBook")], vpn: true))
@@ -30,7 +30,12 @@ struct StatusProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<StatusEntry>) -> Void) {
-        completion(Timeline(entries: [StatusEntry(date: Date(), state: .load())], policy: .never))
+        // The app asks for a new one when something changes. While Tether is awake the widget also
+        // looks again by itself, rarely, in case iOS closed Tether, which nothing announces.
+        let now = Date()
+        let state = WidgetState.load(now: now)
+        completion(Timeline(entries: [StatusEntry(date: now, state: state)],
+                            policy: state.awake ? .after(now.addingTimeInterval(WidgetState.lookAgainAfter)) : .never))
     }
 }
 

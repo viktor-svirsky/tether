@@ -1748,6 +1748,33 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertFalse(session.shortcutState().stoppedByYou)
     }
 
+    /// On screen nothing stops Tether but the hotspot, and opening it is what starts it again, so a
+    /// Stop from Control Center over the open app does nothing.
+    func testStopFromAWidgetDoesNothingWhileTetherIsOnScreen() {
+        makeSession(sceneActive: true)
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertFalse(session.stopNow())
+        XCTAssertTrue(session.sharing)
+        XCTAssertNil(session.idleStopped)
+        XCTAssertTrue(session.awake)
+    }
+
+    /// The sound didn't start, so iOS suspends Tether soon (#164): the widgets mustn't say it shares.
+    func testTheWidgetsAreNotToldSharingWhenTetherCantKeepRunning() {
+        makeSession(sceneActive: false)
+        sound.silent = true
+        address = hotspot
+        session.wake()
+        session.watch()
+        XCTAssertTrue(session.sharing, "the server runs for now")
+        XCTAssertFalse(session.staysRunning)
+        XCTAssertFalse(session.awake)
+        session.cameOnScreen()
+        XCTAssertTrue(session.staysRunning, "on screen it runs whatever the sound does")
+        XCTAssertTrue(session.awake)
+    }
+
     /// The widgets list the connected devices in the list's order, and two with one name stay two.
     func testTheWidgetsGetTheConnectedDevices() throws {
         var saved = WireGuardSetup.new()

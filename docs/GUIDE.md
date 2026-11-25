@@ -115,7 +115,7 @@ Tether shows where it stands without being opened:
 - **Control Center button** (iOS 18 and later): Tether on or off. It can also go on the Lock Screen or the Action button.
 - **Live Activity** on the Lock Screen and in the Dynamic Island while Tether shares: the connected devices and the VPN. It starts when sharing starts and ends when it stops.
 
-Start does what Start Tether in Shortcuts does. Stop stops sharing until you open Tether or start it again, with nothing told in a notification. To save the battery, the widgets and the Live Activity are redrawn only when something changes: sharing starts or stops, a device connects or leaves, or the VPN goes on or off. They show no speeds or data counts.
+Start does what Start Tether in Shortcuts does. Stop stops sharing until you open Tether or start it again, with nothing told in a notification. While Tether is open on screen, Stop does nothing: there, turning off Personal Hotspot is what stops it. To save the battery, the widgets and the Live Activity are redrawn only when something changes: sharing starts or stops, a device connects or leaves, or the VPN goes on or off. They show no speeds or data counts. If iOS closes Tether without a word, a widget notices the next time it's redrawn, within 15 minutes, and says Stopped. The Live Activity starts when Tether is on screen or a widget starts it, and once swiped away it stays away until sharing starts again.
 
 ## DNS
 
@@ -176,7 +176,7 @@ Sources/Notices.swift        what to tell in a notification and when (tested on 
 Sources/DebugLog.swift       the log Settings shares, with the Go server's lines, and LogRedaction.swift what it leaves out (tested on the Mac)
 Sources/KeepAlive.swift      silent audio to stay alive in the background
 Sources/Shortcuts.swift      the Start Tether and Is Tether Sharing? actions for Shortcuts and Siri
-Widgets/                     the widgets, the Control Center button and the Live Activity; Sources/TetherShared.swift is what they share with the app
+Widgets/                     the widgets, the Control Center button and the Live Activity; Sources/WidgetState.swift (tested on the Mac) and TetherShared.swift are what they share with the app
 Sources/DemoMode.swift       the UI tests' demo states, run through the real session (Debug builds only)
 Sources/Fakes.swift          the stand-in server, page and sound the unit tests and demos share (Debug builds only)
 Tests/                       unit tests, run on the Mac
