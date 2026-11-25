@@ -2150,6 +2150,27 @@ final class InternetVPNTests: XCTestCase {
         XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.2.0.2", "198.51.100.7"]), "an address on no interface")
     }
 
+    /// A question that failed says nothing, so it isn't a VPN. No route for one family is an answer:
+    /// the other decides.
+    func testARouteNothingIsKnownAboutIsNotAVPN() {
+        let lines = ["pdp_ip0: 2607:fb90:1234::5", "utun5: 10.2.0.2", "utun5: fd00::2"]
+        XCTAssertEqual(Interfaces.vpn(in: lines, routes: [.local("10.2.0.2"), .local("fd00::2")]), "utun5")
+        XCTAssertEqual(Interfaces.vpn(in: lines, routes: [.local("10.2.0.2"), .none]), "utun5")
+        XCTAssertNil(Interfaces.vpn(in: lines, routes: [.local("10.2.0.2"), .unknown]))
+        XCTAssertNil(Interfaces.vpn(in: lines, routes: [.none, .none]), "no internet at all")
+        XCTAssertNil(Interfaces.vpn(in: lines, routes: []))
+        XCTAssertTrue(Interfaces.Route.local("10.2.0.2").isIPv4)
+        XCTAssertFalse(Interfaces.Route.local("fd00::2").isIPv4)
+        XCTAssertFalse(Interfaces.Route.none.isIPv4)
+    }
+
+    /// A VPN's inner address can be the same as one the carrier gave: then it isn't known which the
+    /// traffic leaves from.
+    func testAnAddressAlsoOnCellularIsNotAVPN() {
+        let lines = ["utun5: 10.180.2.3", "pdp_ip0: 10.180.2.3"]
+        XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.180.2.3"]))
+    }
+
     /// Tailscale without an exit node holds its tailnet address on a utun interface, but the internet
     /// still goes out over cellular, so it isn't a VPN here. With an exit node it is.
     func testTailscaleWithoutAnExitNodeIsNotAVPN() {

@@ -135,7 +135,7 @@ struct SettingsView: View {
         } header: {
             Text("VPN")
         } footer: {
-            Text("When it's on and no VPN carries this iPhone's internet, no device gets through, so nothing leaves without the VPN. Turn a VPN on in its app, or with Set VPN in Shortcuts: Tether can't pick one.")
+            Text("When it's on and no VPN carries this iPhone's internet, no device gets through. Tether pauses the devices when it sees the VPN go, which can take a few seconds. Turn a VPN on in its app, or with Set VPN in Shortcuts: Tether can't pick one.")
                 .accessibilityIdentifier("vpn.footer")
         }
     }
