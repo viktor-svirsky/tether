@@ -1634,12 +1634,18 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertNotNil(server.lastSetup?.serverPeers.first { $0.id == ipad.id }?.paused, "no VPN: kept out")
         XCTAssertNil(devices.setup.peers.first { $0.id == ipad.id }?.paused, "the saved device isn't paused")
         XCTAssertTrue(session.shortcutState().blockedWithoutVPN)
+        server.connected = [ipad.address]
+        session.sampleTraffic()
+        XCTAssertEqual(session.connectedNow, [], "its tunnel is up, but it isn't connected: nothing gets through")
+        XCTAssertEqual(session.shortcutState().connected, 0)
 
         vpn = "utun5"
         session.checkVPN()
         XCTAssertFalse(session.blockedWithoutVPN)
         XCTAssertEqual(session.vpnInterface, "utun5")
         XCTAssertNil(server.lastSetup?.serverPeers.first { $0.id == ipad.id }?.paused, "a VPN: let through again")
+        session.sampleTraffic()
+        XCTAssertEqual(session.connectedNow, [ipad.address])
     }
 
     /// A start while there's no VPN starts with every device kept out, not let through for a round.
@@ -1670,6 +1676,37 @@ final class HotspotSessionTests: XCTestCase {
         vpn = "utun5"
         session.checkVPN()
         XCTAssertNil(server.lastSetup?.serverPeers.first { $0.id == ready.peer.id }?.paused)
+    }
+
+    /// Devices kept out for want of a VPN don't hold the idle stop off: their tunnels are up, but
+    /// they use nothing.
+    func testDevicesKeptOutWithoutAVPNDontHoldOffTheIdleStop() {
+        idleAfter = .tenMinutes
+        onlyThroughVPN = true
+        shareInTheBackground()
+        server.connected = ["10.7.0.2"]
+        now = minutes(5)
+        session.watch()
+        XCTAssertEqual(session.connectedNow, [])
+        now = minutes(10)
+        session.watch()
+        XCTAssertFalse(session.sharing)
+        XCTAssertNotNil(session.idleStopped)
+    }
+
+    /// Off screen with the switch off, a round doesn't read the routes again: `Model` hears of a
+    /// change from the system. With it on, each round does.
+    func testARoundReadsTheVPNOnlyWhenItCounts() {
+        makeSession(sceneActive: false)
+        address = hotspot
+        session.watch()
+        XCTAssertNil(session.vpnInterface)
+        vpn = "utun5"
+        session.watch()
+        XCTAssertNil(session.vpnInterface, "not read again")
+        onlyThroughVPN = true
+        session.watch()
+        XCTAssertEqual(session.vpnInterface, "utun5")
     }
 
     /// The proxy carries for devices without WireGuard, so it's kept out the same way.
