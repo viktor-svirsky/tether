@@ -82,9 +82,11 @@ appex=$app/PlugIns/TetherWidgets.appex
     || { echo "the widget extension's build number isn't $build, the app's" >&2; exit 1; }
 # The entitlements files name the group by $(APP_BUNDLE_ID), which Xcode fills in only when it signs.
 group=$(/usr/libexec/PlistBuddy -c "Print :TetherAppGroup" "$app/Info.plist")
-[[ $group == group.* ]] || { echo "the app's group is '$group', not group.<bundle ID>" >&2; exit 1; }
+[[ $group =~ ^group\.[A-Za-z0-9.-]+$ ]] || { echo "the app's group is '$group', not group.<bundle ID>" >&2; exit 1; }
 for file in Widgets/TetherWidgets.entitlements Sources/Tether.entitlements; do
     sed 's/group\.\$(APP_BUNDLE_ID)/'"$group"'/' "$file" > "$work/$(basename "$file")"
+    # A file that no longer names the group that way would be signed in with the placeholder.
+    grep -qF "<string>$group</string>" "$work/$(basename "$file")" || { echo "$file doesn't name the group as group.\$(APP_BUNDLE_ID)" >&2; exit 1; }
 done
 codesign -f -s - --entitlements "$work/TetherWidgets.entitlements" "$appex"
 codesign -f -s - --entitlements "$work/Tether.entitlements" "$app"

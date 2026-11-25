@@ -20,7 +20,27 @@ final class WidgetStateTests: XCTestCase {
             XCTAssertFalse(shown.awake)
             XCTAssertEqual(shown.connected, [])
             XCTAssertEqual(shown.title, "Stopped")
+            XCTAssertFalse(shown.vpn, "nobody has looked at the VPN since either")
+            XCTAssertEqual(shown.detail, "")
         }
+    }
+
+    /// The line under the title never repeats it, and names the VPN only while Tether is awake.
+    func testTheDetailSaysWhatTheTitleDoesNot() {
+        XCTAssertEqual(sharing.detail, "Through a VPN")
+        XCTAssertEqual(WidgetState(sharing: true, awake: true).detail, "No VPN")
+        XCTAssertEqual(WidgetState(sharing: true, awake: true, blockedWithoutVPN: true).detail, "Devices kept out")
+        XCTAssertEqual(WidgetState(awake: true, vpn: true).detail, "Through a VPN")
+        XCTAssertEqual(WidgetState(awake: true).detail, "")
+        XCTAssertEqual(WidgetState(vpn: true).detail, "", "stopped: the VPN was last looked at who knows when")
+        XCTAssertEqual(WidgetState(problem: "Its keys can't be read yet.").detail, "Its keys can't be read yet.")
+    }
+
+    /// Signed without the app group, a widget says so, not Stopped.
+    func testAnInstallWithoutTheAppGroupSaysSo() {
+        let state = WidgetState(problem: WidgetState.noGroup)
+        XCTAssertEqual(state.title, "No data")
+        XCTAssertEqual(state.detail, WidgetState.noGroup)
     }
 
     /// A clock set back leaves a time in the future, which doesn't count as fresh for ever.

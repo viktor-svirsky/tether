@@ -1734,6 +1734,7 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertFalse(server.running)
         XCTAssertFalse(sound.playing, "so iOS suspends Tether")
         XCTAssertFalse(session.awake)
+        XCTAssertFalse(session.up)
         XCTAssertEqual(session.idleStopped?.byYou, true)
         XCTAssertTrue(session.shortcutState().stoppedByYou)
         now = minutes(5)
@@ -1744,6 +1745,33 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertTrue(server.running)
         XCTAssertTrue(session.awake)
         XCTAssertFalse(session.shortcutState().stoppedByYou)
+    }
+
+    /// The widgets are told right after a Stop, with no round in between, so nobody is listed as
+    /// connected to the stopped server.
+    func testAStopLeavesNobodyConnected() throws {
+        var saved = WireGuardSetup.new()
+        let ipad = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        makeSession(sceneActive: false, saved: saved)
+        server.connected = [ipad.address]
+        address = hotspot
+        session.wake()
+        session.watch()
+        XCTAssertEqual(session.connectedPeers.map(\.id), [ipad.id])
+        XCTAssertTrue(session.stopNow())
+        XCTAssertEqual(session.connectedPeers.map(\.id), [])
+        XCTAssertEqual(session.connectedNow, [])
+    }
+
+    /// The Live Activity lasts through a call, which takes the sound for a while.
+    func testTetherIsUpWhileTheSoundIsSilent() {
+        makeSession(sceneActive: false)
+        sound.silent = true
+        address = hotspot
+        session.wake()
+        session.watch()
+        XCTAssertFalse(session.awake, "the widgets don't say Sharing")
+        XCTAssertTrue(session.up, "but nothing stopped it")
     }
 
     /// On screen nothing stops Tether but the hotspot, and opening it is what starts it again, so a

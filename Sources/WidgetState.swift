@@ -34,6 +34,7 @@ struct WidgetState: Codable, Equatable {
     /// stopped, so a widget doesn't say Sharing for hours after iOS closed Tether, and its button
     /// offers Start.
     static func load(now: Date = Date()) -> WidgetState {
+        guard SharedGroup.available else { return WidgetState(problem: noGroup) }
         let defaults = SharedGroup.defaults
         let saved = defaults?.data(forKey: key).flatMap { try? JSONDecoder().decode(WidgetState.self, from: $0) } ?? WidgetState()
         return saved.fresh(alive: defaults?.object(forKey: aliveKey) as? Date, now: now)
@@ -42,8 +43,12 @@ struct WidgetState: Codable, Equatable {
     func fresh(alive: Date?, now: Date) -> WidgetState {
         guard awake || sharing else { return self }
         if let alive, abs(now.timeIntervalSince(alive)) < Self.staleAfter { return self }
-        return WidgetState(vpn: vpn)
+        return WidgetState() // not the VPN either: nobody has looked since
     }
+
+    /// What a widget says when the install has no app group to read Tether's state through, see
+    /// `SharedGroup.available`.
+    static let noGroup = "This install was signed without Tether's app group, so widgets can't see it."
 
     static func markAlive(_ now: Date = Date()) {
         SharedGroup.defaults?.set(now, forKey: aliveKey)
@@ -57,8 +62,19 @@ struct WidgetState: Codable, Equatable {
     var title: String {
         if sharing, blockedWithoutVPN { return "No VPN" }
         if sharing { return connected.isEmpty ? "Sharing" : "Sharing with \(connected.count)" }
+        if problem == Self.noGroup { return "No data" }
         if problem != nil { return "Not running" }
         return awake ? "Waiting" : "Stopped"
+    }
+
+    /// The line under the title: why it isn't running, that devices are kept out, or the VPN. The
+    /// VPN only while Tether is awake to have looked.
+    var detail: String {
+        if let problem, !sharing { return problem }
+        if sharing, blockedWithoutVPN { return "Devices kept out" }
+        guard awake else { return "" }
+        if vpn { return "Through a VPN" }
+        return sharing ? "No VPN" : ""
     }
 }
 
@@ -71,14 +87,20 @@ enum SharedGroup {
 
     /// SideStore and AltStore give an app group a name of the signer's own, and list the new names
     /// under ALTAppGroups in the app's Info.plist. The extension looks in its app's too.
-    static var id: String {
+    /// Read once: it can't change while the process runs.
+    static let id: String = {
         let app = Bundle.main.bundleURL.pathExtension == "appex"
             ? Bundle(url: Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()) : Bundle.main
         for bundle in [Bundle.main, app].compactMap({ $0 }) {
             if let groups = bundle.object(forInfoDictionaryKey: "ALTAppGroups") as? [String], let first = groups.first { return first }
         }
         return original
-    }
+    }()
 
-    static var defaults: UserDefaults? { UserDefaults(suiteName: id) }
+    static let defaults = UserDefaults(suiteName: id)
+
+    /// The signature really carries the group. Without it `UserDefaults(suiteName:)` still gives a
+    /// store, but each process its own, so the widgets would say Stopped for ever: a signer that
+    /// drops the entitlement (some do, with their own profile) is told apart by the container.
+    static let available = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: id) != nil
 }

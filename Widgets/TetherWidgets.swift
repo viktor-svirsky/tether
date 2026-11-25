@@ -68,7 +68,7 @@ struct StatusView: View {
         case .accessoryRectangular:
             VStack(alignment: .leading) {
                 Label(state.title, systemImage: icon).font(.headline)
-                Text(detail).font(.caption)
+                Text(state.detail).font(.caption)
             }
         default:
             HStack(alignment: .top) {
@@ -77,7 +77,7 @@ struct StatusView: View {
                         .font(.title2)
                         .foregroundStyle(state.sharing && !state.blockedWithoutVPN ? .green : .secondary)
                     Text(state.title).font(.headline)
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                    Text(state.detail).font(.caption).foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                     Button(intent: SetSharingIntent(!state.awake, fromWidget: true)) {
                         Text(state.awake ? "Stop" : "Start").frame(maxWidth: .infinity)
@@ -86,8 +86,8 @@ struct StatusView: View {
                 }
                 if family == .systemMedium {
                     VStack(alignment: .leading, spacing: 4) {
-                        ForEach(state.connected.prefix(4)) { Label($0.name, systemImage: "laptopcomputer").font(.caption) }
-                        if state.connected.isEmpty { Text("No device connected").font(.caption).foregroundStyle(.secondary) }
+                        ForEach(state.connected.prefix(4)) { Label($0.name, systemImage: "laptopcomputer").font(.caption).privacySensitive() }
+                        if state.connected.isEmpty, state.sharing { Text("No device connected").font(.caption).foregroundStyle(.secondary) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -98,12 +98,6 @@ struct StatusView: View {
     private var icon: String {
         if state.blockedWithoutVPN { return "lock.shield" }
         return state.sharing ? "link.circle.fill" : "link.circle"
-    }
-
-    private var detail: String {
-        if let problem = state.problem, !state.sharing { return problem }
-        if state.vpn { return "Through a VPN" }
-        return state.sharing ? "No VPN" : ""
     }
 }
 
@@ -137,11 +131,11 @@ struct TetherLiveActivity: Widget {
                     .font(.title2)
                     .foregroundStyle(context.state.blockedWithoutVPN ? .orange : .green)
                 VStack(alignment: .leading) {
-                    Text(headline(context.state)).font(.headline)
-                    Text(names(context.state)).font(.caption).foregroundStyle(.secondary)
+                    Text(context.isStale ? "Open Tether to check" : headline(context.state)).font(.headline)
+                    Text(names(context.state)).font(.caption).foregroundStyle(.secondary).privacySensitive()
                 }
                 Spacer()
-                Text(context.state.vpn ? "VPN" : "No VPN").font(.caption.bold())
+                if !context.isStale { Text(context.state.vpn ? "VPN" : "No VPN").font(.caption.bold()) }
             }
             .padding()
         } dynamicIsland: { context in
@@ -150,10 +144,11 @@ struct TetherLiveActivity: Widget {
                     Label("Tether", systemImage: "link.circle.fill").foregroundStyle(.green)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(context.state.vpn ? "VPN" : "No VPN").font(.caption.bold())
+                    if !context.isStale { Text(context.state.vpn ? "VPN" : "No VPN").font(.caption.bold()) }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text("\(headline(context.state)) · \(names(context.state))").font(.caption)
+                    Text(context.isStale ? "Open Tether to check" : "\(headline(context.state)) · \(names(context.state))")
+                        .font(.caption).privacySensitive()
                 }
             } compactLeading: {
                 Image(systemName: "link").foregroundStyle(.green)
@@ -166,6 +161,7 @@ struct TetherLiveActivity: Widget {
     }
 
     private func headline(_ state: TetherActivityAttributes.ContentState) -> String {
+        guard state.sharing else { return "Waiting for a device on the hotspot" }
         if state.blockedWithoutVPN { return "No VPN, devices kept out" }
         switch state.connected.count {
         case 0: return "Sharing, no device yet"
@@ -175,6 +171,6 @@ struct TetherLiveActivity: Widget {
     }
 
     private func names(_ state: TetherActivityAttributes.ContentState) -> String {
-        state.connected.isEmpty ? "Waiting for a device" : state.connected.joined(separator: ", ")
+        state.connected.isEmpty ? (state.sharing ? "No device connected" : "") : state.connected.joined(separator: ", ")
     }
 }

@@ -8,6 +8,8 @@ import Foundation
 /// The Live Activity while Tether shares.
 struct TetherActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
+        /// The hotspot is on and WireGuard runs. Not, and Tether waits for a device on the hotspot.
+        var sharing: Bool
         var connected: [String]
         var vpn: Bool
         var blockedWithoutVPN: Bool
@@ -21,6 +23,8 @@ struct TetherActivityAttributes: ActivityAttributes {
 struct SetSharingIntent: SetValueIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "Turn Tether On or Off"
     static let isDiscoverable = false
+    /// Not from a locked iPhone: whoever holds it could start sharing again after a Stop.
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
     @Parameter(title: "On") var value: Bool
     /// Run from a widget's button, not the Control Center button, see `Model.publishWidgets(after:)`.

@@ -301,8 +301,16 @@ final class Model: ObservableObject {
     /// The Live Activity while sharing, see `followLiveActivity`.
     private var activity: Activity<TetherActivityAttributes>?
     private var activityFailure: String?
-    /// The person swiped the Live Activity away, so it isn't started again while this sharing lasts.
+    /// The person swiped the Live Activity away, so it isn't started again until a stop and a start.
     private var activityDismissed = false
+    /// One left by an earlier launch was looked for.
+    private var activityAdopted = false
+    /// When a start was last tried.
+    private var activityTried: Date?
+    /// The last `reloadWidgets`, and when the widgets' state was last stood by.
+    private var widgetRound: Date?
+    private var widgetAlive: Date?
+    private var toldNoGroup = false
     /// Logs the calls, see `CallWatch`.
     private var callWatch: CallWatch?
     /// Shared, so the call lines and the hotspot line number the lines the same way.
@@ -390,12 +398,14 @@ final class Model: ObservableObject {
         session.shortcutState()
     }
 
-    /// See `HotspotSession.stopNow`.
+    /// See `HotspotSession.stopNow`. Only from the background: with Control Center over the open app
+    /// Tether is inactive, not gone, and closing Control Center would start it again.
     @discardableResult
     func stopNow() -> Bool {
         #if DEBUG
         if demo != nil { return false }
         #endif
+        guard UIApplication.shared.applicationState == .background else { return false }
         return session.stopNow()
     }
 
@@ -426,6 +436,7 @@ final class Model: ObservableObject {
     /// Live Activity's end, and the alarm for iOS closing Tether, which a Stop mustn't leave to ring.
     func publishWidgets(after button: WidgetButton) async {
         guard let state = widgetStateNow() else { return }
+        activityTried = nil // the person asked, so it's tried now
         await followLiveActivity(state, mayStart: true)?.value
         await notify()?.value
         // Read again: a Start or a watcher round may have published a newer one while this waited.
@@ -437,16 +448,29 @@ final class Model: ObservableObject {
         #if DEBUG
         if demo != nil { return nil }
         #endif
+        if !SharedGroup.available {
+            if !toldNoGroup { Self.append("widgets: this install's signature has no app group (\(SharedGroup.id)), so they can't read Tether's state") }
+            toldNoGroup = true
+            return nil
+        }
         return WidgetState(sharing: session.sharing && session.staysRunning, awake: session.awake, problem: session.wireGuardProblem,
                            connected: session.connectedPeers.map { WidgetState.Device(id: $0.id, name: $0.name) },
                            vpn: session.vpnInterface != nil, blockedWithoutVPN: session.blockedWithoutVPN)
     }
 
     private func reloadWidgets(_ state: WidgetState, redrawnByIOS button: WidgetButton?) {
-        // Each round while awake, with no redraw: a state older than `WidgetState.staleAfter` is one
-        // Tether didn't live to take back, see `WidgetState.load`.
-        if state.awake { WidgetState.markAlive() }
-        guard state != widgetState else { return }
+        let now = Date()
+        // No round for longer than `WidgetState.staleAfter`: iOS had Tether suspended, and a widget
+        // may have taken its state for left behind and drawn Stopped. The same state is news again.
+        if let last = widgetRound, now.timeIntervalSince(last) > WidgetState.staleAfter { widgetState = nil }
+        widgetRound = now
+        let changed = state != widgetState
+        // Stood by once a minute while awake, with no redraw, see `WidgetState.load`.
+        if state.awake, changed || widgetAlive.map({ now.timeIntervalSince($0) >= 60 }) ?? true {
+            WidgetState.markAlive(now)
+            widgetAlive = now
+        }
+        guard changed else { return }
         state.save()
         // iOS redraws the widget whose button ran, but perhaps not Tether's other widgets. Left
         // unremembered, the next round's state counts as a change and redraws them all. After Stop
@@ -456,36 +480,50 @@ final class Model: ObservableObject {
         if button != .control, #available(iOS 18, *) { ControlCenter.shared.reloadAllControls() }
     }
 
-    /// A Live Activity while sharing, updated only when the devices or the VPN change, ended when
-    /// sharing stops. iOS starts one only while Tether is on screen or runs an action (`mayStart`),
-    /// so a round in the background doesn't ask. One left from before a relaunch is taken over, not
-    /// doubled. One iOS ended after its 8 hours is started again, and one swiped away stays away
-    /// until sharing starts again. Gives the task that ends or updates it, nil when there's none.
+    /// How long a Live Activity's contents count without a word from Tether. iOS marks it stale
+    /// after that, and it says to open Tether: iOS can close Tether with no warning, and the
+    /// activity would say Sharing for hours. Renewed with `activityRenewWithin` left, so about three
+    /// times an hour, and with every change.
+    private static let activityFreshFor: TimeInterval = 30 * 60
+    private static let activityRenewWithin: TimeInterval = 10 * 60
+
+    /// A Live Activity from a start to a stop: while Tether shares or waits for the hotspot, see
+    /// `HotspotSession.up`. Updated when sharing, the devices or the VPN change. iOS starts one only
+    /// while Tether is on screen or runs an action (`mayStart`), so a round in the background doesn't
+    /// ask, and on screen it's tried once a minute at most. One left from before a relaunch is taken
+    /// over, not doubled. One iOS ended after its 8 hours is started again, and one swiped away
+    /// stays away until Tether is stopped and started. Gives the task that ends or updates it, nil
+    /// when there's none.
     @discardableResult
     private func followLiveActivity(_ state: WidgetState, mayStart: Bool) -> Task<Void, Never>? {
+        let now = Date()
         if let current = activity, current.activityState != .active, current.activityState != .stale {
             if current.activityState == .dismissed { activityDismissed = true }
             activity = nil
         }
-        if activity == nil {
+        if !activityAdopted {
+            activityAdopted = true
             activity = Activity<TetherActivityAttributes>.activities.first { $0.activityState == .active || $0.activityState == .stale }
         }
-        let content = TetherActivityAttributes.ContentState(connected: state.connected.map(\.name), vpn: state.vpn,
-                                                            blockedWithoutVPN: state.blockedWithoutVPN)
-        guard state.sharing else {
+        guard session.up else {
             activityDismissed = false
             let ending = activity
             activity = nil
             return ending.map { ending in Task { await ending.end(nil, dismissalPolicy: .immediate) } }
         }
+        let content = TetherActivityAttributes.ContentState(sharing: state.sharing, connected: state.connected.map(\.name),
+                                                            vpn: state.vpn, blockedWithoutVPN: state.blockedWithoutVPN)
+        let fresh = ActivityContent(state: content, staleDate: now.addingTimeInterval(Self.activityFreshFor))
         if let activity {
-            guard activity.content.state != content else { return nil }
-            return Task { await activity.update(ActivityContent(state: content, staleDate: nil)) }
+            let renew = activity.content.staleDate.map { $0.timeIntervalSince(now) < Self.activityRenewWithin } ?? true
+            guard activity.content.state != content || renew else { return nil }
+            return Task { await activity.update(fresh) }
         }
-        guard mayStart, !activityDismissed, ActivityAuthorizationInfo().areActivitiesEnabled else { return nil }
+        guard mayStart, !activityDismissed, activityTried.map({ now.timeIntervalSince($0) >= 60 }) ?? true else { return nil }
+        activityTried = now
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return nil }
         do {
-            activity = try Activity.request(attributes: TetherActivityAttributes(),
-                                            content: ActivityContent(state: content, staleDate: nil))
+            activity = try Activity.request(attributes: TetherActivityAttributes(), content: fresh)
             activityFailure = nil
         } catch {
             let failure = "Live Activity: \(error)"

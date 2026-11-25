@@ -566,6 +566,10 @@ final class HotspotSession {
     /// so it isn't sharing for long (#164), and the widgets mustn't say it is.
     var staysRunning: Bool { sceneActive || !running || keepAlive.sounding }
 
+    /// For the Live Activity: not stopped, whether or not the sound sounds this moment (a call takes
+    /// it for a while), so it lasts from a start to a stop and through a wait for the hotspot.
+    var up: Bool { idleStopped == nil && (sceneActive || running || keepAlive.playing) }
+
     /// For the widgets: sharing, or waiting for the hotspot, and staying so: on screen, or with the
     /// sound keeping Tether running.
     var awake: Bool { idleStopped == nil && (sceneActive || (running ? keepAlive.sounding : keepAlive.playing)) }
@@ -593,6 +597,10 @@ final class HotspotSession {
     private func stop(_ stopped: IdleStopped) {
         idleStopped = stopped
         if running { stopSharing() }
+        // Nobody is connected to a stopped server, and no later round may get to say so: iOS suspends
+        // Tether once the sound stops, and the widgets are told right after this.
+        watchedConnected = []
+        if !wireGuardConnected.isEmpty { wireGuardConnected = [] }
         waitingSince = .distantPast // so the next rounds don't start the sound again, see keepAliveWhileSharing
         keepAlive.stop()
     }
