@@ -923,7 +923,9 @@ final class HotspotSession {
             try server.setPeers(serverSetup, dns: dns(), blockLocal: blockLocal())
         } catch {
             log("WireGuard devices: \(error), restarting")
-            if running, let boundHost { startWireGuard(on: boundHost) }
+            // Never left running with the list from before: it may let in what this one keeps out.
+            guard running, let boundHost, devices.loaded else { return server.stop() }
+            startWireGuard(on: boundHost)
         }
     }
 
@@ -1261,20 +1263,48 @@ enum Interfaces {
     /// carries only one of them isn't one here. A tunnel that carries no default route, like
     /// Tailscale without an exit node, isn't one either. No packet is sent.
     static func internetVPN() -> String? {
-        vpn(in: addresses(), local: internetProbes.compactMap(localAddress(toward:)))
+        var routes = internetProbes.map(route(toward:))
+        // With no IPv4 route, a device's IPv4 traffic leaves through the carrier's NAT64 (nat64.go),
+        // whose well-known prefix a VPN that carries only 2000::/3 leaves out.
+        if !routes.contains(where: { $0.isIPv4 }) { routes.append(route(toward: nat64Probe)) }
+        return vpn(in: addresses(), routes: routes)
     }
 
     /// Two addresses per family, far apart. A DNS app's tunnel can carry only its resolver's address
     /// (1.1.1.1, say) and nothing else, so the second of each is one no such tunnel is for: from the
     /// ranges kept for documentation, which the default route covers like any other address.
     static let internetProbes = ["1.1.1.1", "198.51.100.1", "2606:4700:4700::1111", "2001:db8::1"]
+    /// 1.1.1.1 behind the well-known NAT64 prefix.
+    static let nat64Probe = "64:ff9b::101:101"
+
+    /// Where iOS would send from toward one address.
+    enum Route: Equatable {
+        /// From this local address.
+        case local(String)
+        /// Nowhere: the iPhone has no route there, like IPv4 on an IPv6-only carrier without CLAT.
+        case none
+        /// The question itself failed (no socket left, say), so nothing is known.
+        case unknown
+
+        var isIPv4: Bool {
+            if case .local(let address) = self { return !address.contains(":") }
+            return false
+        }
+    }
+
+    /// A route nothing is known about counts against a VPN: guessing would let devices through.
+    static func vpn(in interfaces: [String], routes: [Route]) -> String? {
+        guard !routes.contains(.unknown) else { return nil }
+        return vpn(in: interfaces, local: routes.compactMap { if case .local(let address) = $0 { address } else { nil } })
+    }
 
     static func vpn(in interfaces: [String], local: [String]) -> String? {
         let lines = parse(interfaces)
         var tunnel: String?
         for address in local {
-            guard let name = lines.first(where: { $0.address == address })?.name,
-                  name.hasPrefix("utun") || name.hasPrefix("ipsec") else { return nil }
+            // Every interface that holds it: a VPN's inner address can be the carrier's too.
+            let names = lines.filter { $0.address == address }.map(\.name)
+            guard let name = names.first, names.allSatisfy({ $0.hasPrefix("utun") || $0.hasPrefix("ipsec") }) else { return nil }
             tunnel = tunnel ?? name
         }
         return tunnel
@@ -1282,29 +1312,31 @@ enum Interfaces {
 
     /// The local address a UDP socket connected toward `host` gets, port 53. Connecting a UDP socket
     /// only picks the route.
-    private static func localAddress(toward host: String) -> String? {
+    private static func route(toward host: String) -> Route {
         var hints = addrinfo(ai_flags: AI_NUMERICHOST, ai_family: AF_UNSPEC, ai_socktype: SOCK_DGRAM, ai_protocol: 0,
                              ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
         var info: UnsafeMutablePointer<addrinfo>?
-        guard getaddrinfo(host, "53", &hints, &info) == 0, let info else { return nil }
+        guard getaddrinfo(host, "53", &hints, &info) == 0, let info else { return .unknown }
         defer { freeaddrinfo(info) }
         let fd = socket(info.pointee.ai_family, SOCK_DGRAM, 0)
-        guard fd >= 0 else { return nil }
+        guard fd >= 0 else { return [EAFNOSUPPORT, EPROTONOSUPPORT].contains(errno) ? .none : .unknown }
         defer { close(fd) }
-        guard connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0 else { return nil }
+        guard connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0 else {
+            return [ENETUNREACH, EHOSTUNREACH, ENETDOWN, EADDRNOTAVAIL].contains(errno) ? .none : .unknown
+        }
         var local = sockaddr_storage()
         var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
         let named = withUnsafeMutablePointer(to: &local) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
         }
-        guard named == 0 else { return nil }
-        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        guard named == 0 else { return .unknown }
+        var name = [CChar](repeating: 0, count: Int(NI_MAXHOST))
         let found = withUnsafePointer(to: &local) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                getnameinfo($0, length, &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
+                getnameinfo($0, length, &name, socklen_t(name.count), nil, 0, NI_NUMERICHOST)
             }
         }
-        return found == 0 ? String(cString: host) : nil
+        return found == 0 ? .local(String(cString: name)) : .unknown
     }
 
     /// Every address but loopback's, IPv4 and IPv6, as "name: address".

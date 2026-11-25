@@ -3,7 +3,7 @@ import XCTest
 /// Settings: Only share through a VPN (#277). What the session does with it, and which interface
 /// counts as a VPN, is covered by HotspotSessionTests. A demo launch never has a VPN.
 final class SettingsVPNTests: TetherUITestCase {
-    static let footer = "When it's on and no VPN carries this iPhone's internet, no device gets through, so nothing leaves without the VPN. Turn a VPN on in its app, or with Set VPN in Shortcuts: Tether can't pick one."
+    static let footer = "When it's on and no VPN carries this iPhone's internet, no device gets through. Tether pauses the devices when it sees the VPN go, which can take a few seconds. Turn a VPN on in its app, or with Set VPN in Shortcuts: Tether can't pick one."
 
     func testOnlyShareThroughAVPNIsASwitchOffAtFirstAndKeptAfterClosing() throws {
         launch(.sharing)
