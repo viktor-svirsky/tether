@@ -48,7 +48,7 @@ A signing app usually changes the bundle ID, so a Tether installed this way is a
 You need a Mac with Xcode. A free Apple ID is enough.
 
 1. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen) and Go (`brew install xcodegen go`). `xcodegen generate` builds the WireGuard part with Go first, see `scripts/build-wireguard.sh`.
-2. Open `project.yml` and set `DEVELOPMENT_TEAM` to your own team ID, and `APP_BUNDLE_ID` to something unique like `com.yourname.tether`. You'll find your team ID in Xcode under Settings > Accounts.
+2. Open `project.yml` and set `DEVELOPMENT_TEAM` to your own team ID, and `APP_BUNDLE_ID` to something unique like `com.yourname.tether`. The widgets' app group follows it, as `group.com.yourname.tether`. You'll find your team ID in Xcode under Settings > Accounts.
 3. Build and install:
 
    ```sh

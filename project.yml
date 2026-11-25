@@ -24,10 +24,11 @@ targets:
         embed: false # a static library, linked into the app
       - target: TetherWidgets # the widgets, the Control Center button and the Live Activity
     # The app group the widget extension reads Tether's state from, see SharedGroup in TetherShared.swift.
+    # It follows APP_BUNDLE_ID, so another team's build gets a group of its own.
     entitlements:
       path: Sources/Tether.entitlements
       properties:
-        com.apple.security.application-groups: [group.com.vsvirskyi.phoneshare]
+        com.apple.security.application-groups: [group.$(APP_BUNDLE_ID)]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
@@ -72,6 +73,7 @@ targets:
       properties:
         UIBackgroundModes: [audio]
         NSSupportsLiveActivities: true
+        TetherAppGroup: group.$(APP_BUNDLE_ID)
         NSBonjourServices: [_tether._tcp] # see LocalNetworkCheck
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
@@ -84,7 +86,7 @@ targets:
     entitlements:
       path: Widgets/TetherWidgets.entitlements
       properties:
-        com.apple.security.application-groups: [group.com.vsvirskyi.phoneshare]
+        com.apple.security.application-groups: [group.$(APP_BUNDLE_ID)]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).widgets
@@ -99,6 +101,7 @@ targets:
       properties:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        TetherAppGroup: group.$(APP_BUNDLE_ID)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
   TetherUITests:

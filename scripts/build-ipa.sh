@@ -80,8 +80,14 @@ cp "$licenses" "$app/"
 appex=$app/PlugIns/TetherWidgets.appex
 [[ $(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$appex/Info.plist") == "$build" ]] \
     || { echo "the widget extension's build number isn't $build, the app's" >&2; exit 1; }
-codesign -f -s - --entitlements Widgets/TetherWidgets.entitlements "$appex"
-codesign -f -s - --entitlements Sources/Tether.entitlements "$app"
+# The entitlements files name the group by $(APP_BUNDLE_ID), which Xcode fills in only when it signs.
+group=$(/usr/libexec/PlistBuddy -c "Print :TetherAppGroup" "$app/Info.plist")
+[[ $group == group.* ]] || { echo "the app's group is '$group', not group.<bundle ID>" >&2; exit 1; }
+for file in Widgets/TetherWidgets.entitlements Sources/Tether.entitlements; do
+    sed 's/group\.\$(APP_BUNDLE_ID)/'"$group"'/' "$file" > "$work/$(basename "$file")"
+done
+codesign -f -s - --entitlements "$work/TetherWidgets.entitlements" "$appex"
+codesign -f -s - --entitlements "$work/Tether.entitlements" "$app"
 
 mkdir "$work/Payload"
 cp -R "$app" "$work/Payload/"

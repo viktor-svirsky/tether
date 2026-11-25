@@ -44,7 +44,11 @@ struct WidgetState: Codable, Equatable {
 }
 
 enum SharedGroup {
-    static let original = "group.com.vsvirskyi.phoneshare"
+    /// The group the build asks for, group.<the app's bundle ID>, from TetherAppGroup in Info.plist
+    /// (project.yml), so a build under another team's bundle ID has its own.
+    static var original: String {
+        Bundle.main.object(forInfoDictionaryKey: "TetherAppGroup") as? String ?? "group.com.vsvirskyi.phoneshare"
+    }
 
     /// SideStore and AltStore give an app group a name of the signer's own, and list the new names
     /// under ALTAppGroups in the app's Info.plist. The extension looks in its app's too.

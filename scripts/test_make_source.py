@@ -91,11 +91,12 @@ class MakeSourceTests(unittest.TestCase):
         self.assertEqual(app["iconURL"], f"{raw}/Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png")
         self.assertEqual(app["screenshots"], [f"{raw}/docs/sharing.png", f"{raw}/docs/add-device.png", f"{raw}/docs/notifications.png"])
 
-    # AltStore refuses an app whose permissions don't match the IPA, so every usage description is listed.
+    # AltStore refuses an app whose permissions don't match the IPA, so every usage description is listed,
+    # and the app group build-ipa.sh signs in.
     def test_the_privacy_keys_are_every_usage_description(self):
         self.assertEqual(
             self.app()["appPermissions"],
-            {"entitlements": [], "privacy": {"NSLocalNetworkUsageDescription": INFO["NSLocalNetworkUsageDescription"]}},
+            {"entitlements": ["com.apple.security.application-groups"], "privacy": {"NSLocalNetworkUsageDescription": INFO["NSLocalNetworkUsageDescription"]}},
         )
 
     def test_a_tag_that_doesnt_match_the_version_is_refused(self):

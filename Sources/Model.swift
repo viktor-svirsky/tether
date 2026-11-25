@@ -412,6 +412,8 @@ final class Model: ObservableObject {
     func publishWidgets(after button: WidgetButton) async {
         guard let state = widgetStateNow() else { return }
         await followLiveActivity(state)?.value
+        // Read again: a Start or a watcher round may have published a newer one while this waited.
+        guard let state = widgetStateNow() else { return }
         reloadWidgets(state, redrawnByIOS: button)
     }
 

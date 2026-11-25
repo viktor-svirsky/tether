@@ -149,6 +149,13 @@ struct Notifier {
         if round.sharing {
             stoppedSince = nil
             notices += checkDevices(round)
+        } else if round.idleStopped?.byYou == true {
+            // Stop on a widget: the devices are gone because the person said so, nothing to tell.
+            stoppedSince = nil
+            for id in devices.keys {
+                devices[id]?.told = false
+                devices[id]?.goneSince = nil
+            }
         } else {
             notices += checkStopped(round)
         }

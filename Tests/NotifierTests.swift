@@ -346,6 +346,17 @@ final class NotifierTests: XCTestCase {
         XCTAssertEqual(round(at: 15, [], sharing: false, idleStopped: stopped), [])
     }
 
+    /// Also with a device connected before it, which an unasked stop tells as a problem.
+    func testAStopFromAWidgetWithADeviceConnectedIsNotTold() {
+        round(at: 0, [])
+        round(at: 1, [ipad.address])
+        round(at: 4, [ipad.address])
+        let stopped = IdleStopped(at: minutes(5), after: .never, byYou: true)
+        XCTAssertEqual(round(at: 5, [], sharing: false, idleStopped: stopped), [])
+        XCTAssertEqual(round(at: 7, [], sharing: false, idleStopped: stopped), [])
+        XCTAssertEqual(round(at: 30, [], sharing: false, idleStopped: stopped), [])
+    }
+
     /// Sharing stopped after the set time with nobody connected (#76): told once, with the time.
     func testSharingStoppedWhileIdleIsToldOnce() {
         round(at: 0, [])

@@ -24,6 +24,8 @@
 	</array>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>TetherAppGroup</key>
+	<string>group.$(APP_BUNDLE_ID)</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

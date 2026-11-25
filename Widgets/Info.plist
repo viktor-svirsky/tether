@@ -23,5 +23,7 @@
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.widgetkit-extension</string>
 	</dict>
+	<key>TetherAppGroup</key>
+	<string>group.$(APP_BUNDLE_ID)</string>
 </dict>
 </plist>
