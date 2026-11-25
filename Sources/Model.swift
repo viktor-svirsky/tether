@@ -307,7 +307,8 @@ final class Model: ObservableObject {
         let notices = notifier.check(Notifier.Round(now: Date(), onScreen: session.sceneActive, hotspot: session.running,
                                                     sharing: session.sharing, devices: session.notifiedPeers,
                                                     connected: session.connectedNow, expires: expires,
-                                                    idleStopped: session.idleStopped, limitAlerts: session.limitAlerts))
+                                                    idleStopped: session.idleStopped, limitAlerts: session.limitAlerts,
+                                                    keptOut: session.blockedWithoutVPN))
         if notifier.wouldTell { askForNotices() }
         let alarm = closedAlarm.check(now: Date(), sharing: session.sharing, on: NoticeKind.closed.isOn(in: settingsDefaults))
         if alarm != .none { poster.queue(alarm) }

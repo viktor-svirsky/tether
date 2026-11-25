@@ -27,10 +27,11 @@ final class NotifierTests: XCTestCase {
     /// One round in the background while sharing, unless said otherwise. Returns what it would post, as "title: body".
     @discardableResult
     private func round(at m: Double, _ connected: Set<String>, onScreen: Bool = false, hotspot: Bool = true, sharing: Bool = true,
-                       devices: [WireGuardSetup.Peer]? = nil, expires: Date? = nil, idleStopped: IdleStopped? = nil) -> [String] {
+                       devices: [WireGuardSetup.Peer]? = nil, expires: Date? = nil, idleStopped: IdleStopped? = nil,
+                       keptOut: Bool = false) -> [String] {
         notifier.check(Notifier.Round(now: minutes(m), onScreen: onScreen, hotspot: hotspot, sharing: sharing,
                                       devices: devices ?? [ipad, pc, router], connected: connected, expires: expires,
-                                      idleStopped: idleStopped))
+                                      idleStopped: idleStopped, keptOut: keptOut))
             .map { "\($0.title): \($0.body)" }
     }
 
@@ -334,6 +335,16 @@ final class NotifierTests: XCTestCase {
     private func expiryRound(at now: Date, expires: Date, onScreen: Bool = false) -> [String] {
         notifier.check(Notifier.Round(now: now, onScreen: onScreen, hotspot: false, sharing: false, devices: [], connected: [], expires: expires))
             .map { "\($0.title): \($0.body)" }
+    }
+
+    // MARK: Only share through a VPN
+
+    /// A device that connects while no VPN is on gets nothing through, so it's told once one is.
+    func testADeviceKeptOutWithoutAVPNIsToldOnceItGetsThrough() {
+        round(at: 0, [])
+        XCTAssertEqual(round(at: 1, [ipad.address], keptOut: true), [])
+        XCTAssertEqual(round(at: 5, [ipad.address], keptOut: true), [])
+        XCTAssertEqual(round(at: 6, [ipad.address]).count, 1)
     }
 
     // MARK: Stopping when idle
