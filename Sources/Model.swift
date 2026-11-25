@@ -208,7 +208,13 @@ final class Model: ObservableObject {
         showsLocalNetworkIntro = localNetworkIntro.shown
         if session.sceneActive { localNetworkIntro.check() }
         pathMonitor.pathUpdateHandler = { [weak self] _ in
-            Task { @MainActor in self?.session.checkVPN() }
+            Task { @MainActor in
+                self?.session.checkVPN()
+                // And once more: iOS can say the network changed before a VPN has all its routes in,
+                // IPv4 a moment before IPv6, and may not say it again.
+                try? await Task.sleep(for: .seconds(2))
+                self?.session.checkVPN()
+            }
         }
         pathMonitor.start(queue: .main)
         watcher = Task { [weak self] in

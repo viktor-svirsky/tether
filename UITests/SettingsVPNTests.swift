@@ -1,8 +1,10 @@
 import XCTest
 
 /// Settings: Only share through a VPN (#277). What the session does with it, and which interface
-/// counts as a VPN, is covered by HotspotSessionTests. A demo launch never has a VPN.
+/// counts as a VPN, is covered by HotspotSessionTests. A demo launch never has a VPN, so turning the
+/// switch on keeps its devices out, and the main screen says so.
 final class SettingsVPNTests: TetherUITestCase {
+    static let blocked = "No VPN is on, so no device gets through until one is. Turn your VPN on, or turn off Only share through a VPN in Settings."
     static let footer = "When it's on and no VPN carries this iPhone's internet, no device gets through. Tether pauses the devices when it sees the VPN go, which can take a few seconds. Turn a VPN on in its app, or with Set VPN in Shortcuts: Tether can't pick one."
 
     func testOnlyShareThroughAVPNIsASwitchOffAtFirstAndKeptAfterClosing() throws {
@@ -19,7 +21,14 @@ final class SettingsVPNTests: TetherUITestCase {
         XCTAssertEqual(value(of: toggle), "1", "the tap turned it on")
         app.buttons["settings.done"].tap()
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5))
+        XCTAssertEqual(label(of: "vpn.blocked"), Self.blocked)
+        try audit(only: "vpn.")
         openSettings()
-        XCTAssertEqual(value(of: reveal(app.switches["vpn.only"].firstMatch)), "1", "kept after closing")
+        let again = reveal(app.switches["vpn.only"].firstMatch)
+        XCTAssertEqual(value(of: again), "1", "kept after closing")
+        again.switches.firstMatch.exists ? again.switches.firstMatch.tap() : again.tap()
+        app.buttons["settings.done"].tap()
+        XCTAssertTrue(element("status.title").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("vpn.blocked").exists, "off again, the line goes")
     }
 }
