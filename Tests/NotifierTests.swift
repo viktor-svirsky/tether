@@ -347,6 +347,25 @@ final class NotifierTests: XCTestCase {
         XCTAssertEqual(round(at: 6, [ipad.address]).count, 1)
     }
 
+    /// A device that leaves while kept out is told as gone from when it left, not from when the VPN
+    /// came back.
+    func testADeviceThatLeftWhileKeptOutIsToldFromWhenItLeft() {
+        round(at: 0, [])
+        XCTAssertEqual(round(at: 1, [ipad.address]).count, 1)
+        XCTAssertEqual(round(at: 10, [ipad.address], keptOut: true), [])
+        XCTAssertEqual(round(at: 11, [], keptOut: true), [], "it left, and nothing is told while kept out")
+        XCTAssertEqual(round(at: 20, []), ["iPad disconnected: It left a few minutes ago."], "long gone by now")
+    }
+
+    /// One gone before, back while kept out, and gone again as the VPN returns waits its minutes anew.
+    func testADeviceBackWhileKeptOutIsNotToldAsGoneFromBefore() {
+        round(at: 0, [])
+        XCTAssertEqual(round(at: 1, [ipad.address]).count, 1)
+        XCTAssertEqual(round(at: 10, [], keptOut: true), [])
+        XCTAssertEqual(round(at: 15, [ipad.address], keptOut: true), [])
+        XCTAssertEqual(round(at: 16, []), [], "gone a moment ago, not since minute 10")
+    }
+
     // MARK: Stopping when idle
 
     /// Stop on a widget is the person's own doing, so nothing is told.

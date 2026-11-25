@@ -447,8 +447,8 @@ final class Model: ObservableObject {
         await followLiveActivity(state, mayStart: true)?.value
         await notify()?.value
         // Read again: a Start or a watcher round may have published a newer one while this waited.
-        guard let state = widgetStateNow() else { return }
-        reloadWidgets(state, redrawnByIOS: button)
+        guard let latest = widgetStateNow() else { return }
+        reloadWidgets(latest, redrawnByIOS: button)
     }
 
     private func widgetStateNow() -> WidgetState? {
