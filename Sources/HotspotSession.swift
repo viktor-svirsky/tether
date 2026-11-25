@@ -1232,21 +1232,24 @@ enum Interfaces {
     }
 
     /// The interface the internet goes out through when it's a VPN's (utun or ipsec), nil when it's
-    /// cellular, Wi-Fi or nothing: the one holding the local address iOS picks for 1.1.1.1, or for its
-    /// IPv6 address. A tunnel that carries no default route, like Tailscale without an exit node,
-    /// isn't one. No packet is sent.
+    /// cellular, Wi-Fi or nothing: the one holding the local address iOS picks for 1.1.1.1 and for its
+    /// IPv6 address. Both have to go through a tunnel when the iPhone has both, since a device's
+    /// traffic leaves over IPv4 and the proxy's over either: a VPN that carries only one of them
+    /// isn't one here. A tunnel that carries no default route, like Tailscale without an exit node,
+    /// isn't one either. No packet is sent.
     static func internetVPN() -> String? {
         vpn(in: addresses(), local: ["1.1.1.1", "2606:4700:4700::1111"].compactMap(localAddress(toward:)))
     }
 
     static func vpn(in interfaces: [String], local: [String]) -> String? {
         let lines = parse(interfaces)
+        var tunnel: String?
         for address in local {
-            if let name = lines.first(where: { $0.address == address })?.name, name.hasPrefix("utun") || name.hasPrefix("ipsec") {
-                return name
-            }
+            guard let name = lines.first(where: { $0.address == address })?.name,
+                  name.hasPrefix("utun") || name.hasPrefix("ipsec") else { return nil }
+            tunnel = tunnel ?? name
         }
-        return nil
+        return tunnel
     }
 
     /// The local address a UDP socket connected toward `host` gets, port 53. Connecting a UDP socket
