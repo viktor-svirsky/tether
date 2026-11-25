@@ -21,7 +21,7 @@ SideStore and AltStore install apps on your iPhone signed with your own Apple ID
 4. Find Tether in Browse and install it. New releases show up there as updates, and an update keeps your devices.
 5. Open Tether, then [connect a device](#connect-a-device).
 
-A free Apple ID has limits: 3 sideloaded apps at a time (SideStore or AltStore counts as one), and each app has to be refreshed every 7 days. SideStore and AltStore do that refresh for you, see their docs for what they need. It also gets 10 App IDs per 7 days. Tether takes two, one for the app and one for its widgets, so an install can ask for one more than before, see [AltStore's App ID FAQ](https://faq.altstore.io/altstore-classic/app-ids).
+A free Apple ID has limits: 3 sideloaded apps at a time (SideStore or AltStore counts as one), and each app has to be refreshed every 7 days. SideStore and AltStore do that refresh for you, see their docs for what they need. It also gets 10 App IDs per 7 days. Tether takes two, one for the app and one for its widgets, so an install can ask for one more than before, see [AltStore's App ID FAQ](https://faq.altstore.io/altstore-classic/app-ids). If your signer counts the widgets as one of the 3 apps and offers to leave app extensions out, Tether works without them, only with no widgets and no Live Activity.
 
 You can also skip the source: download `Tether.ipa` from the [latest release](https://github.com/viktor-svirsky/tether/releases/latest) and open it in SideStore or AltStore.
 
@@ -33,7 +33,7 @@ Download `Tether.ipa` from the [latest release](https://github.com/viktor-svirsk
 
 ### Check the download
 
-Each [release](https://github.com/viktor-svirsky/tether/releases) has an unsigned `Tether.ipa`, built by GitHub Actions from the release's commit. GitHub signs a record of that build, so with the [GitHub CLI](https://cli.github.com) this shows the file you downloaded is the one built here:
+Each [release](https://github.com/viktor-svirsky/tether/releases) has a `Tether.ipa` signed with no identity (an ad-hoc signature that only carries the widgets' app group, for your signer to keep), built by GitHub Actions from the release's commit. GitHub signs a record of that build, so with the [GitHub CLI](https://cli.github.com) this shows the file you downloaded is the one built here:
 
 ```sh
 gh attestation verify Tether.ipa -R viktor-svirsky/tether --signer-workflow viktor-svirsky/tether/.github/workflows/release.yml

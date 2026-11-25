@@ -96,7 +96,7 @@ struct StatusView: View {
     }
 
     private var icon: String {
-        if state.blockedWithoutVPN { return "lock.shield" }
+        if state.sharing, state.blockedWithoutVPN { return "lock.shield" }
         return state.sharing ? "link.circle.fill" : "link.circle"
     }
 }

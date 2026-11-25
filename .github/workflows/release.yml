@@ -2,7 +2,7 @@
 #   - Main moves to a release branch (release-X.Y) and CI passes there: X.Y.0 is next.
 #   - Actions > Release > Run workflow on main, for a patch, or to say what goes up by hand. When main
 #     is at a release branch whose version isn't out, that version goes out whatever was typed (#141).
-# It builds an unsigned Tether.ipa and publishes it as a GitHub release with source.json for
+# It builds a Tether.ipa with no signing identity (build-ipa.sh) and publishes it as a GitHub release with source.json for
 # AltStore and SideStore, and the release creates the version tag. People add
 # https://github.com/viktor-svirsky/tether/releases/latest/download/source.json once and get every
 # release after that. Runs on GitHub's macOS runner, like CI.
@@ -221,7 +221,7 @@ jobs:
         run: |
           out=$RUNNER_TEMP/out
           {
-              echo "Unsigned. Sign it with SideStore, AltStore, Feather or your own certificate, see the [install guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/GUIDE.md#install)."
+              echo "Not signed with any identity. Sign it with SideStore, AltStore, Feather or your own certificate, see the [install guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/GUIDE.md#install)."
               echo
               echo "Using SideStore or AltStore? [Add the source in one tap](https://$GITHUB_REPOSITORY_OWNER.github.io/${GITHUB_REPOSITORY#*/}/add/) and get every update there."
               echo

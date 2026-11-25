@@ -313,9 +313,10 @@ final class Model: ObservableObject {
     private var activityAdopted = false
     /// When a start was last tried.
     private var activityTried: Date?
-    /// The last `reloadWidgets`, and when the widgets' state was last stood by.
-    private var widgetRound: Date?
+    /// When the widgets' state was last stood by, see `WidgetState.markAlive`.
     private var widgetAlive: Date?
+    /// When the Live Activity was last looked at.
+    private var activityChecked: Date?
     private var toldNoGroup = false
     /// Logs the calls, see `CallWatch`.
     private var callWatch: CallWatch?
@@ -454,22 +455,25 @@ final class Model: ObservableObject {
         #if DEBUG
         if demo != nil { return nil }
         #endif
-        if !SharedGroup.available {
-            if !toldNoGroup { Self.append("widgets: this install's signature has no app group (\(SharedGroup.id)), so they can't read Tether's state") }
-            toldNoGroup = true
-            return nil
-        }
-        return WidgetState(sharing: session.sharing && session.staysRunning, awake: session.awake, problem: session.wireGuardProblem,
+        // Running, but not for long: what Start Tether says in Shortcuts then (#164), so a Start on a
+        // widget that couldn't keep Tether running says why it shows Stopped again.
+        let cantStay = session.running && !session.staysRunning ? "Tether couldn't keep running in the background. Open it once." : nil
+        return WidgetState(sharing: session.sharing && session.staysRunning, awake: session.awake, problem: session.wireGuardProblem ?? cantStay,
                            connected: session.connectedPeers.map { WidgetState.Device(id: $0.id, name: $0.name) },
                            vpn: session.vpnInterface != nil, blockedWithoutVPN: session.blockedWithoutVPN)
     }
 
     private func reloadWidgets(_ state: WidgetState, redrawnByIOS button: WidgetButton?) {
+        // The Live Activity needs no app group, the widgets do: without it there's nothing to write.
+        guard SharedGroup.available else {
+            if !toldNoGroup { Self.append("widgets: this install's signature has no app group (\(SharedGroup.id)), so they can't read Tether's state") }
+            toldNoGroup = true
+            return
+        }
         let now = Date()
-        // No round for longer than `WidgetState.staleAfter`: iOS had Tether suspended, and a widget
-        // may have taken its state for left behind and drawn Stopped. The same state is news again.
-        if let last = widgetRound, now.timeIntervalSince(last) > WidgetState.staleAfter { widgetState = nil }
-        widgetRound = now
+        // The state wasn't stood by for `WidgetState.staleAfter`: iOS had Tether suspended, and a
+        // widget may have taken it for left behind and drawn Stopped. The same state is news again.
+        if let alive = widgetAlive, now.timeIntervalSince(alive) >= WidgetState.staleAfter { widgetState = nil }
         let changed = state != widgetState
         // Stood by once a minute while awake, with no redraw, see `WidgetState.load`.
         if state.awake, changed || widgetAlive.map({ now.timeIntervalSince($0) >= 60 }) ?? true {
@@ -504,9 +508,13 @@ final class Model: ObservableObject {
     private func followLiveActivity(_ state: WidgetState, mayStart: Bool) -> Task<Void, Never>? {
         let now = Date()
         if let current = activity, current.activityState != .active, current.activityState != .stale {
-            if current.activityState == .dismissed { activityDismissed = true }
+            // Swiped away by the person if it was there a round ago. After a long suspension it's as
+            // likely iOS, which removes one it ended itself, and that one is started again.
+            let justNow = activityChecked.map { now.timeIntervalSince($0) < WidgetState.staleAfter } ?? false
+            if current.activityState == .dismissed, justNow { activityDismissed = true }
             activity = nil
         }
+        activityChecked = now
         if !activityAdopted {
             activityAdopted = true
             activity = Activity<TetherActivityAttributes>.activities.first { $0.activityState == .active || $0.activityState == .stale }
