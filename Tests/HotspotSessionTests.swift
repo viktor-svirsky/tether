@@ -1654,6 +1654,24 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(server.lastSetup?.serverPeers.allSatisfy { $0.paused != nil }, true)
     }
 
+    /// A device added while there's no VPN connects, paused, and isn't taken for one whose config no
+    /// longer works: the code's key stays on the server.
+    func testTheCodeStillWorksWithoutAVPNButLetsNothingThrough() throws {
+        onlyThroughVPN = true
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(devices.setup.ready)
+        let onServer = try XCTUnwrap(server.lastSetup?.serverPeers.first { $0.id == ready.peer.id }, "the code's key is let in")
+        XCTAssertNotNil(onServer.paused, "but nothing gets through")
+        XCTAssertNil(devices.setup.ready?.paused, "the saved code isn't paused")
+
+        vpn = "utun5"
+        session.checkVPN()
+        XCTAssertNil(server.lastSetup?.serverPeers.first { $0.id == ready.peer.id }?.paused)
+    }
+
     /// The proxy carries for devices without WireGuard, so it's kept out the same way.
     func testOnlyThroughAVPNPausesTheProxyWithoutOne() {
         makeSession()

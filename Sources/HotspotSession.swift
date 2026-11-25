@@ -515,10 +515,14 @@ final class HotspotSession {
     }
 
     /// What the server lets in: the saved devices, and the ready one only while the add window is open.
+    /// With Only share through a VPN on and no VPN, all of them paused, and the proxy too.
     private var serverSetup: WireGuardSetup {
         var setup = devices.setup
-        if !readyLetIn || blockedWithoutVPN { setup.ready = nil }
+        if !readyLetIn { setup.ready = nil }
         if blockedWithoutVPN {
+            // The ready one stays, paused like the rest: left out, a device scanning the code now would
+            // look like one whose config no longer works.
+            if setup.ready?.paused == nil { setup.ready?.paused = .byYou }
             for i in setup.peers.indices where setup.peers[i].paused == nil { setup.peers[i].paused = .byYou }
             if setup.proxy?.paused == nil { setup.proxy?.paused = .byYou }
         }
