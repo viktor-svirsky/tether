@@ -1636,8 +1636,7 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertTrue(session.shortcutState().blockedWithoutVPN)
         server.connected = [ipad.address]
         session.sampleTraffic()
-        XCTAssertEqual(session.connectedNow, [], "its tunnel is up, but it isn't connected: nothing gets through")
-        XCTAssertEqual(session.shortcutState().connected, 0)
+        XCTAssertEqual(session.connectedNow, [ipad.address], "kept out, but there, and through by itself once a VPN is on")
 
         vpn = "utun5"
         session.checkVPN()
@@ -1678,20 +1677,19 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertNil(server.lastSetup?.serverPeers.first { $0.id == ready.peer.id }?.paused)
     }
 
-    /// Devices kept out for want of a VPN don't hold the idle stop off: their tunnels are up, but
-    /// they use nothing.
-    func testDevicesKeptOutWithoutAVPNDontHoldOffTheIdleStop() {
+    /// Devices kept out for want of a VPN are still there, so the idle stop waits for them, and they
+    /// get through by themselves once a VPN is on.
+    func testDevicesKeptOutWithoutAVPNHoldOffTheIdleStop() {
         idleAfter = .tenMinutes
         onlyThroughVPN = true
         shareInTheBackground()
         server.connected = ["10.7.0.2"]
         now = minutes(5)
         session.watch()
-        XCTAssertEqual(session.connectedNow, [])
-        now = minutes(10)
+        now = minutes(30)
         session.watch()
-        XCTAssertFalse(session.sharing)
-        XCTAssertNotNil(session.idleStopped)
+        XCTAssertTrue(session.sharing)
+        XCTAssertNil(session.idleStopped)
     }
 
     /// Off screen with the switch off, a round doesn't read the routes again: `Model` hears of a

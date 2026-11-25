@@ -112,6 +112,8 @@ struct Notifier {
         var idleStopped: IdleStopped? = nil
         /// Devices near or at their data limit this month, see `LimitAlert`.
         var limitAlerts: [LimitAlert] = []
+        /// Only share through a VPN keeps every device out, see `HotspotSession.blockedWithoutVPN`.
+        var keptOut = false
     }
 
     private struct Device {
@@ -148,7 +150,9 @@ struct Notifier {
         var notices: [Notice] = []
         if round.sharing {
             stoppedSince = nil
-            notices += checkDevices(round)
+            // Kept out for want of a VPN, a device that connects isn't using this iPhone's data, so
+            // it's told once it gets through. Nothing is told as gone for the VPN going either.
+            if !round.keptOut { notices += checkDevices(round) }
         } else if round.idleStopped?.byYou == true {
             // Stop on a widget: the devices are gone because the person said so, nothing to tell.
             stoppedSince = nil

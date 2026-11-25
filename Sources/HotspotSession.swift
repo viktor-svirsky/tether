@@ -344,6 +344,7 @@ final class HotspotSession {
         // A device on the proxy is using Tether too, but not one a paused proxy answers with 403. Only
         // data through it since the last check counts, not a connection open now: a Mac can hold a
         // tunnel open for push with nothing through it for hours (#286).
+        // Nor one the proxy refuses for want of a VPN.
         let proxyMoved = proxy?.paused == nil && !blockedWithoutVPN && (idleProxyTraffic.map { $0 != proxyStats.traffic } ?? false)
         idleProxyTraffic = proxyStats.traffic
         let connected = !connectedNow.isEmpty || proxyMoved
@@ -544,9 +545,6 @@ final class HotspotSession {
         blockedWithoutVPN = blocked
         log(blocked ? "no VPN, so no device gets through until one is on" : "a VPN is on, devices get through again")
         if server.running { wireGuardPeersChanged() }
-        // Kept out, nobody counts as connected, see `unpaused`. Let through again, the next read says who is.
-        if blocked { watchedConnected = [] }
-        publishConnected()
     }
 
     /// For the Shortcuts actions. Off screen the sampler doesn't run, so the connected devices are read now.
@@ -762,12 +760,11 @@ final class HotspotSession {
     /// disconnects, so pausing one tells nothing, and doesn't ask for permission to.
     var notifiedPeers: [WireGuardSetup.Peer] { wireGuardPeers.filter { $0.paused == nil } }
 
-    /// Who is connected, from who has a tunnel up: a paused device's tunnel can be up, but nothing gets
-    /// through. Without a VPN under Only share through a VPN that's every device, so nobody is: no
-    /// "connected" notice goes out, and the idle stop doesn't wait for them.
+    /// Who is connected, from who has a tunnel up: a paused device's tunnel can be up, but nothing gets through.
+    /// A device kept out for want of a VPN still counts: it's there and gets through by itself once a
+    /// VPN is on, so it stays in the list, holds the idle stop off, and Add a device can finish with it.
     private func unpaused(_ connected: Set<String>) -> Set<String> {
-        guard !blockedWithoutVPN else { return [] }
-        return connected.subtracting(devices.setup.peers.filter { $0.paused != nil }.map(\.address))
+        connected.subtracting(devices.setup.peers.filter { $0.paused != nil }.map(\.address))
     }
 
     private func publishConnected() {
