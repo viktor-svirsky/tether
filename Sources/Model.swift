@@ -31,6 +31,7 @@
 //   WireGuardServer.swift  runs the WireGuard server (WireGuard/, Go)
 //   KeepAlive.swift, KeepAlivePolicy.swift  the silent sound that keeps Tether running
 
+import Network
 import OSLog
 import SwiftUI
 import UIKit
@@ -68,6 +69,8 @@ final class Model: ObservableObject {
     var proxyOn: Bool { proxy?.on == true }
     /// The devices on the hotspot that aren't using Tether (#109), see `HotspotSession.notUsingTether`.
     var notUsingTether: [String] { session.notUsingTether }
+    var vpnInterface: String? { session.vpnInterface }
+    var blockedWithoutVPN: Bool { session.blockedWithoutVPN }
 
     /// iOS blocks Tether's replies to the devices, see `LocalNetworkCheck`. Checked while on screen.
     @Published private(set) var localNetworkDenied = false
@@ -204,6 +207,10 @@ final class Model: ObservableObject {
         }
         showsLocalNetworkIntro = localNetworkIntro.shown
         if session.sceneActive { localNetworkIntro.check() }
+        pathMonitor.pathUpdateHandler = { [weak self] _ in
+            Task { @MainActor in self?.session.checkVPN() }
+        }
+        pathMonitor.start(queue: .main)
         watcher = Task { [weak self] in
             while !Task.isCancelled {
                 self?.session.watch()
@@ -242,6 +249,8 @@ final class Model: ObservableObject {
                        }, usageDefaults: settings,
                        resetDay: { ResetDay.saved(in: settings) },
                        cellular: { "\(Interfaces.pdpIp0(in: Interfaces.addresses())), \(cellular.dataLine())" },
+                       internetVPN: Interfaces.internetVPN,
+                       onlyThroughVPN: { settings.bool(forKey: HotspotSession.onlyThroughVPNKey) },
                        log: Self.append)
     }
 
@@ -285,6 +294,9 @@ final class Model: ObservableObject {
     private var callWatch: CallWatch?
     /// Shared, so the call lines and the hotspot line number the lines the same way.
     private static let cellular = Cellular(radio: SystemRadio())
+    /// Tells the session at once when the network changes, so Only share through a VPN pauses the
+    /// devices as the VPN goes, not at the next round.
+    private let pathMonitor = NWPathMonitor()
     private var sampler: Task<Void, Never>?
     private var knocking: Task<Void, Never>?
 
@@ -424,6 +436,9 @@ final class Model: ObservableObject {
     func dnsChanged() { session.dnsChanged() }
     /// Settings > local networks changed, see `HotspotSession.localNetworksChanged`.
     func localNetworksChanged() { session.localNetworksChanged() }
+
+    /// Settings > Only share through a VPN changed: it counts at once.
+    func checkVPN() { session.checkVPN() }
 
     /// See `HotspotSession.overLimit`.
     func overLimit(_ id: WireGuardSetup.Peer.ID) -> Bool { session.overLimit(id) }

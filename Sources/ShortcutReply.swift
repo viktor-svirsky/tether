@@ -14,6 +14,8 @@ enum ShortcutReply {
         /// The silent sound plays while the hotspot is on. Without it iOS suspends Tether as soon as
         /// the action ends, so it isn't sharing for long (#164).
         var keptAlive = true
+        /// Only share through a VPN is on and no VPN is, so no device gets through.
+        var blockedWithoutVPN = false
         /// The hotspot is on, WireGuard runs and Tether stays running. `running` alone is only the hotspot.
         var sharing: Bool { running && problem == nil && keptAlive }
     }
@@ -33,6 +35,7 @@ enum ShortcutReply {
         if state.idleStopped { return "Tether stopped sharing while idle. Open it, or run Start Tether, to share again." }
         // iOS makes the hotspot's network only while a device is on it, so no device and the hotspot off look the same.
         guard state.running else { return "Tether is waiting for a device to join Personal Hotspot." }
+        if state.blockedWithoutVPN { return "Tether is sharing, but no VPN is on, so no device gets through until one is." }
         switch (state.connected, state.proxyInUse) {
         case (0, false): return "Tether is sharing. No device is using it yet."
         case (0, true): return "Tether is sharing. The proxy is in use."

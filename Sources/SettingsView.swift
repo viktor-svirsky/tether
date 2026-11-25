@@ -19,6 +19,8 @@ struct SettingsView: View {
     @AppStorage private var dnsControlD: String
     /// Read by `HotspotSession` for each config it makes, see `LocalNetworks`.
     @AppStorage private var localNetworksAllowed: Bool
+    /// Read by `HotspotSession.checkVPN`, which runs at once on a change.
+    @AppStorage private var onlyThroughVPN: Bool
 
     init(model: Model) {
         self.model = model
@@ -28,12 +30,14 @@ struct SettingsView: View {
         _dnsOther = AppStorage(wrappedValue: "", DNSChoice.otherKey, store: model.settingsDefaults)
         _dnsControlD = AppStorage(wrappedValue: "", DNSChoice.controlDKey, store: model.settingsDefaults)
         _localNetworksAllowed = AppStorage(wrappedValue: false, LocalNetworks.key, store: model.settingsDefaults)
+        _onlyThroughVPN = AppStorage(wrappedValue: false, HotspotSession.onlyThroughVPNKey, store: model.settingsDefaults)
     }
 
     var body: some View {
         NavigationStack {
             List {
                 sharing
+                vpn
                 newDevices
                 localNetworks
                 notices
@@ -117,6 +121,22 @@ struct SettingsView: View {
         } footer: {
             Text("Idle means no device is connected and nothing goes through the proxy. Stopping saves battery. Open Tether to share again. Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier.")
                 .accessibilityIdentifier("sharing.footer")
+        }
+    }
+
+    private var vpn: some View {
+        Section {
+            Toggle("Only share through a VPN", isOn: $onlyThroughVPN)
+                .onChange(of: onlyThroughVPN) { model.checkVPN() }
+                .accessibilityIdentifier("vpn.only")
+            LabeledContent("Now", value: model.vpnInterface == nil ? "No VPN" : "Through a VPN")
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("vpn.now")
+        } header: {
+            Text("VPN")
+        } footer: {
+            Text("When it's on and no VPN carries this iPhone's internet, no device gets through, so nothing leaves without the VPN. Turn a VPN on in its app, or with Set VPN in Shortcuts: Tether can't pick one.")
+                .accessibilityIdentifier("vpn.footer")
         }
     }
 

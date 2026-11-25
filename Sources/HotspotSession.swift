@@ -194,6 +194,17 @@ final class HotspotSession {
     private var addWindow = AddWindow()
     /// The ready device is on the server: the add window was open at the last `followAddWindow()`.
     private var readyLetIn = false
+    /// The interface the iPhone's internet goes out through when it's a VPN's, like utun5, nil when
+    /// it isn't, see `Interfaces.internetVPN`. Read each round and when the network changes.
+    private(set) var vpnInterface: String? { willSet { willChange() } }
+    /// Settings > Only share through a VPN is on and no VPN carries the internet, so the server lets
+    /// no device through, nor the proxy, see `serverSetup`. Nothing saved changes: they're let through
+    /// again as they were once a VPN is on.
+    private(set) var blockedWithoutVPN = false { willSet { willChange() } }
+    private let internetVPN: () -> String?
+    /// Settings > Only share through a VPN, read each time, like the idle stop.
+    static let onlyThroughVPNKey = "sharing.onlyThroughVPN"
+    private let onlyThroughVPN: () -> Bool
 
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
@@ -201,7 +212,9 @@ final class HotspotSession {
          blockLocal: @escaping () -> Bool = { false },
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
          resetDay: @escaping () -> ResetDay = { .default }, cellular: @escaping @MainActor () -> String = { "" },
-         knocker: HotspotKnocker = NetworkKnocker(), log: @escaping @MainActor (String) -> Void = { _ in }) {
+         knocker: HotspotKnocker = NetworkKnocker(),
+         internetVPN: @escaping () -> String? = { nil }, onlyThroughVPN: @escaping () -> Bool = { false },
+         log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
         self.keepAlive = keepAlive
@@ -215,6 +228,8 @@ final class HotspotSession {
         self.usageDefaults = usageDefaults
         self.calendar = calendar
         self.resetDay = resetDay
+        self.internetVPN = internetVPN
+        self.onlyThroughVPN = onlyThroughVPN
         monthlyUsage = usageDefaults.map { MonthlyUsage.load(from: $0, resetDay: resetDay()) } ?? MonthlyUsage(resetDay: resetDay())
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
@@ -250,6 +265,7 @@ final class HotspotSession {
     /// it appears and stops it when it goes away or changes, so it never listens anywhere else.
     func syncWithHotspot() {
         checkSetup()
+        checkVPN() // before a start, which lets in what `serverSetup` says
         followAddWindow()
         let ipv6Only = carrierIPv6Only()
         if ipv6Only != onIPv6OnlyCarrier { onIPv6OnlyCarrier = ipv6Only }
@@ -501,8 +517,27 @@ final class HotspotSession {
     /// What the server lets in: the saved devices, and the ready one only while the add window is open.
     private var serverSetup: WireGuardSetup {
         var setup = devices.setup
-        if !readyLetIn { setup.ready = nil }
+        if !readyLetIn || blockedWithoutVPN { setup.ready = nil }
+        if blockedWithoutVPN {
+            for i in setup.peers.indices where setup.peers[i].paused == nil { setup.peers[i].paused = .byYou }
+            if setup.proxy?.paused == nil { setup.proxy?.paused = .byYou }
+        }
         return setup
+    }
+
+    /// Reads whether the internet goes out through a VPN, and with Only share through a VPN on, lets
+    /// the devices through or not by it. Each watcher round, and when iOS says the network changed.
+    func checkVPN() {
+        let vpn = internetVPN()
+        if vpn != vpnInterface {
+            log(vpn.map { "the internet goes out through a VPN (\($0))" } ?? "the internet goes out without a VPN")
+            vpnInterface = vpn
+        }
+        let blocked = onlyThroughVPN() && vpn == nil
+        guard blocked != blockedWithoutVPN else { return }
+        blockedWithoutVPN = blocked
+        log(blocked ? "no VPN, so no device gets through until one is on" : "a VPN is on, devices get through again")
+        if server.running { wireGuardPeersChanged() }
     }
 
     /// For the Shortcuts actions. Off screen the sampler doesn't run, so the connected devices are read now.
@@ -516,7 +551,8 @@ final class HotspotSession {
         }
         let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running).inUse } ?? false
         return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem, proxyInUse: proxyInUse,
-                                   idleStopped: idleStopped != nil, keptAlive: !running || keepAlive.sounding)
+                                   idleStopped: idleStopped != nil, keptAlive: !running || keepAlive.sounding,
+                                   blockedWithoutVPN: blockedWithoutVPN)
     }
 
     var wireGuardNeedsReset: Bool { devices.needsReset }
@@ -1169,6 +1205,51 @@ enum Interfaces {
     private static func isCLAT(_ address: String) -> Bool {
         guard address.hasPrefix("192.0.0."), let last = Int(address.dropFirst("192.0.0.".count)) else { return false }
         return last < 8
+    }
+
+    /// The interface the internet goes out through when it's a VPN's (utun or ipsec), nil when it's
+    /// cellular, Wi-Fi or nothing: the one holding the local address iOS picks for 1.1.1.1, or for its
+    /// IPv6 address. A tunnel that carries no default route, like Tailscale without an exit node,
+    /// isn't one. No packet is sent.
+    static func internetVPN() -> String? {
+        vpn(in: addresses(), local: ["1.1.1.1", "2606:4700:4700::1111"].compactMap(localAddress(toward:)))
+    }
+
+    static func vpn(in interfaces: [String], local: [String]) -> String? {
+        let lines = parse(interfaces)
+        for address in local {
+            if let name = lines.first(where: { $0.address == address })?.name, name.hasPrefix("utun") || name.hasPrefix("ipsec") {
+                return name
+            }
+        }
+        return nil
+    }
+
+    /// The local address a UDP socket connected toward `host` gets, port 53. Connecting a UDP socket
+    /// only picks the route.
+    private static func localAddress(toward host: String) -> String? {
+        var hints = addrinfo(ai_flags: AI_NUMERICHOST, ai_family: AF_UNSPEC, ai_socktype: SOCK_DGRAM, ai_protocol: 0,
+                             ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
+        var info: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, "53", &hints, &info) == 0, let info else { return nil }
+        defer { freeaddrinfo(info) }
+        let fd = socket(info.pointee.ai_family, SOCK_DGRAM, 0)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        guard connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0 else { return nil }
+        var local = sockaddr_storage()
+        var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
+        let named = withUnsafeMutablePointer(to: &local) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
+        }
+        guard named == 0 else { return nil }
+        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let found = withUnsafePointer(to: &local) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getnameinfo($0, length, &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
+            }
+        }
+        return found == 0 ? String(cString: host) : nil
     }
 
     /// Every address but loopback's, IPv4 and IPv6, as "name: address".
