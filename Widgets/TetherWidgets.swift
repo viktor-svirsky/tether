@@ -132,7 +132,9 @@ struct TetherLiveActivity: Widget {
                     .foregroundStyle(context.state.blockedWithoutVPN ? .orange : .green)
                 VStack(alignment: .leading) {
                     Text(context.isStale ? "Open Tether to check" : headline(context.state)).font(.headline)
-                    Text(names(context.state)).font(.caption).foregroundStyle(.secondary).privacySensitive()
+                    if !context.isStale {
+                        Text(names(context.state)).font(.caption).foregroundStyle(.secondary).privacySensitive()
+                    }
                 }
                 Spacer()
                 if !context.isStale { Text(context.state.vpn ? "VPN" : "No VPN").font(.caption.bold()) }
@@ -153,7 +155,8 @@ struct TetherLiveActivity: Widget {
             } compactLeading: {
                 Image(systemName: "link").foregroundStyle(.green)
             } compactTrailing: {
-                Text("\(context.state.connected.count)")
+                // Not a count nobody has stood by since: Tether may be gone, see `activityFreshFor`.
+                Text(context.isStale ? "?" : "\(context.state.count)")
             } minimal: {
                 Image(systemName: "link").foregroundStyle(.green)
             }
@@ -163,7 +166,7 @@ struct TetherLiveActivity: Widget {
     private func headline(_ state: TetherActivityAttributes.ContentState) -> String {
         guard state.sharing else { return "Waiting for a device on the hotspot" }
         if state.blockedWithoutVPN { return "No VPN, devices kept out" }
-        switch state.connected.count {
+        switch state.count {
         case 0: return "Sharing, no device yet"
         case 1: return "Sharing with 1 device"
         case let n: return "Sharing with \(n) devices"
@@ -171,6 +174,9 @@ struct TetherLiveActivity: Widget {
     }
 
     private func names(_ state: TetherActivityAttributes.ContentState) -> String {
-        state.connected.isEmpty ? (state.sharing ? "No device connected" : "") : state.connected.joined(separator: ", ")
+        guard state.count > 0 else { return state.sharing ? "No device connected" : "" }
+        let more = state.count - state.connected.count // names that didn't fit, see `WidgetState.activityNames`
+        guard more > 0 else { return state.connected.joined(separator: ", ") }
+        return (state.connected + ["\(more) more"]).joined(separator: ", ")
     }
 }

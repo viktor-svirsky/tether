@@ -525,7 +525,8 @@ final class Model: ObservableObject {
             activity = nil
             return ending.map { ending in Task { await ending.end(nil, dismissalPolicy: .immediate) } }
         }
-        let content = TetherActivityAttributes.ContentState(sharing: state.sharing, connected: state.connected.map(\.name),
+        let content = TetherActivityAttributes.ContentState(sharing: state.sharing, count: state.connected.count,
+                                                            connected: WidgetState.activityNames(state.connected.map(\.name)),
                                                             vpn: state.vpn, blockedWithoutVPN: state.blockedWithoutVPN)
         let fresh = ActivityContent(state: content, staleDate: now.addingTimeInterval(Self.activityFreshFor))
         if let activity {

@@ -22,6 +22,26 @@ struct WidgetState: Codable, Equatable {
         var name: String
     }
 
+    /// The names a Live Activity carries, of all the connected devices' names, in their order: as
+    /// many as fit in `budget` bytes of JSON, each cut to `nameLength` characters. ActivityKit takes
+    /// 4 KB of state and drops an update over that, so with many devices or long names the Live
+    /// Activity would stop following. It shows a line of names, and the count of the rest.
+    static func activityNames(_ names: [String], budget: Int = activityNameBytes) -> [String] {
+        var kept: [String] = []
+        var left = budget
+        for name in names {
+            let short = String(name.prefix(activityNameLength))
+            // As JSON it's quoted, escaped, and followed by a comma.
+            guard let size = (try? JSONEncoder().encode([short]))?.count, size - 1 <= left else { break }
+            left -= size - 1
+            kept.append(short)
+        }
+        return kept
+    }
+
+    static let activityNameBytes = 1024
+    static let activityNameLength = 40
+
     static let key = "widget.state"
     static let aliveKey = "widget.alive"
     /// The app marks itself alive each watcher round while awake, every 15 seconds in the background.

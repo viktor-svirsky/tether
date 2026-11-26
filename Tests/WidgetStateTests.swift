@@ -43,6 +43,25 @@ final class WidgetStateTests: XCTestCase {
         XCTAssertEqual(state.detail, WidgetState.noGroup)
     }
 
+    /// ActivityKit drops an update whose state is over 4 KB, so the Live Activity carries the names
+    /// that fit and the count of all of them.
+    func testTheLiveActivityCarriesTheNamesThatFit() throws {
+        XCTAssertEqual(WidgetState.activityNames(["iPad", "Pixel 9"]), ["iPad", "Pixel 9"])
+        XCTAssertEqual(WidgetState.activityNames([]), [])
+
+        let many = (1...250).map { "Device number \($0) of a very long list" }
+        let kept = WidgetState.activityNames(many)
+        XCTAssertEqual(kept, Array(many.prefix(kept.count)), "the first ones, in their order")
+        XCTAssertGreaterThan(kept.count, 3)
+        XCTAssertLessThanOrEqual(try JSONEncoder().encode(kept).count, WidgetState.activityNameBytes + 2)
+
+        // The worst a name can be: long, and every character many bytes as JSON.
+        let worst = [String](repeating: String(repeating: "\u{1}👨‍👩‍👧‍👦", count: 500), count: 250)
+        XCTAssertLessThanOrEqual(try JSONEncoder().encode(WidgetState.activityNames(worst)).count, WidgetState.activityNameBytes + 2)
+        XCTAssertEqual(WidgetState.activityNames([String(repeating: "a", count: 100)]), [String(repeating: "a", count: 40)])
+        XCTAssertEqual(WidgetState.activityNames(["iPad", "Pixel"], budget: 8), ["iPad"], "\"iPad\", is 7 bytes")
+    }
+
     /// A clock set back leaves a time in the future, which doesn't count as fresh for ever.
     func testATimeFarInTheFutureIsNotFresh() {
         XCTAssertFalse(sharing.fresh(alive: now.addingTimeInterval(3600), now: now).sharing)
