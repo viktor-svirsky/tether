@@ -1,0 +1,11 @@
+# Codecov: numbers on each pull request, never a failed check. Go reports paths by module name.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+fixes:
+  - "tether/wireguard/::WireGuard/"

@@ -5,22 +5,26 @@ import SwiftUI
 /// on a line that fills with the icon's colours as each one ticks off by itself: join the hotspot,
 /// give it the config, turn its tunnel on. Without it, the proxy's three steps, see `proxySteps`.
 /// The WireGuard way follows the code that
-/// was ready when it opened, see `AddDeviceProgress`. The page and the connected list keep up only
-/// while Tether is on screen, so in the background the steps wait, and they catch up when it's back.
+/// was ready when it opened, see `AddDeviceFollow` and `AddDeviceProgress`. The page and the
+/// connected list keep up only while Tether is on screen, so in the background the steps wait, and
+/// they catch up when it's back.
 /// The code works only while the sheet is on screen and for 10 minutes after, see
 /// `AddWindow`, so opening it after that shows a new code. Once the device connects, it asks for
 /// its name, filled with the one it got ("Device 2") and selected, so typing replaces it (#173).
 struct AddDeviceSheet: View {
     @ObservedObject var model: Model
     @Environment(\.dismiss) private var dismiss
-    /// The device behind the code. Until it's claimed, a new code (after starting over, say) takes its place.
-    @State private var readyID: WireGuardSetup.Peer.ID?
+    /// The device behind the code, see `AddDeviceFollow`.
+    @State private var follow: AddDeviceFollow
     /// Which way the device gets its config: a phone or tablet scans, a computer or a travel router
     /// gets the file (#171).
     @State private var kind = Kind.phone
     /// The device's name, typed once it connects and saved when the sheet closes.
     @State private var naming = AddDeviceNaming()
     @FocusState private var nameFocused: Bool
+    /// Where the name box ends and Done starts on screen, to see when the box runs under Done.
+    @State private var nameBoxBottom: CGFloat = 0
+    @State private var doneTop: CGFloat = .infinity
     /// Selects the name when the field starts editing, once, see `SelectsAllOnEdit`.
     @State private var selectsName = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -33,13 +37,13 @@ struct AddDeviceSheet: View {
 
     init(model: Model) {
         self.model = model
-        _readyID = State(initialValue: model.addDeviceFollows ?? model.wireGuardReady?.id)
+        _follow = State(initialValue: AddDeviceFollow(follows: model.addDeviceFollows, ready: model.wireGuardReady?.id))
         _kind = State(initialValue: model.addDeviceStartsOnComputer ? .computer : .phone)
         _path = State(initialValue: model.addDeviceOpensOn.map { [$0] } ?? [])
     }
 
     private var progress: AddDeviceProgress {
-        AddDeviceProgress(ready: readyID, peers: model.wireGuardPeers, connected: model.wireGuardConnected, hotspotOn: model.running)
+        follow.progress(peers: model.wireGuardPeers, connected: model.wireGuardConnected, hotspotOn: model.running)
     }
 
     var body: some View {
@@ -56,9 +60,7 @@ struct AddDeviceSheet: View {
                     }
                 }
         }
-        .onChange(of: model.wireGuardReady?.id) { _, new in
-            if self.progress.device == nil { readyID = new }
-        }
+        .onChange(of: model.wireGuardReady?.id) { _, new in follow.readyChanged(to: new, peers: model.wireGuardPeers) }
         // The demos that open on the sheet open the window the same way.
         .onAppear {
             model.openAddWindow()
@@ -90,9 +92,7 @@ struct AddDeviceSheet: View {
         }
     }
 
-    /// Only on the WireGuard steps: the page hands out the config only while Tether is on screen. The
-    /// proxy works with the screen off.
-    private var keepsScreenAwake: Bool { path.last == .wireGuard && progress.keepsScreenAwake }
+    private var keepsScreenAwake: Bool { AddDeviceFollow.keepsScreenAwake(on: path.last, progress) }
 
     /// The same close button as Settings, on every page of the sheet.
     @ToolbarContentBuilder private var closeButton: some ToolbarContent {
@@ -162,7 +162,7 @@ struct AddDeviceSheet: View {
     private var wireGuardSteps: some View {
         let progress = progress
         let current = Self.current(progress)
-        return ScrollView {
+        return ScrollViewReader { scroll in ScrollView {
             VStack(spacing: 24) {
                 // Above the steps: a device scanned first would only learn after that it can't work.
                 if model.localNetworkDenied && !progress.finished {
@@ -238,6 +238,7 @@ struct AddDeviceSheet: View {
                 .padding(.vertical, 8)
                 // Large text scrolls the connected message under it.
                 .background(.bar)
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY.rounded() } action: { doneTop = $0 }
                 .accessibilityIdentifier("add.done")
             }
         }
@@ -246,6 +247,14 @@ struct AddDeviceSheet: View {
         .toolbar { closeButton }
         // It connected while another page showed: the keyboard comes up for its name here.
         .onAppear { if naming.device != nil { nameFocused = true } }
+        // iOS keeps the focused field's text above the keyboard, but on a slow device it can leave
+        // the box around it under Done. Whenever the box is seen under Done while typing, or typing
+        // starts with it there, it goes above Done (#173). This runs on the measured overlap, not on
+        // a keyboard event, which can come before the layout settles.
+        .onChange(of: nameFocused ? max(0, nameBoxBottom - doneTop) : 0) { _, under in
+            if under > 0 { scroll.scrollTo(Self.nameBoxID, anchor: .bottom) }
+        }
+        } // ScrollViewReader
     }
 
     /// Once it connects: that it did, and its name to type.
@@ -292,6 +301,8 @@ struct AddDeviceSheet: View {
                     // The box, for the tests: the text field's own frame is only the text.
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("add.nameBox")
+                    .id(Self.nameBoxID)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY.rounded() } action: { nameBoxBottom = $0 }
             }
         }
         .padding(.top, 12)
@@ -299,6 +310,7 @@ struct AddDeviceSheet: View {
 
     /// The name box's padding under the text, and the space between the box and Done.
     private static let nameBoxRoom: CGFloat = 12 + 16
+    private static let nameBoxID = "nameBox"
 
     /// Done: saves the name and closes, or stays with the draft when it couldn't be saved.
     private func finish() {

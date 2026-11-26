@@ -45,3 +45,42 @@ final class TrafficSamplerTests: XCTestCase {
         XCTAssertNil(sampler.sample(TrafficTotals(bytesUp: 9000, bytesDown: 9000), at: start.addingTimeInterval(600)))
     }
 }
+
+/// When each device last sent anything, keepalives too (#63).
+final class PeerActivityTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_800_000_000)
+
+    private func peers(_ received: UInt64) -> [String: PeerStats] {
+        ["10.7.0.2": PeerStats(received: received)]
+    }
+
+    func testADeviceIsLiveForAMinuteAfterItsCountWentUp() {
+        var activity = PeerActivity()
+        activity.read(peers(100), at: start)
+        XCTAssertFalse(activity.live("10.7.0.2", at: start), "read once: when it went up isn't known")
+        activity.read(peers(132), at: start.addingTimeInterval(10))
+        activity.read(peers(132), at: start.addingTimeInterval(20))
+        XCTAssertTrue(activity.live("10.7.0.2", at: start.addingTimeInterval(10 + PeerActivity.liveFor - 1)))
+        XCTAssertFalse(activity.live("10.7.0.2", at: start.addingTimeInterval(10 + PeerActivity.liveFor)))
+        XCTAssertFalse(activity.live("10.7.0.3", at: start), "a device it never read")
+    }
+
+    /// A server that started again counts from zero: that isn't the device sending.
+    func testACountThatStartsOverIsntActivity() {
+        var activity = PeerActivity()
+        activity.read(peers(100), at: start)
+        activity.read(peers(0), at: start.addingTimeInterval(1))
+        XCTAssertFalse(activity.live("10.7.0.2", at: start.addingTimeInterval(1)))
+        activity.read(peers(32), at: start.addingTimeInterval(2))
+        XCTAssertTrue(activity.live("10.7.0.2", at: start.addingTimeInterval(2)))
+    }
+
+    func testARemovedDeviceIsForgotten() {
+        var activity = PeerActivity()
+        activity.read(peers(100), at: start)
+        activity.read(peers(132), at: start.addingTimeInterval(1))
+        activity.read([:], at: start.addingTimeInterval(2))
+        activity.read(peers(132), at: start.addingTimeInterval(3))
+        XCTAssertFalse(activity.live("10.7.0.2", at: start.addingTimeInterval(3)))
+    }
+}

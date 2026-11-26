@@ -177,6 +177,12 @@ func waitAsked(t *testing.T, d *dohServer) []byte {
 	}
 }
 
+// applyDNS stores s's upstream again, after a test changed a field a lookup reads, like dohClient or
+// lookupTimeout. A lookup reads them after it loads the upstream, so the store orders the writes
+// before it. Without it the race detector flags them: the lookup's packet comes through the kernel,
+// which it can't see as an order.
+func applyDNS(s *Server) { s.SetDNS(s.upstream.Load()) }
+
 // viaDoH points s's lookups at d. Call it before the first lookup: they read dohClient without
 // a lock, and one may still run after its device gave up. SetDNS changes the URL at any time.
 func viaDoH(s *Server, d *dohServer) {
@@ -1035,6 +1041,7 @@ func TestALookupIsAskedAgainOnAFailedConnection(t *testing.T) {
 	d := newDoH(t, 1)
 	viaDoH(s, d)
 	s.dohClient = &http.Client{Transport: &failOnce{RoundTripper: d.Client().Transport}}
+	applyDNS(s)
 	if _, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), answerWait); err != nil {
 		t.Fatal(err)
 	}
@@ -1084,6 +1091,7 @@ func TestALookupOnADeadConnectionIsAnsweredOnANewOne(t *testing.T) {
 	spare.DisableKeepAlives = true
 	s.dohClient, s.dohSpare = &http.Client{Transport: tr}, &http.Client{Transport: spare}
 	s.lookupTimeout = scaled(2 * time.Second)
+	applyDNS(s)
 	if _, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), answerWait); err != nil {
 		t.Fatal(err)
 	}
@@ -1113,6 +1121,7 @@ func TestASlowServerAnswersEveryLookup(t *testing.T) {
 	s.lookupTimeout = scaled(2 * time.Second)
 	// Past the 2/5 a first try had before it was cut off, so cutting it off would fail them.
 	d.delay.Store(int64(s.lookupTimeout * 7 / 10))
+	applyDNS(s)
 	var wg sync.WaitGroup
 	failed := make(chan string, 6)
 	for i := range 6 {
@@ -1160,6 +1169,7 @@ func TestABrokenAnswerWaitsForTheOtherRequest(t *testing.T) {
 	// The second request goes out at 2/5 and is answered at 7/10, the first breaks off at 1/2.
 	s.dohClient = &http.Client{Transport: brokenBody{after: s.lookupTimeout / 2}}
 	d.delay.Store(int64(s.lookupTimeout * 3 / 10))
+	applyDNS(s)
 	answer, err := lookupUDP(c, lookupFor(t, 1, "example.com.", 0), answerWait)
 	if err != nil {
 		t.Fatal(err)
@@ -1348,6 +1358,7 @@ func TestASlowServerFreesTheLookup(t *testing.T) {
 	d.holding(t)
 	viaDoH(s, d)
 	s.lookupTimeout = scaled(300 * time.Millisecond)
+	applyDNS(s)
 	// The timeout's log line says the lookup started and ran out, whether on the held answer or,
 	// on a busy runner, on the TLS handshake before it.
 	failed := make(chan string, 10)

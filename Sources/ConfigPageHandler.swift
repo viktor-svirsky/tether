@@ -21,6 +21,11 @@ struct ConfigPageHandler {
         /// iPhone itself, so a stale config isn't its.
         let hosts: [String]
         let now: Date
+        /// Where each device whose tunnel is live connects from, the address alone, see
+        /// `PeerActivity`. WireGuard on Apple devices and wg-quick send the page's address around the
+        /// tunnel, so a device asks from there. Devices behind one router share it, and go out
+        /// through the router's tunnel.
+        var live: [String] = []
     }
 
     enum Decision: Equatable {
@@ -43,9 +48,15 @@ struct ConfigPageHandler {
             : inputs.ready == nil ? .noConfig : .ready
         let address = PeerStats.address(client)
         // Its own knock first (#63): other devices may knock too, and old keys may be anyone's.
-        let knocks = address.map(inputs.hosts.contains) == true ? [] : inputs.stale.filter { $0.shown(at: inputs.now) }
-        let stale: ConfigPage.Stale? = knocks.contains { $0.kind == .device && address != nil && PeerStats.address($0.from) == address } ? .thisDevice
+        let knocks = address.map { address in inputs.hosts.contains { ConfigPage.sameAddress($0, address) } } == true ? []
+            : inputs.stale.filter { $0.shown(at: inputs.now) }
+        let stale: ConfigPage.Stale? = knocks.contains { knock in
+            knock.kind == .device && address.map { ConfigPage.sameAddress(PeerStats.address(knock.from) ?? "", $0) } == true
+        } ? .thisDevice
             : knocks.contains { $0.kind == .server } ? .oldKeys : nil
+        let tunnel: ConfigPage.Tunnel? = address.map { address in
+            (inputs.hosts + inputs.live).contains { ConfigPage.sameAddress($0, address) } ? .connected : .notConnected
+        }
         // Only while a download could happen anyway: a closed window or Tether off screen hands out
         // no key, a repeated one neither (#160).
         let repeated = state != .ready ? nil : lastDownload.flatMap {
@@ -53,20 +64,20 @@ struct ConfigPageHandler {
         }
         switch request {
         case .page:
-            return .answer(ConfigPage.page(state, stale: stale))
+            return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel))
         case .pageHead:
-            return .answer(ConfigPage.page(state, stale: stale).forHead)
+            return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel).forHead)
         case .configHead:
             if let repeated { return .answer(repeated.forHead) }
-            guard state == .ready, let config = inputs.config else { return .answer(ConfigPage.page(state, stale: stale, status: .notFound).forHead) }
+            guard state == .ready, let config = inputs.config else { return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel, status: .notFound).forHead) }
             return .answer(ConfigPage.config(config, fileName: WireGuardSetup.fileName(for: "")).forHead)
         case .config:
             if let repeated { return .answer(repeated) }
             guard state == .ready, let ready = inputs.ready, let host = inputs.host, let config = inputs.config else {
-                return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
+                return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel, status: .notFound))
             }
             return .download(ready, host: host, config: config)
-        case .configWithoutToken: return .answer(ConfigPage.page(state, stale: stale, status: .notFound))
+        case .configWithoutToken: return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel, status: .notFound))
         case .notFound: return .answer(ConfigPage.notFound)
         case .notGet: return .answer(ConfigPage.notGet)
         case .malformed: return .answer(ConfigPage.malformed)

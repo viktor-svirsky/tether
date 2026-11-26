@@ -78,6 +78,10 @@ type peerStats struct {
 	// ip:port, empty for never.
 	Handshake int64  `json:"handshake"`
 	Endpoint  string `json:"endpoint"`
+	// Rx is every byte wireguard-go took from it, keepalives too, as of the last handshake read.
+	// It goes up at least every 25 s while the tunnel is on (PersistentKeepalive), so the config
+	// page can tell a live tunnel from one turned off (#63).
+	Rx uint64 `json:"rx"`
 }
 
 // parseConfig reads a configMessage. A key that isn't 32 bytes, an address that isn't one, or a
@@ -208,6 +212,7 @@ func (s *Server) statsMessage() statsMessage {
 			p.Handshake = at.Unix()
 		}
 		p.Endpoint = s.endpoints[addr]
+		p.Rx = s.received[addr]
 		m.Peers = append(m.Peers, p)
 	}
 	m.Proxy = s.proxyStatsLocked()
