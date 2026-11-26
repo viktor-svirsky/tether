@@ -157,6 +157,27 @@ func TetherWGStats() (result *C.char) {
 	return C.CString(js)
 }
 
+// TetherWGNAT64 returns the NAT64 prefix the server reaches IPv4 addresses through, like
+// "64:ff9b::/96", "" while the first lookup of it runs, or nil when the server isn't running. See
+// Server.NAT64.
+//
+//export TetherWGNAT64
+func TetherWGNAT64() (result *C.char) {
+	// A panic that leaves here would end the whole app, see survive. Dropped like TetherWGStats':
+	// Swift reads nil as no server.
+	defer func() {
+		if recover() != nil {
+			result = nil
+		}
+	}()
+	mu.Lock()
+	defer mu.Unlock()
+	if server == nil {
+		return nil
+	}
+	return C.CString(server.NAT64())
+}
+
 // TetherWGLog returns a JSON logMessage of the server's lines since the last call, or nil when there
 // are none. It works with no server running, so the lines of one that stopped aren't lost.
 //

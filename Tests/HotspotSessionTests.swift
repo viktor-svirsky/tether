@@ -2259,6 +2259,43 @@ final class InternetVPNTests: XCTestCase {
         XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.180.2.3"]))
     }
 
+    /// An IPv6-only carrier with no CLAT, and a VPN that carries 2000::/3: every IPv6 address, but not
+    /// the well-known NAT64 prefix. The carrier's own NAT64 prefix is inside 2000::/3, so the devices'
+    /// IPv4 traffic goes through the VPN too, and the probe has to be in that prefix to see it.
+    func testTheNAT64ProbeIsInThePrefixTheServerUses() {
+        let lines = ["pdp_ip0: 2607:fb90:1234::5", "utun5: fd00::2"]
+        var probed: [String] = []
+        let route: (String) -> Interfaces.Route = { host in
+            probed.append(host)
+            if !host.contains(":") { return .none } // no IPv4 route
+            return host.hasPrefix("2") ? .local("fd00::2") : .local("2607:fb90:1234::5") // 2000::/3 through the VPN
+        }
+        XCTAssertEqual(Interfaces.internetVPN(nat64: { "2607:7700:0:1d::/96" }, addresses: lines, route: route), "utun5")
+        XCTAssertEqual(probed.last, "2607:7700:0:1d::101:101")
+        XCTAssertNil(Interfaces.internetVPN(nat64: { "64:ff9b::/96" }, addresses: lines, route: route),
+                     "the carrier has no prefix of its own, so IPv4 leaves over cellular")
+        XCTAssertNil(Interfaces.internetVPN(nat64: { nil }, addresses: lines, route: route), "no server yet: the well-known prefix")
+        XCTAssertEqual(probed.last, "64:ff9b::101:101")
+        XCTAssertNil(Interfaces.internetVPN(nat64: { "" }, addresses: lines, route: route), "still looked up, so nothing is known")
+        XCTAssertNil(Interfaces.internetVPN(nat64: { "2607:7700::/64" }, addresses: lines, route: route), "not a /96")
+    }
+
+    /// With an IPv4 route, nothing goes through a NAT64, and the server isn't asked for its prefix.
+    func testWithAnIPv4RouteTheNAT64IsNotProbed() {
+        let lines = ["pdp_ip0: 10.180.2.3", "utun5: 10.2.0.2", "utun5: fd00::2"]
+        let route: (String) -> Interfaces.Route = { $0.contains(":") ? .local("fd00::2") : .local("10.2.0.2") }
+        XCTAssertEqual(Interfaces.internetVPN(nat64: { XCTFail("asked for the prefix"); return nil }, addresses: lines, route: route), "utun5")
+    }
+
+    func testTheNAT64ProbeIsOnePointOnePointOnePointOneBehindThePrefix() {
+        XCTAssertEqual(Interfaces.nat64Probe(prefix: "64:ff9b::/96"), "64:ff9b::101:101")
+        XCTAssertEqual(Interfaces.nat64Probe(prefix: "2001:db8:64::/96"), "2001:db8:64::101:101")
+        XCTAssertEqual(Interfaces.nat64Probe(prefix: nil), "64:ff9b::101:101")
+        XCTAssertNil(Interfaces.nat64Probe(prefix: ""))
+        XCTAssertNil(Interfaces.nat64Probe(prefix: "64:ff9b::"))
+        XCTAssertNil(Interfaces.nat64Probe(prefix: "10.0.0.0/96"))
+    }
+
     /// Tailscale without an exit node holds its tailnet address on a utun interface, but the internet
     /// still goes out over cellular, so it isn't a VPN here. With an exit node it is.
     func testTailscaleWithoutAnExitNodeIsNotAVPN() {

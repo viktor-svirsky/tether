@@ -1200,7 +1200,7 @@ func TestADoHConnectionThatFailsItsPingIsClosed(t *testing.T) {
 	s := &Server{dohClient: client, dohSpare: client, lookupTimeout: answerWait}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	t.Cleanup(s.cancel)
-	if _, err := s.doh(d.URL+"/abc123", lookupFor(t, 1, "example.com.", 0)); err != nil {
+	if _, err := s.doh(s.ctx, d.URL+"/abc123", lookupFor(t, 1, "example.com.", 0)); err != nil {
 		t.Fatal(err)
 	}
 	conn.Load().dead.Store(true)
@@ -1571,4 +1571,113 @@ func TestTheDNSInTheDeviceList(t *testing.T) {
 			t.Errorf("the error names the profile: %v", err)
 		}
 	}
+}
+
+// With Only share through a VPN, Swift pauses every device when the VPN drops (#277). A lookup
+// still waiting then ends there: its backup server, asked once the first one's time ran out, would
+// get the query without the VPN. Over UDP and TCP.
+func TestPausingADeviceEndsItsPendingLookups(t *testing.T) {
+	s, c := setup(t)
+	s.plainTimeout, s.lookupTimeout = scaled(500*time.Millisecond), time.Minute
+	first, second := newPlain(t, 1), newPlain(t, 2)
+	first.silent.Store(true)
+	viaPlain(s, first, second)
+	done := make(chan error, 2)
+	go func() {
+		_, err := lookupUDP(c, lookupFor(t, 81, "example.com.", 0), 3*s.plainTimeout)
+		done <- err
+	}()
+	go func() {
+		_, err := lookupsTCP(c, 3*s.plainTimeout, lookupFor(t, 82, "example.com.", 0))
+		done <- err
+	}()
+	asked := []string{first.waitAsked(t), first.waitAsked(t)}
+	slices.Sort(asked)
+	if !slices.Equal(asked, []string{"tcp", "udp"}) {
+		t.Fatalf("the first server was asked over %v, want once over each", asked)
+	}
+	pause(t, s, true)
+	for range 2 {
+		if err := <-done; err == nil {
+			t.Fatal("a paused device got an answer")
+		}
+	}
+	second.noneAsked(t)
+	if left := s.lookupsLeft(); left != 0 {
+		t.Fatalf("%d lookups still wait after the pause", left)
+	}
+	// Resumed, the device's lookups go out again.
+	pause(t, s, false)
+	first.silent.Store(false)
+	if _, err := lookupUDP(c, lookupFor(t, 83, "example.com.", 0), answerWait); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// lookupsLeft is how many UDP lookups still wait for an answer, once they've had a moment to end.
+func (s *Server) lookupsLeft() int {
+	left := func() int {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		n := 0
+		for _, waiting := range s.lookups {
+			n += waiting
+		}
+		return n
+	}
+	waitFor(5*time.Second, func() bool { return left() == 0 })
+	return left()
+}
+
+// The same over DoH: a request that hangs gets a second one next to it after a while, which a
+// pause in between must not send.
+func TestPausingADeviceSendsNoSecondDoHRequest(t *testing.T) {
+	s, c := setup(t)
+	d := newDoH(t, 1)
+	d.holding(t)
+	viaDoH(s, d)
+	s.lookupTimeout = scaled(time.Second) // the second request comes after 2/5 of it
+	applyDNS(s)
+	done := make(chan error, 1)
+	go func() {
+		_, err := lookupUDP(c, lookupFor(t, 84, "example.com.", 0), 2*s.lookupTimeout)
+		done <- err
+	}()
+	waitAsked(t, d)
+	pause(t, s, true)
+	if err := <-done; err == nil {
+		t.Fatal("a paused device got an answer")
+	}
+	if n := d.requests.Load(); n != 1 {
+		t.Fatalf("the DoH server got %d requests, want only the one from before the pause", n)
+	}
+}
+
+// A lookup that waits for the carrier's NAT64 prefix when its device is paused sends nothing once
+// the prefix is there.
+func TestALookupPausedBeforeItsNAT64PrefixIsFoundSendsNothing(t *testing.T) {
+	s, c := setup(t)
+	withoutIPv4(s)
+	looking, release := make(chan struct{}, 1), make(chan struct{})
+	s.mu.Lock() // the server reads it after taking s.mu, so the race detector sees the order (#250)
+	s.nat64.lookup = func(context.Context) (netip.Prefix, error) {
+		looking <- struct{}{}
+		<-release
+		return carrierNAT64, nil
+	}
+	s.mu.Unlock()
+	p := newPlain(t, 1)
+	viaPlain(s, p)
+	done := make(chan error, 1)
+	go func() {
+		_, err := lookupUDP(c, lookupFor(t, 85, "example.com.", 0), scaled(time.Second))
+		done <- err
+	}()
+	<-looking
+	pause(t, s, true)
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("a paused device got an answer")
+	}
+	p.noneAsked(t)
 }

@@ -1267,20 +1267,44 @@ enum Interfaces {
     /// has both, since a device's traffic leaves over IPv4 and the proxy's over either: a VPN that
     /// carries only one of them isn't one here. A tunnel that carries no default route, like
     /// Tailscale without an exit node, isn't one either. No packet is sent.
-    static func internetVPN() -> String? {
-        var routes = internetProbes.map(route(toward:))
+    ///
+    /// `nat64` is the NAT64 prefix the server uses, see `WireGuardServer.nat64Prefix`, asked only on
+    /// an iPhone with no IPv4 route.
+    static func internetVPN(nat64: () -> String?) -> String? {
+        internetVPN(nat64: nat64, addresses: addresses(), route: route(toward:))
+    }
+
+    static func internetVPN(nat64: () -> String?, addresses: [String], route: (String) -> Route) -> String? {
+        var routes = internetProbes.map(route)
         // With no IPv4 route, a device's IPv4 traffic leaves through the carrier's NAT64 (nat64.go),
-        // whose well-known prefix a VPN that carries only 2000::/3 leaves out.
-        if !routes.contains(where: { $0.isIPv4 }) { routes.append(route(toward: nat64Probe)) }
-        return vpn(in: addresses(), routes: routes)
+        // at the carrier's own prefix when it has one. A VPN that carries only 2000::/3 carries a
+        // prefix inside it and leaves the well-known one out, so the probe is in the prefix the
+        // server uses. While the server still looks it up, nothing is known.
+        if !routes.contains(where: { $0.isIPv4 }) {
+            routes.append(nat64Probe(prefix: nat64()).map(route) ?? .unknown)
+        }
+        return vpn(in: addresses, routes: routes)
     }
 
     /// Two addresses per family, far apart. A DNS app's tunnel can carry only its resolver's address
     /// (1.1.1.1, say) and nothing else, so the second of each is one no such tunnel is for: from the
     /// ranges kept for documentation, which the default route covers like any other address.
     static let internetProbes = ["1.1.1.1", "198.51.100.1", "2606:4700:4700::1111", "2001:db8::1"]
-    /// 1.1.1.1 behind the well-known NAT64 prefix.
-    static let nat64Probe = "64:ff9b::101:101"
+    /// The prefix most NAT64s use (RFC 6052), which the server uses when the carrier has none of its own.
+    static let wellKnownNAT64 = "64:ff9b::/96"
+
+    /// 1.1.1.1 behind a NAT64 prefix like "2607:7700:0:1d::/96": the address in its last 32 bits, as
+    /// nat64.go puts it. With no server running, nil, it's the well-known prefix, where a server
+    /// starts from. Nil for a prefix still looked up, "", or one that can't be read.
+    static func nat64Probe(prefix: String?) -> String? {
+        let parts = (prefix ?? wellKnownNAT64).split(separator: "/")
+        var address = in6_addr()
+        guard parts.count == 2, parts[1] == "96", inet_pton(AF_INET6, String(parts[0]), &address) == 1 else { return nil }
+        withUnsafeMutableBytes(of: &address) { $0[12..<16].copyBytes(from: [1, 1, 1, 1]) }
+        var text = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        guard inet_ntop(AF_INET6, &address, &text, socklen_t(text.count)) != nil else { return nil }
+        return String(cString: text)
+    }
 
     /// Where iOS would send from toward one address.
     enum Route: Equatable {
