@@ -255,7 +255,7 @@ final class Model: ObservableObject {
                        }, usageDefaults: settings,
                        resetDay: { ResetDay.saved(in: settings) },
                        cellular: { "\(Interfaces.pdpIp0(in: Interfaces.addresses())), \(cellular.dataLine())" },
-                       internetVPN: Interfaces.internetVPN,
+                       internetVPN: { Interfaces.internetVPN(nat64: WireGuardServer.nat64Prefix) },
                        onlyThroughVPN: { settings.bool(forKey: HotspotSession.onlyThroughVPNKey) },
                        log: Self.append)
     }

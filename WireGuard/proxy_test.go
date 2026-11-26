@@ -1741,3 +1741,34 @@ func TestTheConfigPageByNameDoesNotServeItsClient(t *testing.T) {
 		t.Fatalf("served %v after only the page answered, want none", got)
 	}
 }
+
+// Pausing the proxy ends a name's lookup still waiting, as it ends the proxy's connections, so its
+// backup server isn't asked after the pause (#277). Paused, the proxy looks nothing up.
+func TestPausingTheProxyEndsItsPendingLookups(t *testing.T) {
+	s, _ := proxyOn(t)
+	s.mu.Lock() // lookups read them after taking s.mu, so the race detector sees the order (#250)
+	s.plainTimeout, s.lookupTimeout = scaled(500*time.Millisecond), time.Minute
+	s.mu.Unlock()
+	first, second := newPlain(t, 1), newPlain(t, 2)
+	first.silent.Store(true)
+	viaPlain(s, first, second)
+	done := make(chan []byte, 1)
+	go func() {
+		a, _ := s.resolveCtx(context.Background(), lookupFor(t, 91, "example.com.", 0))
+		done <- a
+	}()
+	first.waitAsked(t)
+	s.SetProxy(true, true)
+	if a := <-done; a != nil {
+		t.Fatalf("a paused proxy's lookup was answered: %x", a)
+	}
+	time.Sleep(2 * s.plainTimeout)
+	second.noneAsked(t)
+	if left := s.proxyFlowsLeft(); left != 0 {
+		t.Fatalf("%d of the proxy's lookups kept while paused", left)
+	}
+	if _, err := s.resolveCtx(context.Background(), lookupFor(t, 92, "example.com.", 0)); !errors.Is(err, errRefused) {
+		t.Fatalf("a paused proxy's new lookup: %v, want it refused", err)
+	}
+	first.noneAsked(t)
+}
