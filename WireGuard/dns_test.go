@@ -1737,6 +1737,56 @@ func TestAPauseDropsTheKeptDoHConnection(t *testing.T) {
 	}
 }
 
+// The same with a request still on the connection when the pause comes, and the resume right after
+// it, as Swift does when the switch is turned on (endConnectionsFromBeforeTheVPN): the pause ends
+// the lookup, but HTTP/2 lets go of its stream a moment later, so the connection isn't idle yet.
+// The held request here stands in for that stream.
+func TestAPauseDropsTheDoHConnectionALookupStillUses(t *testing.T) {
+	s, c := setup(t)
+	d := newDoH(t, 1)
+	d.holding(t)
+	viaDoH(s, d)
+	tr := d.Client().Transport.(*http.Transport).Clone()
+	tr.ForceAttemptHTTP2 = true
+	var dials atomic.Int32
+	tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dials.Add(1)
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	}
+	client := &http.Client{Transport: tr}
+	s.dohClient = client
+	applyDNS(s)
+	held := make(chan error, 1)
+	go func() {
+		req, err := http.NewRequest(http.MethodPost, d.URL+"/abc123", bytes.NewReader(lookupFor(t, 89, "example.com.", 0)))
+		if err != nil {
+			held <- err
+			return
+		}
+		req.Header.Set("Content-Type", "application/dns-message")
+		req.Header.Set("Accept", "application/dns-message")
+		resp, err := client.Do(req)
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+		held <- err
+	}()
+	waitAsked(t, d)
+	pause(t, s, true)
+	pause(t, s, false)
+	d.release()
+	if err := <-held; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lookupUDP(c, lookupFor(t, 90, "example.com.", 0), answerWait); err != nil {
+		t.Fatal(err)
+	}
+	if n := dials.Load(); n != 2 {
+		t.Fatalf("%d DoH connections, want a new one after the pause", n)
+	}
+}
+
 // pauseBeforeSend pauses the device the first time a query is about to be sent to an address when
 // takes, and then sends it as before. The channel gets what the pause returned.
 func pauseBeforeSend(s *Server, when func(netip.AddrPort) bool) <-chan error {

@@ -462,7 +462,7 @@ func (s *Server) close() {
 		case <-done:
 			s.conesRunning.Wait() // closing the socket ends them at once
 			s.looking.Wait()      // the cancelled context ends their requests
-			s.dohClient.CloseIdleConnections()
+			s.dohNow().CloseIdleConnections()
 			s.dohSpare.CloseIdleConnections()
 			return
 		case <-time.After(50 * time.Millisecond):
@@ -500,11 +500,11 @@ func (s *Server) SetPeers(peers []Peer) error {
 	// Paused before wireguard-go has the change, so a device added paused gets no traffic through
 	// meanwhile. track refuses a connection being made from now on, since it reads ownerLocked.
 	wasPaused := s.paused
-	if !maps.Equal(paused, wasPaused) {
-		s.dropDoHLocked()
-	}
 	s.paused = paused
 	var closing []io.Closer
+	if !maps.Equal(paused, wasPaused) {
+		closing = append(closing, s.swapDoHLocked())
+	}
 	for key, addr := range s.peers {
 		if paused[key] && !wasPaused[key] {
 			for c := range s.flows[addr] {

@@ -566,7 +566,8 @@ func (s *Server) doh(ctx context.Context, doh string, query []byte) ([]byte, err
 		answer, err := s.dohOnce(ctx, c, doh, q)
 		results <- result{answer, err}
 	}
-	go ask(s.dohClient)
+	client := s.dohNow()
+	go ask(client)
 	asked, pending := 1, 1
 	hedge := time.NewTimer(s.lookupTimeout * 2 / 5)
 	defer hedge.Stop()
@@ -596,9 +597,9 @@ func (s *Server) doh(ctx context.Context, doh string, query []byte) ([]byte, err
 			}
 			err = ue.Err
 			if asked < 2 && ctx.Err() == nil {
-				s.dohClient.CloseIdleConnections()
+				client.CloseIdleConnections()
 				asked, pending = asked+1, pending+1
-				go ask(s.dohClient)
+				go ask(client)
 			}
 		}
 	}
@@ -799,13 +800,28 @@ func newDoHClient(dial func(ctx context.Context, network, address string) (net.C
 	}
 }
 
-// dropDoHLocked closes the DoH connections kept for the next lookup, when a device or the proxy is
-// paused or resumed. With Only share through a VPN that's when the VPN went or came back, and a
-// connection made over another route would carry the lookups on through it (#277). Under s.mu, so
-// a resumed device can't look up on the old connection before it's gone. One a lookup still uses
-// is kept, and goes at the next change.
-func (s *Server) dropDoHLocked() {
-	s.dohClient.CloseIdleConnections()
+// dohNow is the client lookups ask DoH on from now, see swapDoHLocked.
+func (s *Server) dohNow() *http.Client {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dohClient
+}
+
+// swapDoHLocked gives the lookups a new DoH client when a device or the proxy is paused or
+// resumed, and returns what closes the old one's idle connections, to call once s.mu is let go.
+// With Only share through a VPN that's when the VPN went or came back, and a connection made over
+// another route would carry the lookups on through it (#277). Closing the old connections alone
+// isn't enough: one a paused lookup was on isn't idle until HTTP/2 lets go of its stream, a moment
+// after the pause, and Swift resumes right away. The old client is used no more, so that one only
+// waits out its idle time. A client whose transport can't be copied (tests') keeps its place.
+func (s *Server) swapDoHLocked() io.Closer {
+	old := s.dohClient
+	if t, ok := old.Transport.(*http.Transport); ok {
+		c := *old
+		c.Transport = t.Clone()
+		s.dohClient = &c
+	}
+	return &closer{old.CloseIdleConnections}
 }
 
 // newDoHSpare is the client a slow lookup asks again on, see doh. It keeps no connection: after a

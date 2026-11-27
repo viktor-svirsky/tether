@@ -92,7 +92,9 @@ codesign -f -s - --entitlements "$work/TetherWidgets.entitlements" "$appex"
 codesign -f -s - --entitlements "$work/Tether.entitlements" "$app"
 # A signature that dropped the group ships widgets that can only say No data, so read it back.
 for bin in "$appex" "$app"; do
-    signed=$(codesign -d --entitlements - --xml "$bin" 2>/dev/null)
+    # Under set -e a failing codesign would end the script here with no word: read as nothing, the
+    # check below says what's wrong.
+    signed=$(codesign -d --entitlements - --xml "$bin" 2>/dev/null) || signed=""
     [[ $signed == *"<string>$group</string>"* ]] || { echo "$bin is signed without the app group $group" >&2; exit 1; }
 done
 

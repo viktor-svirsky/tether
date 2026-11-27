@@ -250,10 +250,11 @@ func (s *Server) SetProxy(on, paused bool) {
 		return
 	}
 	wasPaused := p.paused
-	if paused != wasPaused {
-		s.dropDoHLocked()
-	}
 	p.paused = paused
+	var closing []io.Closer
+	if paused != wasPaused {
+		closing = append(closing, s.swapDoHLocked())
+	}
 	var start *proxyRun
 	var nowhere bool
 	if on && p.run == nil {
@@ -264,9 +265,8 @@ func (s *Server) SetProxy(on, paused bool) {
 		start = s.newProxyRun()
 		p.run = start
 	}
-	var closing []io.Closer
 	if paused && !wasPaused {
-		closing = slices.Collect(maps.Keys(s.flows[proxyFlows]))
+		closing = slices.AppendSeq(closing, maps.Keys(s.flows[proxyFlows]))
 	}
 	s.mu.Unlock()
 	for _, c := range closing {
