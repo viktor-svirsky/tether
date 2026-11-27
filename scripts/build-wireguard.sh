@@ -35,9 +35,9 @@ build() {
         go -C "$src" build -buildmode=c-archive -trimpath -ldflags=-w -o "$dir/libtetherwg.a" .
 }
 
-build iphoneos arm64 arm64-apple-ios17.0
-build iphonesimulator arm64 arm64-apple-ios17.0-simulator
-build iphonesimulator amd64 x86_64-apple-ios17.0-simulator
+build iphoneos arm64 arm64-apple-ios26.0
+build iphonesimulator arm64 arm64-apple-ios26.0-simulator
+build iphonesimulator amd64 x86_64-apple-ios26.0-simulator
 build macosx arm64 arm64-apple-macos14.0
 build macosx amd64 x86_64-apple-macos14.0
 

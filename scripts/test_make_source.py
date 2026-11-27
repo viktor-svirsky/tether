@@ -15,7 +15,7 @@ INFO = {
     "CFBundleIdentifier": "com.vsvirskyi.phoneshare",
     "CFBundleShortVersionString": "1.2.0",
     "CFBundleVersion": "57",
-    "MinimumOSVersion": "17.0",
+    "MinimumOSVersion": "26.0",
     "NSLocalNetworkUsageDescription": "Tether accepts connections on the hotspot network.",
     "UIBackgroundModes": ["audio"],
 }
@@ -52,7 +52,7 @@ class MakeSourceTests(unittest.TestCase):
         [version] = self.app()["versions"]
         self.assertEqual(version["version"], "1.2.0")
         self.assertEqual(version["buildVersion"], "57")
-        self.assertEqual(version["minOSVersion"], "17.0")
+        self.assertEqual(version["minOSVersion"], "26.0")
         self.assertEqual(version["date"], "2026-10-29")
         self.assertEqual(version["size"], self.ipa.stat().st_size)
 

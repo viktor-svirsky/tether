@@ -467,7 +467,7 @@ final class Model: ObservableObject {
         if plan.markAlive { WidgetState.markAlive(now) }
         if plan.save { state.save() }
         if plan.reloadWidgets { WidgetCenter.shared.reloadAllTimelines() }
-        if plan.reloadControls, #available(iOS 18, *) { ControlCenter.shared.reloadAllControls() }
+        if plan.reloadControls { ControlCenter.shared.reloadAllControls() }
     }
 
     /// Carries out `WidgetPublisher.activity`. One left from before a relaunch is taken over, not
