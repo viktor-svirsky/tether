@@ -1047,7 +1047,7 @@ func (s *Server) resolveCtx(ctx context.Context, query []byte) ([]byte, error) {
 		return nil, errTooManyLookups
 	}
 	s.proxy.lookups++
-	lookup, end := newLookup(s.ctx)
+	lookup, end := newHeld(s.ctx)
 	untrack := s.trackLocked(proxyFlows, netip.Addr{}, end)
 	s.looking.Add(1) // under s.mu, so it comes before Close's Wait or not at all
 	s.mu.Unlock()
@@ -1055,7 +1055,7 @@ func (s *Server) resolveCtx(ctx context.Context, query []byte) ([]byte, error) {
 	go func() {
 		defer s.looking.Done()
 		defer s.releaseLookup()
-		defer end.Close()
+		defer end.done()
 		defer untrack()
 		answered <- s.resolve(lookup, query, true)
 	}()
