@@ -135,8 +135,9 @@ struct DemoState {
     private(set) var running = true
     private(set) var downSpeed = 0.0
     private(set) var upSpeed = 0.0
-    /// How many whole seconds `addDeviceConnects` waits with the code let in, long enough for a UI test to see the code first.
-    var connectsAfter = 8
+    /// How many whole seconds `addDeviceConnects` waits with the code let in, long enough for a UI test to see the code first,
+    /// also on GitHub's slower runners, where 8 was too short and the device had connected before the test looked.
+    var connectsAfter = 20
 
     static func fromLaunchArguments() -> DemoState? {
         DemoScenario.current.map(DemoState.init)

@@ -181,7 +181,7 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(value(of: element("add.step3")), "")
         XCTAssertFalse(element("add.result").exists, "not connected yet")
         XCTAssertFalse(app.textFields["add.name"].exists)
-        XCTAssertTrue(element("add.result").waitForExistence(timeout: 20), "it connects after a moment")
+        XCTAssertTrue(element("add.result").waitForExistence(timeout: 45), "it connects after a moment")
         XCTAssertEqual(label(of: "add.result"), "Connected")
         XCTAssertEqual(value(of: element("add.step2")), "Done")
         XCTAssertEqual(value(of: element("add.step3")), "Done")
