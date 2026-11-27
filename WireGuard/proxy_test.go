@@ -1806,3 +1806,57 @@ func TestPausingTheProxyEndsItsPendingLookups(t *testing.T) {
 	}
 	first.noneAsked(t)
 }
+
+// slowDial makes s.dial wait for its context to end, then go on a moment, as a dial past its look
+// at the context does, and say when its SYN would have left.
+func slowDial(s *Server) (dialing chan struct{}, sent *atomic.Int64) {
+	dialing, sent = make(chan struct{}, 4), new(atomic.Int64)
+	s.mu.Lock()
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialing <- struct{}{}
+		<-ctx.Done()
+		time.Sleep(scaled(100 * time.Millisecond)) // past the look at ctx, the SYN goes out late
+		sent.Store(time.Now().UnixNano())
+		return nil, ctx.Err()
+	}
+	s.mu.Unlock()
+	return dialing, sent
+}
+
+// A proxy pause returns only once the dials it ended have, for a CONNECT and for a plain request
+// the transport dials for its pool: no SYN may leave after it, outside a VPN that just went (#344).
+func TestAProxyPauseWaitsForItsDials(t *testing.T) {
+	for _, plain := range []bool{false, true} {
+		t.Run(map[bool]string{false: "connect", true: "plain"}[plain], func(t *testing.T) {
+			s, proxy := proxyOn(t)
+			dialing, sent := slowDial(s)
+			target := echoFarEnd(t)
+			if plain {
+				go viaProxy(proxy).Get("http://" + target + "/")
+			} else {
+				go func() {
+					conn, err := net.Dial("tcp", proxy)
+					if err != nil {
+						return
+					}
+					defer conn.Close()
+					fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\n\r\n", target)
+					conn.SetReadDeadline(time.Now().Add(fetchTimeout()))
+					conn.Read(make([]byte, 1))
+				}()
+			}
+			select {
+			case <-dialing:
+			case <-time.After(fetchTimeout()):
+				t.Fatal("the proxy never dialed")
+			}
+			s.SetProxy(true, true)
+			returned := time.Now().UnixNano()
+			if at := sent.Load(); at == 0 {
+				t.Fatal("the pause returned with the dial still going")
+			} else if at > returned {
+				t.Fatalf("the dial sent %v after the pause returned", time.Duration(at-returned))
+			}
+		})
+	}
+}
