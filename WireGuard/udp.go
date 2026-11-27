@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/checksum"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
@@ -352,17 +351,4 @@ func ipv4Packets(proto tcpip.TransportProtocolNumber, src, dst netip.Addr, datag
 		packets = append(packets, p)
 	}
 	return packets
-}
-
-// inject sends a ready packet to its device, dropped when wireguard-go is behind, like WriteNotify.
-func (t *stackTun) inject(p []byte) {
-	v := buffer.NewViewWithData(p)
-	select {
-	case t.incoming <- v:
-	case <-t.done:
-		v.Release()
-	default:
-		t.dropped.Add(1)
-		v.Release()
-	}
 }
