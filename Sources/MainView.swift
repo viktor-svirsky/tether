@@ -65,6 +65,18 @@ struct MainView: View {
                 // Above Add a device, so a reason it doesn't work and the way out are both here.
                 WireGuardProblemSection(model: model)
 
+                if model.blockedWithoutVPN {
+                    Section {
+                        Label {
+                            Text("No VPN is on, so no device gets through until one is. Turn your VPN on, or turn off Only share through a VPN in Settings.")
+                        } icon: {
+                            Image(systemName: "lock.shield").foregroundStyle(.orange)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("vpn.blocked")
+                    }
+                }
+
                 if model.staleConfigShown {
                     Section {
                         Label {

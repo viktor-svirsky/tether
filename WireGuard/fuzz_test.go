@@ -141,7 +141,7 @@ func FuzzResolve(f *testing.F) {
 	f.Fuzz(func(t *testing.T, query, answer []byte, overTCP bool) {
 		mine := bytes.Clone(answer) // the fuzzer reuses answer for the next input
 		upstream.Store(&mine)
-		got := s.resolve(query, overTCP)
+		got := s.resolve(s.ctx, query, overTCP)
 		if len(got) > dnsMessageMax {
 			t.Fatalf("a %d byte answer", len(got))
 		}
@@ -162,7 +162,7 @@ func FuzzServeTCP(f *testing.F) {
 	viaFakeDoH(s, func(q []byte) []byte { q[2] |= 0x80; return q }) // the query back as its answer
 	f.Fuzz(func(t *testing.T, stream []byte) {
 		var out bytes.Buffer
-		s.serveTCP(bytes.NewReader(stream), &out)
+		s.serveTCP(s.ctx, bytes.NewReader(stream), &out)
 		frames := 0
 		for b := out.Bytes(); len(b) > 0; frames++ {
 			if len(b) < 2 || len(b) < 2+int(binary.BigEndian.Uint16(b)) {

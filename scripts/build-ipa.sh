@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds an unsigned Tether.ipa for people who sign it themselves (SideStore, AltStore, Feather, a paid
+# Builds a Tether.ipa with no signing identity for people who sign it themselves (SideStore, AltStore, Feather, a paid
 # certificate). The release workflow runs it, and it works the same on any Mac with Xcode:
 #   scripts/build-ipa.sh 1.2.0 out/
 # Writes out/Tether.ipa and out/LICENSES.txt, the licenses of the code inside it (also in the app),
@@ -72,6 +72,24 @@ licenses=$out/LICENSES.txt
         done
 } > "$licenses"
 cp "$licenses" "$app/"
+
+# The build itself stays unsigned, as checked above. This ad-hoc signature has no identity and is
+# there only so the entitlements travel: SideStore, AltStore and other signers read the app group from
+# it and keep it when they sign, and without it the widgets have no way to Tether's state. The
+# extension first, since the app's signature covers it.
+appex=$app/PlugIns/TetherWidgets.appex
+[[ $(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$appex/Info.plist") == "$build" ]] \
+    || { echo "the widget extension's build number isn't $build, the app's" >&2; exit 1; }
+# The entitlements files name the group by $(APP_BUNDLE_ID), which Xcode fills in only when it signs.
+group=$(/usr/libexec/PlistBuddy -c "Print :TetherAppGroup" "$app/Info.plist")
+[[ $group =~ ^group\.[A-Za-z0-9.-]+$ ]] || { echo "the app's group is '$group', not group.<bundle ID>" >&2; exit 1; }
+for file in Widgets/TetherWidgets.entitlements Sources/Tether.entitlements; do
+    sed 's/group\.\$(APP_BUNDLE_ID)/'"$group"'/' "$file" > "$work/$(basename "$file")"
+    # A file that no longer names the group that way would be signed in with the placeholder.
+    grep -qF "<string>$group</string>" "$work/$(basename "$file")" || { echo "$file doesn't name the group as group.\$(APP_BUNDLE_ID)" >&2; exit 1; }
+done
+codesign -f -s - --entitlements "$work/TetherWidgets.entitlements" "$appex"
+codesign -f -s - --entitlements "$work/Tether.entitlements" "$app"
 
 mkdir "$work/Payload"
 cp -R "$app" "$work/Payload/"

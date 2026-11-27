@@ -57,9 +57,10 @@ def source(ipa, tag, date, repo=DEFAULT_REPO):
                 "iconURL": f"{raw}/Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
                 "screenshots": [f"{raw}/docs/{name}.png" for name in ("sharing", "add-device", "notifications")],
                 "category": "utilities",
-                # The IPA is unsigned and has no entitlements. The signing app adds its own.
+                # The IPA's only entitlement is the app group the widgets read Tether's state through,
+                # see build-ipa.sh. The signing app adds its own.
                 "appPermissions": {
-                    "entitlements": [],
+                    "entitlements": ["com.apple.security.application-groups"],
                     "privacy": {k: v for k, v in info.items() if k.endswith("UsageDescription")},
                 },
                 "versions": [

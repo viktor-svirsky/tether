@@ -1027,25 +1027,34 @@ func (s *Server) releaseDial(from netip.Addr) {
 
 // resolveCtx is resolve over TCP, given up on when ctx ends. The lookup itself runs on until its
 // own timeout, holding its slot of maxLookups, so a client that closes and asks again can't pile
-// them up. Close waits for it, like a device's.
+// them up. Pausing the proxy ends it, as it ends the proxy's connections, and a paused proxy
+// looks nothing up. Close waits for it, like a device's.
 func (s *Server) resolveCtx(ctx context.Context, query []byte) ([]byte, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return nil, net.ErrClosed
 	}
+	if s.proxy.paused {
+		s.mu.Unlock()
+		return nil, errRefused
+	}
 	if s.proxy.lookups >= s.proxy.maxLookups {
 		s.mu.Unlock()
 		return nil, errTooManyLookups
 	}
 	s.proxy.lookups++
+	lookup, cancel := context.WithCancel(s.ctx)
+	untrack := s.trackLocked(proxyFlows, netip.Addr{}, &closer{cancel})
 	s.looking.Add(1) // under s.mu, so it comes before Close's Wait or not at all
 	s.mu.Unlock()
 	answered := make(chan []byte, 1)
 	go func() {
 		defer s.looking.Done()
 		defer s.releaseLookup()
-		answered <- s.resolve(query, true)
+		defer cancel()
+		defer untrack()
+		answered <- s.resolve(lookup, query, true)
 	}()
 	select {
 	case a := <-answered:

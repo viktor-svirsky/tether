@@ -112,6 +112,8 @@ struct Notifier {
         var idleStopped: IdleStopped? = nil
         /// Devices near or at their data limit this month, see `LimitAlert`.
         var limitAlerts: [LimitAlert] = []
+        /// Only share through a VPN keeps every device out, see `HotspotSession.blockedWithoutVPN`.
+        var keptOut = false
     }
 
     private struct Device {
@@ -148,7 +150,16 @@ struct Notifier {
         var notices: [Notice] = []
         if round.sharing {
             stoppedSince = nil
-            notices += checkDevices(round)
+            // Kept out for want of a VPN, a device that connects isn't using this iPhone's data, so
+            // it's told once it gets through. Nothing is told as gone for the VPN going either.
+            if round.keptOut { followKeptOut(round) } else { notices += checkDevices(round) }
+        } else if round.idleStopped?.byYou == true {
+            // Stop on a widget: the devices are gone because the person said so, nothing to tell.
+            stoppedSince = nil
+            for id in devices.keys {
+                devices[id]?.told = false
+                devices[id]?.goneSince = nil
+            }
         } else {
             notices += checkStopped(round)
         }
@@ -169,6 +180,19 @@ struct Notifier {
     /// The device's last notification was `quietFor` ago or more.
     private static func quiet(_ device: Device, now: Date) -> Bool {
         device.lastPost.map { elapsed(since: $0, now: now) >= quietFor } ?? true
+    }
+
+    /// While the devices are kept out nothing is told, but when each left is still kept, so what's
+    /// told once they get through waits as long as it would have: a device that left then is told
+    /// `goneFor` after it left, and one that came back isn't told as gone from before.
+    private mutating func followKeptOut(_ round: Round) {
+        devices = devices.filter { id, _ in round.devices.contains { $0.id == id } }
+        for peer in round.devices {
+            let connected = round.connected.contains(peer.address)
+            var device = devices[peer.id] ?? Device(told: seen ? false : connected)
+            if connected { device.goneSince = nil } else if device.goneSince == nil { device.goneSince = round.now }
+            devices[peer.id] = device
+        }
     }
 
     /// Each device's state goes to the screen's at once, and to a notification only once it holds:
@@ -248,7 +272,7 @@ struct Notifier {
 
     /// Each idle stop once. It happens only in the background, since on screen nothing stops.
     private mutating func checkIdleStop(_ round: Round) -> [Notice] {
-        guard let stopped = round.idleStopped, stopped != toldIdleStop else { return [] }
+        guard let stopped = round.idleStopped, !stopped.byYou, stopped != toldIdleStop else { return [] }
         toldIdleStop = stopped
         guard !round.onScreen, NoticeKind.idleStopped.isOn(in: defaults) else { return [] }
         return [Notice(kind: .idleStopped, id: "idleStop", title: "Sharing stopped while idle",

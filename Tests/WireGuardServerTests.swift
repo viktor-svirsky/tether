@@ -50,6 +50,22 @@ final class WireGuardServerTests: XCTestCase {
         XCTAssertEqual(server.snapshot().totals, TrafficTotals(), "a stopped server still answers with its carried counters")
     }
 
+    /// The prefix for the VPN check (#277): none with no server, and from a running one a /96 at
+    /// most a lookup later, whatever the Mac's network gives.
+    func testTheNAT64PrefixComesFromTheRunningServer() async throws {
+        XCTAssertNil(WireGuardServer.nat64Prefix())
+        try start()
+        var prefix = WireGuardServer.nat64Prefix()
+        for _ in 0..<50 where prefix == "" {
+            try await Task.sleep(for: .milliseconds(100))
+            prefix = WireGuardServer.nat64Prefix()
+        }
+        XCTAssertEqual(prefix?.hasSuffix("/96"), true, "got \(prefix ?? "nil")")
+        XCTAssertNotNil(Interfaces.nat64Probe(prefix: prefix))
+        server.stop()
+        XCTAssertNil(WireGuardServer.nat64Prefix())
+    }
+
     /// On a carrier that gives the iPhone IPv6 only it listens on 172.20.10.1 and the IPv6 address (#98).
     func testItListensOnTwoAddresses() throws {
         try server.start(hosts: ["127.0.0.1", "::1"], setup: .new(), port: freePort())
