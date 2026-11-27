@@ -137,7 +137,13 @@ class TetherUITestCase: XCTestCase {
     func scroll(by distance: CGFloat) {
         let limit = list.frame.height * 0.6
         let distance = min(max(distance, -limit), limit)
-        let start = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: distance > 0 ? 0.8 : 0.2))
+        // In the list's left margin, clear of the rows and buttons: on iOS 18 a drag that starts on a button can press
+        // it. At the largest text size on an iPhone SE, one from the middle pressed Computer or router on the Add a
+        // device sheet, which then had no QR code to scroll to. At least 8 points from the screen's edge, where a
+        // drag on a full-width list didn't scroll it.
+        let x = max(list.frame.minX + 2, 8) - list.frame.minX
+        let start = list.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: distance > 0 ? 0.8 : 0.2))
+            .withOffset(CGVector(dx: x, dy: 0))
         start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -distance)),
                     withVelocity: .slow, thenHoldForDuration: 0.2)
     }
