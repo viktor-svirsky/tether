@@ -55,6 +55,8 @@ final class FakeServer: WireGuardServing {
     /// The addresses of each start, comma-separated.
     private(set) var starts: [String] = []
     private(set) var lastSetup: WireGuardSetup?
+    /// Every setup a start or change gave it, in order.
+    private(set) var setups: [WireGuardSetup] = []
     /// Where the last start or change sent lookups to Tether's own address.
     private(set) var lastDNS: DNSChoice.Upstream?
     /// Whether the last start or change kept the devices out of the local networks.
@@ -103,6 +105,7 @@ final class FakeServer: WireGuardServing {
         guard running else { return }
         if let refusedAddress, setup.serverPeers.contains(where: { $0.address == refusedAddress }) { throw Refused() }
         lastSetup = setup
+        setups.append(setup)
         lastDNS = dns
         lastBlockLocal = blockLocal
     }

@@ -207,6 +207,8 @@ final class HotspotSession {
     private var vpnRead = false
     /// Settings > Only share through a VPN, read each time, like the idle stop.
     static let onlyThroughVPNKey = "sharing.onlyThroughVPN"
+    /// The switch as `checkVPN` last read it, so it knows when it was turned on. Nil before the first read.
+    private var onlyThroughVPNWas: Bool?
     private let onlyThroughVPN: () -> Bool
 
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
@@ -524,13 +526,17 @@ final class HotspotSession {
     private var serverSetup: WireGuardSetup {
         var setup = devices.setup
         if !readyLetIn { setup.ready = nil }
-        if blockedWithoutVPN {
-            // The ready one stays, paused like the rest: left out, a device scanning the code now would
-            // look like one whose config no longer works.
-            if setup.ready?.paused == nil { setup.ready?.paused = .byYou }
-            for i in setup.peers.indices where setup.peers[i].paused == nil { setup.peers[i].paused = .byYou }
-            if setup.proxy?.paused == nil { setup.proxy?.paused = .byYou }
-        }
+        // The ready one stays, paused like the rest: left out, a device scanning the code now would
+        // look like one whose config no longer works.
+        return blockedWithoutVPN ? Self.pausingAll(setup) : setup
+    }
+
+    /// The setup with every device, the ready one and the proxy paused.
+    private static func pausingAll(_ setup: WireGuardSetup) -> WireGuardSetup {
+        var setup = setup
+        if setup.ready?.paused == nil { setup.ready?.paused = .byYou }
+        for i in setup.peers.indices where setup.peers[i].paused == nil { setup.peers[i].paused = .byYou }
+        if setup.proxy?.paused == nil { setup.proxy?.paused = .byYou }
         return setup
     }
 
@@ -543,11 +549,30 @@ final class HotspotSession {
             log(vpn.map { "the internet goes out through a VPN (\($0))" } ?? "the internet goes out without a VPN")
             vpnInterface = vpn
         }
-        let blocked = onlyThroughVPN() && vpn == nil
-        guard blocked != blockedWithoutVPN else { return }
+        let on = onlyThroughVPN()
+        let turnedOn = on && onlyThroughVPNWas == false
+        onlyThroughVPNWas = on
+        let blocked = on && vpn == nil
+        guard blocked != blockedWithoutVPN else {
+            if turnedOn, !blocked, server.running { endConnectionsFromBeforeTheVPN() }
+            return
+        }
         blockedWithoutVPN = blocked
         log(blocked ? "no VPN, so no device gets through until one is on" : "a VPN is on, devices get through again")
         if server.running { wireGuardPeersChanged() }
+    }
+
+    /// The switch was turned on with a VPN already on. What the devices and the proxy have open may
+    /// have opened before the VPN came up, and iOS keeps a connection where it opened, so it would go
+    /// on outside the VPN. Pausing everything for a moment ends it, as a VPN that goes does.
+    private func endConnectionsFromBeforeTheVPN() {
+        log("only through a VPN: ending what was open before, so it opens again through the VPN")
+        do {
+            try server.setPeers(Self.pausingAll(serverSetup), dns: dns(), blockLocal: blockLocal())
+        } catch {
+            log("WireGuard devices: \(error)")
+        }
+        wireGuardPeersChanged()
     }
 
     /// For the Shortcuts actions. Off screen the sampler doesn't run, so the connected devices are read now.

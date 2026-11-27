@@ -1647,6 +1647,35 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(session.connectedNow, [ipad.address])
     }
 
+    /// Turning the switch on while a VPN is already on ends what the devices and the proxy have open:
+    /// it may have opened before the VPN came up, and iOS keeps a connection where it opened. Pausing
+    /// everything for a moment closes it, as a VPN that goes does, then all get through again.
+    func testTurningTheSwitchOnEndsConnectionsOpenedBeforeTheVPN() throws {
+        var saved = WireGuardSetup.new()
+        let ipad = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        makeSession(saved: saved)
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertTrue(session.setProxy(on: true))
+        let before = server.setups.count
+        vpn = "utun5"
+        session.checkVPN()
+        XCTAssertEqual(server.setups.count, before, "switch off: a VPN changes nothing")
+
+        onlyThroughVPN = true
+        session.checkVPN()
+        XCTAssertFalse(session.blockedWithoutVPN)
+        let changes = server.setups.dropFirst(before)
+        XCTAssertEqual(changes.count, 2, "paused, then let through again")
+        XCTAssertNotNil(changes.first?.serverPeers.first { $0.id == ipad.id }?.paused)
+        XCTAssertNotNil(changes.first?.proxy?.paused)
+        XCTAssertNil(server.lastSetup?.serverPeers.first { $0.id == ipad.id }?.paused)
+        XCTAssertNil(server.lastSetup?.proxy?.paused)
+
+        session.checkVPN()
+        XCTAssertEqual(server.setups.count, before + 2, "only when it's turned on")
+    }
+
     /// A start while there's no VPN starts with every device kept out, not let through for a round.
     func testAStartWithoutAVPNKeepsTheDevicesOutFromTheStart() throws {
         var saved = WireGuardSetup.new()

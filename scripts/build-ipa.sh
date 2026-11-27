@@ -90,6 +90,11 @@ for file in Widgets/TetherWidgets.entitlements Sources/Tether.entitlements; do
 done
 codesign -f -s - --entitlements "$work/TetherWidgets.entitlements" "$appex"
 codesign -f -s - --entitlements "$work/Tether.entitlements" "$app"
+# A signature that dropped the group ships widgets that can only say No data, so read it back.
+for bin in "$appex" "$app"; do
+    signed=$(codesign -d --entitlements - --xml "$bin" 2>/dev/null)
+    [[ $signed == *"<string>$group</string>"* ]] || { echo "$bin is signed without the app group $group" >&2; exit 1; }
+done
 
 mkdir "$work/Payload"
 cp -R "$app" "$work/Payload/"
