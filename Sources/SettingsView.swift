@@ -35,14 +35,20 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                sharing
-                vpn
-                newDevices
-                localNetworks
-                notices
-                help
-                about
+            ScrollViewReader { scroller in
+                List {
+                    sharing
+                    vpn
+                    newDevices
+                    localNetworks
+                    notices
+                    help
+                    about
+                }
+                #if DEBUG
+                // The notificationsScreen demo shows the notices, for the README screenshot.
+                .onAppear { if model.opensSettings { scroller.scrollTo(Self.noticesAnchor, anchor: .bottom) } }
+                #endif
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -207,6 +213,9 @@ struct SettingsView: View {
         .onChange(of: localNetworksAllowed) { model.localNetworksChanged() }
     }
 
+    /// Where the notificationsScreen demo scrolls to: the notices end at the bottom, so their header shows too.
+    private static let noticesAnchor = "notices"
+
     @ViewBuilder private var notices: some View {
         if model.noticePermission == .notAsked {
             Section {
@@ -241,6 +250,7 @@ struct SettingsView: View {
         } footer: {
             Text("Only while Tether is in the background. While it's open, you see it on screen.")
                 .accessibilityIdentifier("notices.footer")
+                .id(Self.noticesAnchor)
         }
     }
 }

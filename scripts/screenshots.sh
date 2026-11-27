@@ -34,7 +34,9 @@ xcrun simctl install "$sim" "$app"
 
 shot() { # shot <scenario> <docs file>
     xcrun simctl launch --terminate-running-process "$sim" "$bundle" -TetherDemo "$1" >/dev/null
-    sleep 3 # the list settles and the speeds animate in
+    # The list settles, the speeds animate in, and a demo sheet comes up: on a busy Mac the Add a
+    # device sheet took over 3 s to appear, so the shot showed the screen under it.
+    sleep 8
     xcrun simctl io "$sim" screenshot "$work/$1.png" >/dev/null 2>&1
     # The README shows them 260 points wide, so 645 pixels stays sharp and keeps the files small.
     sips --resampleWidth 645 "$work/$1.png" --out "docs/$2" >/dev/null
