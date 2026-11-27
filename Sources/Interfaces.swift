@@ -95,16 +95,38 @@ enum Interfaces {
     }
 
     static func reading(nat64: () -> String?, addresses: [String], route: (String) -> Route) -> Reading {
-        var routes = internetProbes.map(route)
+        // No route for a family the iPhone has, on cellular or Wi-Fi, is a route that failed for a
+        // moment, not an answer, so it's unknown and counts against a VPN (#330). Left as "none", the
+        // other family would decide, and the devices would get through while this one goes around
+        // the tunnel until the next check.
+        let probe = { (host: String) -> Route in
+            let found = route(host)
+            return found == .none && hasOwn(ipv6: host.contains(":"), in: addresses) ? .unknown : found
+        }
+        var routes = internetProbes.map(probe)
         // With no IPv4 route, a device's IPv4 traffic leaves through the carrier's NAT64 (nat64.go),
         // at the carrier's own prefix when it has one. A VPN that carries only 2000::/3 carries a
         // prefix inside it and leaves the well-known one out, so the probe is in the prefix the
         // server uses. While the server still looks it up, nothing is known.
         if !routes.contains(where: { $0.isIPv4 }) {
-            routes.append(nat64Probe(prefix: nat64()).map(route) ?? .unknown)
+            routes.append(nat64Probe(prefix: nat64()).map(probe) ?? .unknown)
         }
         if let vpn = vpn(in: addresses, routes: routes) { return Reading(vpn: vpn) }
         return Reading(onlyFamily: onlyFamily(in: addresses, routes: routes))
+    }
+
+    /// The iPhone has an address of that family to reach the internet by, on cellular (pdp_ip) or
+    /// Wi-Fi (en): IPv6 in 2000::/3, IPv4 that isn't link-local or the CLAT's (192.0.0.0/29, which
+    /// an IPv6-only carrier gives for its own translation). Tunnels and the hotspot don't count.
+    static func hasOwn(ipv6: Bool, in interfaces: [String]) -> Bool {
+        parse(interfaces).contains { line in
+            guard line.name.hasPrefix("pdp_ip") || line.name.hasPrefix("en") else { return false }
+            let address = line.address
+            if ipv6 {
+                return address.contains(":") && !address.contains("%") && (address.hasPrefix("2") || address.hasPrefix("3"))
+            }
+            return !address.contains(":") && !address.hasPrefix("169.254.") && !isCLAT(address)
+        }
     }
 
     /// A tunnel carries every probe of one family, and every probe of the other leaves on an address
@@ -153,7 +175,8 @@ enum Interfaces {
     enum Route: Equatable {
         /// From this local address.
         case local(String)
-        /// Nowhere: the iPhone has no route there, like IPv4 on an IPv6-only carrier without CLAT.
+        /// Nowhere: the iPhone has no route there, like IPv4 on an IPv6-only carrier without CLAT. For
+        /// a family the iPhone has, `reading` counts it as unknown.
         case none
         /// The question itself failed (no socket left, say), so nothing is known.
         case unknown
