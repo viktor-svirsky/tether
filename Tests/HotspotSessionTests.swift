@@ -21,6 +21,7 @@ final class HotspotSessionTests: XCTestCase {
     private var dns = DNSChoice.Upstream.servers(["1.1.1.1", "1.0.0.1"])
     private var blockLocal = true
     private var vpn: String?
+    private var onlyFamily: Interfaces.Family?
     private var onlyThroughVPN = false
     /// mDNS for the iPhone's name, nil for none, see `HostName`.
     private var names: FakeHostName?
@@ -51,7 +52,7 @@ final class HotspotSessionTests: XCTestCase {
                                  carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
                                  dns: { [unowned self] in dns }, blockLocal: { [unowned self] in blockLocal }, usageDefaults: usageDefaults,
                                  now: { [unowned self] in now }, hostName: names, cellular: cellular, knocker: knocker,
-                                 internetVPN: { [unowned self] in vpn }, onlyThroughVPN: { [unowned self] in onlyThroughVPN }, log: log)
+                                 internetVPN: { [unowned self] in Interfaces.Reading(vpn: vpn, onlyFamily: onlyFamily) }, onlyThroughVPN: { [unowned self] in onlyThroughVPN }, log: log)
         session.localNetworkIntroduced = { [unowned self] in introduced }
     }
 
@@ -1983,6 +1984,24 @@ final class HotspotSessionTests: XCTestCase {
         session.watch()
         XCTAssertTrue(session.sharing)
         XCTAssertNil(session.idleStopped)
+    }
+
+    /// A tunnel for one family while the other goes around it: the devices stay out, and the session
+    /// says which family the tunnel carries, for the screen (#334).
+    func testAVPNForOneFamilyKeepsTheDevicesOutAndSaysWhich() {
+        onlyThroughVPN = true
+        onlyFamily = .ipv4
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertTrue(session.blockedWithoutVPN)
+        XCTAssertNil(session.vpnInterface)
+        XCTAssertEqual(session.vpnOnlyFamily, .ipv4)
+        onlyFamily = nil
+        vpn = "utun5"
+        session.checkVPN()
+        XCTAssertFalse(session.blockedWithoutVPN)
+        XCTAssertNil(session.vpnOnlyFamily, "a VPN for both: nothing to say")
     }
 
     /// Off screen with the switch off, a round doesn't read the routes again: `Model` hears of a

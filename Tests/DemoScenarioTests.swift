@@ -11,7 +11,7 @@ final class DemoScenarioTests: XCTestCase {
     /// The list shows both states: the iPad connected, the Windows PC not.
     private let iPadConnected: Set<DemoScenario> = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying,
                                                     .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .nameNotAnswered, .staleConfig,
-                                                    .notUsingTether, .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
+                                                    .notUsingTether, .vpnIPv4Only, .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
     private let noSpeed: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro, .noDevices, .wireGuardUnsaved,
                                               .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6]
 

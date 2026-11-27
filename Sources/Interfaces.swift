@@ -72,11 +72,29 @@ enum Interfaces {
     ///
     /// `nat64` is the NAT64 prefix the server uses, see `WireGuardServer.nat64Prefix`, asked only on
     /// an iPhone with no IPv4 route.
-    static func internetVPN(nat64: () -> String?) -> String? {
-        internetVPN(nat64: nat64, addresses: addresses(), route: route(toward:))
+    static func internetVPN(nat64: () -> String?, addresses: [String], route: (String) -> Route) -> String? {
+        reading(nat64: nat64, addresses: addresses, route: route).vpn
     }
 
-    static func internetVPN(nat64: () -> String?, addresses: [String], route: (String) -> Route) -> String? {
+    /// The VPN as `internetVPN` finds it and, when there's none, the one family a tunnel carries while
+    /// the other goes around it, so the screen can say why it doesn't count (#334).
+    struct Reading: Equatable {
+        var vpn: String?
+        /// Only when `vpn` is nil, on an iPhone with routes for both families.
+        var onlyFamily: Family?
+    }
+
+    enum Family: String {
+        case ipv4 = "IPv4", ipv6 = "IPv6"
+
+        var other: Family { self == .ipv4 ? .ipv6 : .ipv4 }
+    }
+
+    static func reading(nat64: () -> String?) -> Reading {
+        reading(nat64: nat64, addresses: addresses(), route: route(toward:))
+    }
+
+    static func reading(nat64: () -> String?, addresses: [String], route: (String) -> Route) -> Reading {
         var routes = internetProbes.map(route)
         // With no IPv4 route, a device's IPv4 traffic leaves through the carrier's NAT64 (nat64.go),
         // at the carrier's own prefix when it has one. A VPN that carries only 2000::/3 carries a
@@ -85,7 +103,28 @@ enum Interfaces {
         if !routes.contains(where: { $0.isIPv4 }) {
             routes.append(nat64Probe(prefix: nat64()).map(route) ?? .unknown)
         }
-        return vpn(in: addresses, routes: routes)
+        if let vpn = vpn(in: addresses, routes: routes) { return Reading(vpn: vpn) }
+        return Reading(onlyFamily: onlyFamily(in: addresses, routes: routes))
+    }
+
+    /// A tunnel carries every probe of one family, and every probe of the other leaves on an address
+    /// that's on no tunnel. Only with routes for both families and every route known. It only says why
+    /// there's no VPN, it never makes one.
+    static func onlyFamily(in interfaces: [String], routes: [Route]) -> Family? {
+        let local = routes.compactMap { if case .local(let address) = $0 { address } else { nil } }
+        guard local.count == routes.count else { return nil }
+        let ipv4 = local.filter { !$0.contains(":") }, ipv6 = local.filter { $0.contains(":") }
+        guard !ipv4.isEmpty, !ipv6.isEmpty else { return nil }
+        let lines = parse(interfaces)
+        let outside = { (address: String) -> Bool in
+            let names = lines.filter { $0.address == address }.map(\.name)
+            return !names.isEmpty && !names.contains { $0.hasPrefix("utun") || $0.hasPrefix("ipsec") }
+        }
+        switch (vpn(in: interfaces, local: ipv4) != nil, vpn(in: interfaces, local: ipv6) != nil) {
+        case (true, false) where ipv6.allSatisfy(outside): return .ipv4
+        case (false, true) where ipv4.allSatisfy(outside): return .ipv6
+        default: return nil
+        }
     }
 
     /// Two addresses per family, far apart. A DNS app's tunnel can carry only its resolver's address

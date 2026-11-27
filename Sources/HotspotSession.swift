@@ -205,7 +205,10 @@ final class HotspotSession {
     /// no device through, nor the proxy, see `serverSetup`. Nothing saved changes: they're let through
     /// again as they were once a VPN is on.
     private(set) var blockedWithoutVPN = false { willSet { willChange() } }
-    private let internetVPN: () -> String?
+    /// With no VPN: the one family a tunnel carries while the other goes around it, so the screen can
+    /// say why the VPN doesn't count (#334). See `Interfaces.onlyFamily`.
+    private(set) var vpnOnlyFamily: Interfaces.Family? { willSet { willChange() } }
+    private let internetVPN: () -> Interfaces.Reading
     /// `checkVPN` ran once, so `vpnInterface` is a reading and not the nil it starts as.
     private var vpnRead = false
     /// Settings > Only share through a VPN, read each time, like the idle stop.
@@ -221,7 +224,7 @@ final class HotspotSession {
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
          resetDay: @escaping () -> ResetDay = { .default }, hostName: HostNamePublishing? = nil, cellular: @escaping @MainActor () -> String = { "" },
          knocker: HotspotKnocker = NetworkKnocker(),
-         internetVPN: @escaping () -> String? = { nil }, onlyThroughVPN: @escaping () -> Bool = { false },
+         internetVPN: @escaping () -> Interfaces.Reading = { Interfaces.Reading() }, onlyThroughVPN: @escaping () -> Bool = { false },
          log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
@@ -552,10 +555,15 @@ final class HotspotSession {
     /// the devices through or not by it. Each watcher round, and when iOS says the network changed.
     func checkVPN() {
         vpnRead = true
-        let vpn = internetVPN()
+        let reading = internetVPN()
+        let vpn = reading.vpn
         if vpn != vpnInterface {
             log(vpn.map { "the internet goes out through a VPN (\($0))" } ?? "the internet goes out without a VPN")
             vpnInterface = vpn
+        }
+        if reading.onlyFamily != vpnOnlyFamily {
+            if let family = reading.onlyFamily { log("a VPN carries only \(family.rawValue), so it isn't one here") }
+            vpnOnlyFamily = reading.onlyFamily
         }
         let on = onlyThroughVPN()
         let turnedOn = on && onlyThroughVPNWas == false

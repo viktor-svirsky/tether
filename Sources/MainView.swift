@@ -68,7 +68,7 @@ struct MainView: View {
                 if model.blockedWithoutVPN {
                     Section {
                         Label {
-                            Text("No VPN is on, so no device gets through until one is. Turn your VPN on, or turn off Only share through a VPN in Settings.")
+                            Text(VPNText.blocked(onlyFamily: model.vpnOnlyFamily))
                         } icon: {
                             Image(systemName: "lock.shield").foregroundStyle(.orange)
                         }

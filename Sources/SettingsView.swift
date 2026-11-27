@@ -129,7 +129,7 @@ struct SettingsView: View {
             Toggle("Only share through a VPN", isOn: $onlyThroughVPN)
                 .onChange(of: onlyThroughVPN) { model.checkVPN() }
                 .accessibilityIdentifier("vpn.only")
-            LabeledContent("Now", value: model.vpnInterface == nil ? "No VPN" : "Through a VPN")
+            LabeledContent("Now", value: VPNText.now(vpn: model.vpnInterface != nil, onlyFamily: model.vpnOnlyFamily))
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("vpn.now")
         } header: {
