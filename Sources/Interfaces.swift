@@ -119,6 +119,17 @@ enum Interfaces {
         /// The question itself failed (no socket left, say), so nothing is known.
         case unknown
 
+        /// After `socket` failed with `code`: no route when the iPhone has no such family at all.
+        init(socketFailed code: Int32) {
+            self = [EAFNOSUPPORT, EPROTONOSUPPORT].contains(code) ? .none : .unknown
+        }
+
+        /// After `connect` failed with `code`: no route when iOS has none toward the address, anything
+        /// else is unknown, which counts against a VPN.
+        init(connectFailed code: Int32) {
+            self = [ENETUNREACH, EHOSTUNREACH, ENETDOWN, EADDRNOTAVAIL].contains(code) ? .none : .unknown
+        }
+
         var isIPv4: Bool {
             if case .local(let address) = self { return !address.contains(":") }
             return false
@@ -152,10 +163,10 @@ enum Interfaces {
         guard getaddrinfo(host, "53", &hints, &info) == 0, let info else { return .unknown }
         defer { freeaddrinfo(info) }
         let fd = socket(info.pointee.ai_family, SOCK_DGRAM, 0)
-        guard fd >= 0 else { return [EAFNOSUPPORT, EPROTONOSUPPORT].contains(errno) ? .none : .unknown }
+        guard fd >= 0 else { return Route(socketFailed: errno) }
         defer { close(fd) }
         guard connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0 else {
-            return [ENETUNREACH, EHOSTUNREACH, ENETDOWN, EADDRNOTAVAIL].contains(errno) ? .none : .unknown
+            return Route(connectFailed: errno)
         }
         var local = sockaddr_storage()
         var length = socklen_t(MemoryLayout<sockaddr_storage>.size)

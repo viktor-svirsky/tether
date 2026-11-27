@@ -600,15 +600,20 @@ final class HotspotSession {
 
     /// On screen, or the sound sounds while the hotspot is on: without it iOS suspends Tether soon,
     /// so it isn't sharing for long (#164), and the widgets mustn't say it is.
-    var staysRunning: Bool { sceneActive || !running || keepAlive.sounding }
+    var staysRunning: Bool { !running || heldAwake }
 
     /// For the Live Activity: not stopped, whether or not the sound sounds this moment (a call takes
     /// it for a while), so it lasts from a start to a stop and through a wait for the hotspot.
-    var up: Bool { idleStopped == nil && (sceneActive || running || keepAlive.playing) }
+    var up: Bool { idleStopped == nil && (running || heldAwake) }
 
     /// For the widgets: sharing, or waiting for the hotspot, and staying so: on screen, or with the
     /// sound keeping Tether running.
-    var awake: Bool { idleStopped == nil && (sceneActive || (running ? keepAlive.sounding : keepAlive.playing)) }
+    var awake: Bool { idleStopped == nil && heldAwake }
+
+    /// What keeps iOS from suspending Tether in what it does now, the rule the three above share: on
+    /// screen, or the sound, sounding while the hotspot is on, or at least playing while Tether waits
+    /// for it (a call can take the sound for a while then).
+    private var heldAwake: Bool { sceneActive || (running ? keepAlive.sounding : keepAlive.playing) }
 
     /// The connected devices for the widgets, in the list's order, by the latest read.
     var connectedPeers: [WireGuardSetup.Peer] {
