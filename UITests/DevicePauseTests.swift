@@ -3,7 +3,24 @@ import XCTest
 /// Pausing a device on its screen (#74): Pause under its status, then Paused with Resume in the same
 /// spot, its row on the main screen, and the footer.
 final class DevicePauseTests: TetherUITestCase {
-    private let footer = "Pause stops it from connecting until you resume it."
+    private let footer = "Pause stops it from connecting for a while, or until you resume it."
+    private let lengths = ["For 30 minutes", "For 1 hour", "Until tomorrow", "Until I resume it"]
+
+    /// Taps Pause where a finger would, at the middle of its row. On iOS 18.5 the element's own tap
+    /// doesn't open the menu, while a tap at those coordinates does (checked with a probe test).
+    private func openPauseMenu() {
+        let pause = reveal(element("device.pause"))
+        waitUntilStill(pause)
+        pause.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    }
+
+    /// Pause, then how long from its menu (#312).
+    private func pause(for length: String) {
+        openPauseMenu()
+        XCTAssertTrue(app.buttons[length].waitForExistence(timeout: 5), length)
+        app.buttons[length].tap()
+        waitUntilGone(app.buttons[length])
+    }
 
     func testADeviceHasPauseUnderItsStatusWithTheFooter() {
         launch(.sharing)
@@ -21,7 +38,7 @@ final class DevicePauseTests: TetherUITestCase {
         openDevice("iPad")
         XCTAssertEqual(staticText("device.status").label, "Connected")
         let place = element("device.pause").frame.minY
-        element("device.pause").tap()
+        pause(for: "Until I resume it")
         let status = staticText("device.status")
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertEqual(status.label, "Paused")
@@ -36,6 +53,32 @@ final class DevicePauseTests: TetherUITestCase {
         XCTAssertTrue(row.label.contains("Paused"), row.label)
         XCTAssertFalse(row.label.contains("Connected"), row.label)
         XCTAssertEqual(label(of: "status.headline"), "No device is using Tether yet", "a paused device doesn't count as connected")
+    }
+
+    // MARK: For a set time (#312)
+
+    func testPauseAsksHowLong() {
+        launch(.sharing)
+        openDevice("iPad")
+        openPauseMenu()
+        for length in lengths {
+            XCTAssertTrue(app.buttons[length].waitForExistence(timeout: 5), length)
+        }
+    }
+
+    func testAPauseForATimeSaysUntilWhenOnItsScreenAndItsRow() {
+        launch(.sharing)
+        openDevice("iPad")
+        pause(for: "For 30 minutes")
+        let status = staticText("device.status")
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.label.hasPrefix("Paused until "), status.label)
+        XCTAssertEqual(staticText("device.statusDetail").label, "It connects again then, or when you resume it.")
+        XCTAssertTrue(element("device.resume").waitForExistence(timeout: 5))
+        goBack(to: "Tether")
+        let row = reveal(element("device.iPad"))
+        XCTAssertTrue(row.label.contains("Paused until "), row.label)
+        XCTAssertEqual(label(of: "status.headline"), "No device is using Tether yet")
     }
 
     func testResumeConnectsItAgain() {

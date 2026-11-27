@@ -584,7 +584,7 @@ struct AddDeviceSheet: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { closeButton }
         .onAppear {
-            if !model.proxyOn || model.proxy?.paused == .byYou { model.setProxy(on: true) }
+            if !model.proxyOn || model.proxy?.paused?.byPerson == true { model.setProxy(on: true) }
             proxyProgress = ProxyProgress(at: model.proxyStats)
         }
         .onChange(of: model.proxyStats) { _, stats in

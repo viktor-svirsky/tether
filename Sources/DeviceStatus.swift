@@ -16,22 +16,26 @@ enum DeviceStatus: Equatable {
         }
     }
 
-    /// The row's word.
-    var label: String {
+    /// The row's word. A timed pause says until when (#312), as of `now`.
+    func label(now: Date = Date(), calendar: Calendar = .autoupdatingCurrent, locale: Locale = .current) -> String {
         switch self {
         case .connected: "Connected"
         case .notConnected: "Not connected"
-        case .paused: "Paused"
+        case let .paused(pause): pause.until.map { "Paused until \(Format.until($0, now: now, calendar: calendar, locale: locale))" } ?? "Paused"
         }
     }
 
+    var label: String { label() }
+
     /// The first line on its screen: the row's word, or what paused it.
-    var title: String {
+    func title(now: Date = Date(), calendar: Calendar = .autoupdatingCurrent, locale: Locale = .current) -> String {
         switch self {
-        case let .paused(pause): pause.title
-        default: label
+        case let .paused(pause): pause.title(now: now, calendar: calendar, locale: locale)
+        default: label(now: now, calendar: calendar, locale: locale)
         }
     }
+
+    var title: String { title() }
 
     /// The line under the title on its screen, for a paused device only. `resets` is the day the
     /// count starts over, like "December 1", and `period` the running count, see `Format.period`.
@@ -44,10 +48,16 @@ enum DeviceStatus: Equatable {
 }
 
 extension WireGuardSetup.Pause {
-    var title: String {
+    /// When a timed pause ends, nil for the others.
+    var until: Date? {
+        if case let .until(end) = self { end } else { nil }
+    }
+
+    func title(now: Date = Date(), calendar: Calendar = .autoupdatingCurrent, locale: Locale = .current) -> String {
         switch self {
         case .byYou: "Paused"
         case .atLimit: "Paused at its limit"
+        case let .until(end): "Paused until \(Format.until(end, now: now, calendar: calendar, locale: locale))"
         }
     }
 
@@ -55,6 +65,7 @@ extension WireGuardSetup.Pause {
         switch self {
         case .byYou: "It can't connect until you resume it."
         case .atLimit: "It used its data \(period). It connects again on \(resets), or when you resume it."
+        case .until: "It connects again then, or when you resume it."
         }
     }
 }
@@ -89,20 +100,22 @@ struct ProxyStatus: Equatable {
         }
     }
 
-    /// The row's word, short, beside the name.
-    var label: String {
+    /// The row's word, short, beside the name. A timed pause says until when, as for a device.
+    func label(now: Date = Date(), calendar: Calendar = .autoupdatingCurrent, locale: Locale = .current) -> String {
         switch state {
-        case .paused: "Paused"
+        case let .paused(pause): DeviceStatus.paused(pause).label(now: now, calendar: calendar, locale: locale)
         case let .open(n) where n > 0: "\(n) open"
         case .cantListen: "Not listening"
         default: "Idle"
         }
     }
 
+    var label: String { label() }
+
     /// The first line on its screen.
-    var title: String {
+    func title(now: Date = Date(), calendar: Calendar = .autoupdatingCurrent, locale: Locale = .current) -> String {
         switch state {
-        case let .paused(pause): pause.title
+        case let .paused(pause): pause.title(now: now, calendar: calendar, locale: locale)
         case .open(0): "No connections open"
         case .open(1): "1 connection open"
         case let .open(n): "\(n) connections open"
@@ -110,6 +123,8 @@ struct ProxyStatus: Equatable {
         case .cantListen: "Not listening"
         }
     }
+
+    var title: String { title() }
 
     /// The icon `DeviceStatusLabel` shows: connected while a device has a connection open.
     var look: DeviceStatus {
@@ -126,7 +141,7 @@ struct ProxyStatus: Equatable {
     static func blocked(_ proxy: WireGuardSetup.Proxy?) -> String? {
         guard let proxy, proxy.on else { return "The proxy is off. Close this and pick No, use the proxy again to turn it on." }
         return switch proxy.paused {
-        case .byYou?: "The proxy is paused. To resume it, close this, tap Proxy under Devices and turn off Pause."
+        case .byYou?, .until?: "The proxy is paused. To resume it, close this, tap Proxy under Devices and turn off Pause."
         case .atLimit?: "The proxy is paused at its data limit. To use it anyway, close this, tap Proxy under Devices and turn off Pause."
         case nil: nil
         }
@@ -139,6 +154,7 @@ struct ProxyStatus: Equatable {
     func detail(resets: String, period: String) -> String? {
         switch state {
         case .paused(.byYou): "Nothing goes through it until you resume it."
+        case .paused(.until): "It works again then, or when you resume it."
         case .paused(.atLimit): "It used its data \(period). It works again on \(resets), or when you resume it."
         case .cantListen: "Devices on it can't load anything. Tether tries again by itself."
         default: nil
