@@ -137,9 +137,9 @@ class TetherUITestCase: XCTestCase {
     func scroll(by distance: CGFloat) {
         let limit = list.frame.height * 0.6
         let distance = min(max(distance, -limit), limit)
-        // In the list's left margin, clear of the rows and buttons: on iOS 18 a drag that starts on a button can press
-        // it. At the largest text size on an iPhone SE, one from the middle pressed Computer or router on the Add a
-        // device sheet, which then had no QR code to scroll to. At least 8 points from the screen's edge, where a
+        // In the list's left margin, clear of the rows and buttons: a drag that starts on a button can press it. At
+        // the largest text size, one from the middle pressed Computer or router on the Add a device sheet, which then
+        // had no QR code to scroll to. At least 8 points from the screen's edge, where a
         // drag on a full-width list didn't scroll it.
         let x = max(list.frame.minX + 2, 8) - list.frame.minX
         let start = list.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: distance > 0 ? 0.8 : 0.2))
@@ -265,8 +265,7 @@ class TetherUITestCase: XCTestCase {
     /// iOS's own secondary text colour on the grouped background (section headers, footers, footnotes).
     /// It passes for large text only, and it is the system's colour, not ours. Only plain texts without an
     /// identifier qualify, plus the elements named in `systemStyled`, each checked to use only system styling.
-    /// Any other element, an issue with no element, and every other full contrast failure still fail the test: the one
-    /// let through is a short system header, see `shortSystemHeaders`.
+    /// Any other element, an issue with no element, and every full contrast failure still fail the test.
     ///
     /// `types` defaults to everything but Dynamic Type and clipped text. Contrast reads the pixels, so it is only right for what
     /// is fully on screen: a contrast issue on an element that isn't fully inside the window (a row under the home
@@ -320,7 +319,6 @@ class TetherUITestCase: XCTestCase {
                 let known = (issue.compactDescription == "Contrast nearly passed" && (systemText || systemStyled))
                     || (underSheet && issue.compactDescription == "Potentially inaccessible text" && element == nil)
                     || offScreen || systemBarButton
-                    || (issue.auditType == .contrast && systemText && Self.shortSystemHeaders.contains(element?.label ?? ""))
                 if known {
                     allowed.append("\(issue.compactDescription): \(element?.label ?? "(no element)")")
                 } else {
@@ -345,12 +343,6 @@ class TetherUITestCase: XCTestCase {
             try attempt()
         } catch let error as NSError where error.domain == "com.apple.xcode.xctest.accessibilityAudit" && error.code == -56 {
             print("Audit timed out, trying once more: \(error.localizedDescription)")
-            try attempt()
-        } catch let error as NSError where error.domain == "com.apple.accessibilityAudit" && error.code == -902 {
-            // "Invalid target app": iOS 18's audit sometimes loses the app it was given, on a tall screen
-            // at the largest text size. Bringing it to the front again and one more try gets it.
-            print("Audit lost the app, trying once more: \(error.localizedDescription)")
-            app.activate()
             try attempt()
         }
     }
@@ -395,10 +387,6 @@ class TetherUITestCase: XCTestCase {
 
     /// Toolbar buttons, drawn by the system in its own tint.
     static let systemButtons: Set<String> = ["Cancel", "Done"]
-    /// Short section headers in the system style that the audit fails although longer ones only nearly fail. Before iOS 26 a header is small grey
-    /// capitals, and on an iPhone SE the audit calls Settings' "VPN" a full contrast failure while "SHARING", in the same
-    /// colour and size, only nearly passes. Both are the system's header style, not Tether's.
-    static let shortSystemHeaders: Set<String> = ["VPN"]
     /// Filled buttons over the bottom bar's material, which the audit's contrast estimate gets just short of.
     /// Their tests read the real contrast from the pixels instead, see `textContrast`.
     static let filledButtons: Set<String> = ["intro.continue"]
