@@ -8,7 +8,7 @@ struct TetherWidgets: WidgetBundle {
     var body: some Widget {
         StatusWidget()
         TetherLiveActivity()
-        if #available(iOS 18, *) { TetherControl() }
+        TetherControl()
     }
 }
 
@@ -103,7 +103,6 @@ struct StatusView: View {
 
 // MARK: Control Center
 
-@available(iOS 18, *)
 struct TetherControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "TetherControl", provider: Provider()) { awake in

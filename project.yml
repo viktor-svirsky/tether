@@ -2,7 +2,7 @@ name: Tether
 options:
   bundleIdPrefix: com.vsvirskyi
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "26.0"
   # Builds the WireGuard server (Go) into WireGuard/build/TetherWG.xcframework. Skips when unchanged.
   preGenCommand: scripts/build-wireguard.sh
 settings:

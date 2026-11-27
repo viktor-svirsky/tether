@@ -5,7 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "Tether",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [.macOS(.v14), .iOS("26.0")],
     targets: [
         .target(name: "TetherCore", dependencies: ["TetherWG"], path: "Sources", sources: ["Traffic.swift", "TrafficSampler.swift", "WireGuardSetup.swift", "WireGuardServer.swift", "AppExpiry.swift", "KeepAlivePolicy.swift", "IdleStop.swift", "DNSChoice.swift", "LocalNetworks.swift", "MonthlyUsage.swift", "ResetDay.swift", "DataLimit.swift", "Format.swift", "ShortcutReply.swift", "HotspotSession.swift", "AddWindow.swift", "ConfigPageHandler.swift", "ConfigPage.swift", "ConfigPageServer.swift", "ConfigFile.swift", "Notices.swift", "AddDeviceProgress.swift", "AddDeviceFollow.swift", "LocalNetwork.swift", "LocalNetworkIntro.swift", "Fakes.swift", "DemoMode.swift", "LogRedaction.swift", "DebugLog.swift", "DeviceStatus.swift", "Diagnostics.swift", "CallWatch.swift", "HotspotNeighbors.swift", "HotspotKnocker.swift", "WidgetState.swift", "WidgetPublisher.swift", "Interfaces.swift", "VPNText.swift", "HostName.swift"]),
         .binaryTarget(name: "TetherWG", path: "WireGuard/build/TetherWG.xcframework"),
