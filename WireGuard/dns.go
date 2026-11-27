@@ -141,13 +141,13 @@ func (s *Server) lookup(device netip.AddrPort, query []byte) {
 	key := s.keys[owner]
 	counts := s.trafficOfLocked(owner)
 	// Kept with the device's connections, so pausing or removing it ends the lookup too.
-	ctx, end := newLookup(s.ctx)
+	ctx, end := newHeld(s.ctx)
 	untrack := s.trackLocked(owner, netip.Addr{}, end)
 	s.looking.Add(1) // under s.mu, so it comes before Close's Wait or not at all
 	s.mu.Unlock()
 	go func() {
 		defer s.looking.Done()
-		defer end.Close()
+		defer end.done()
 		defer untrack()
 		defer func() {
 			s.mu.Lock()
@@ -282,69 +282,89 @@ func (s *Server) askPlain(ctx context.Context, servers []netip.AddrPort, query [
 	}
 }
 
-// newLookup is the ctx of one lookup, and what ends it: a pause or removal of its device or the
-// proxy closes it, see trackLocked. Ending it also closes the sockets the lookup holds (see hold)
-// before it returns, and the close of a socket waits for a send already on it. So a query that
-// hadn't left when the pause came doesn't leave after the pause returns (#277): looking at ctx
-// before sending isn't enough, since the pause can come between the look and the send.
-func newLookup(parent context.Context) (context.Context, io.Closer) {
+// newHeld is the ctx of one task that goes out for a device or the proxy (a lookup, a dial), and
+// what a pause or removal of that device or the proxy closes, see trackLocked. Closing it also
+// closes the sockets the task holds (see hold) and waits for its dials (see holdDial) before it
+// returns, and the close of a socket waits for a send already on it. So a query or SYN that hadn't
+// left when the pause came doesn't leave after the pause returns (#277, #336): looking at ctx
+// before sending isn't enough, since the pause can come between the look and the send. A task
+// that ends on its own calls done instead.
+func newHeld(parent context.Context) (context.Context, *held) {
 	ctx, cancel := context.WithCancel(parent)
-	l := &lookupSockets{cancel: cancel, open: map[io.Closer]struct{}{}}
-	return context.WithValue(ctx, lookupKey{}, l), l
+	h := &held{cancel: cancel, open: map[io.Closer]struct{}{}}
+	return context.WithValue(ctx, heldKey{}, h), h
 }
 
-type lookupKey struct{}
+type heldKey struct{}
 
-// lookupSockets are the sockets one lookup sends its query through, see newLookup.
-type lookupSockets struct {
+// held are the sockets and dials one task goes out through, see newHeld.
+type held struct {
 	cancel context.CancelFunc
 	mu     sync.Mutex
-	open   map[io.Closer]struct{} // nil once the lookup has ended
+	open   map[io.Closer]struct{} // nil once the task has ended
+	closed bool                   // ended by Close, not done
 }
 
-func (l *lookupSockets) Close() error {
-	l.cancel() // first, so hold refuses from here on and the lookup reads as ended, not failed
-	l.mu.Lock()
-	open := l.open
-	l.open = nil
-	l.mu.Unlock()
+// Close ends the task for a pause or removal, and what it holds with it.
+func (h *held) Close() error {
+	h.cancel() // first, so hold refuses from here on and the task reads as ended, not failed
+	h.mu.Lock()
+	open := h.open
+	h.open, h.closed = nil, true
+	h.mu.Unlock()
 	for c := range open {
 		c.Close()
 	}
 	return nil
 }
 
-// hold gives conn to the lookup of ctx, so ending the lookup closes it, and returns what lets go of
-// it again. It fails when ctx has ended. A ctx from no lookup (s.ctx) is only looked at.
+// done ends a task that's over. What it still holds is let go, not closed: the task's own sockets
+// close as it returns, and a dial for an HTTP transport's pool goes on for the next lookup, as it
+// did before #336. A pause after that ends the pool's connections, see swapDoHLocked.
+func (h *held) done() {
+	h.cancel()
+	h.mu.Lock()
+	h.open = nil
+	h.mu.Unlock()
+}
+
+// hold gives conn to the task of ctx (see newHeld), so closing the task closes it, and returns
+// what lets go of it again. It fails when ctx has ended. A ctx from no task (s.ctx) is only looked
+// at.
 func hold(ctx context.Context, conn io.Closer) (release func(), err error) {
-	l, _ := ctx.Value(lookupKey{}).(*lookupSockets)
-	if l == nil {
+	h, _ := ctx.Value(heldKey{}).(*held)
+	if h == nil {
 		return func() {}, ctx.Err()
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if err := ctx.Err(); err != nil { // ended: Close cancels ctx before it takes l.mu
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := ctx.Err(); err != nil { // ended: Close and done cancel ctx before they take h.mu
 		return nil, err
 	}
-	if l.open == nil { // ended, and ctx doesn't say: a dial for a pool, see holdDial
+	// Ended, and ctx doesn't say: a dial for a pool, see holdDial. After a pause it doesn't go
+	// out, after the task's own end it goes on unheld.
+	if h.closed {
 		return nil, context.Canceled
 	}
-	l.open[conn] = struct{}{}
+	if h.open == nil {
+		return func() {}, nil
+	}
+	h.open[conn] = struct{}{}
 	return func() {
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		delete(l.open, conn)
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		delete(h.open, conn)
 	}, nil
 }
 
-// holdDial runs dial on a ctx that the end of ctx's lookup (see newLookup) also ends, and makes
-// that end wait for the dial to return, up to dialWaitMax. Ending a dial's context doesn't stop a
+// holdDial runs dial on a ctx that closing ctx's task (see newHeld) also ends, and makes that close
+// wait for the dial to return, up to dialWaitMax. Ending a dial's context doesn't stop a
 // SYN that's about to leave: the dial may be past its look at the context. So without the wait, a
 // pause could return and a SYN go out after it, outside a VPN that just went (#336). A dial
 // returns at once when its context ends, so the wait is short. The ctx of a dial for an HTTP
-// transport's pool has the lookup's values but not its end, hence the ctx of its own.
+// transport's pool has the task's values but not its end, hence the ctx of its own.
 func holdDial(ctx context.Context, dial func(context.Context) (net.Conn, error)) (net.Conn, error) {
-	if _, ok := ctx.Value(lookupKey{}).(*lookupSockets); !ok {
+	if _, ok := ctx.Value(heldKey{}).(*held); !ok {
 		return dial(ctx)
 	}
 	dialing, cancel := context.WithCancel(ctx)
@@ -359,10 +379,10 @@ func holdDial(ctx context.Context, dial func(context.Context) (net.Conn, error))
 	return dial(dialing)
 }
 
-// dialWaitMax is the longest a lookup's end waits for a dial, see holdDial.
+// dialWaitMax is the longest closing a task waits for a dial, see holdDial.
 var dialWaitMax = time.Second
 
-// dialWait is a dial in flight as its lookup holds it: closing it ends the dial and waits for it.
+// dialWait is a dial in flight as its task holds it: closing it ends the dial and waits for it.
 type dialWait struct {
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -399,7 +419,7 @@ func (s *Server) askUDP(ctx context.Context, server netip.AddrPort, query []byte
 	if err != nil {
 		return nil, err
 	}
-	// Held by the lookup before anything is sent, so a pause closes it, see newLookup.
+	// Held by the lookup before anything is sent, so a pause closes it, see newHeld.
 	release, err := hold(ctx, conn)
 	if err != nil {
 		conn.Close()
@@ -756,10 +776,10 @@ func (s *Server) lookupConn() net.Conn {
 	s.mu.Unlock()
 	queriesIn, queriesOut := io.Pipe()
 	answersIn, answersOut := io.Pipe()
-	ctx, end := newLookup(s.ctx)
+	ctx, end := newHeld(s.ctx)
 	go func() {
 		defer s.looking.Done()
-		defer end.Close()
+		defer end.done()
 		s.serveTCP(ctx, queriesIn, answersOut)
 		queriesIn.Close()  // a write still waiting fails
 		answersOut.Close() // the device's side gets a FIN

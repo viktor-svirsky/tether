@@ -365,8 +365,9 @@ func start(hosts []netip.Addr, port int, privateKey [32]byte, listAddrs func() (
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.lookups, s.maxLookups = map[netip.Addr]int{}, maxLookups
 	// A lookup's DoH dial is held like its other sockets, so a pause waits for it too, see holdDial.
+	// Through s.dial, which is dialer.DialContext but for tests.
 	dohDial := func(ctx context.Context, network, address string) (net.Conn, error) {
-		return holdDial(ctx, func(ctx context.Context) (net.Conn, error) { return dialer.DialContext(ctx, network, address) })
+		return holdDial(ctx, func(ctx context.Context) (net.Conn, error) { return s.dial(ctx, network, address) })
 	}
 	s.dohClient, s.dohSpare, s.lookupTimeout = newDoHClient(dohDial), newDoHSpare(dohDial), lookupTimeout
 	s.plainTimeout = plainTimeout
@@ -1213,16 +1214,16 @@ func (s *Server) forwardTCP(r forwardRequest) {
 	}
 	// Ended by a pause of the device while it dials, and the pause waits for the dial, so no SYN
 	// leaves once the pause is done (#277, #336). See holdDial.
-	dialing, end := newLookup(s.ctx)
+	dialing, end := newHeld(s.ctx)
 	untrackDial, ok := s.track(src, a.owner, a.key, netip.Addr{}, end)
 	if !ok {
-		end.Close()
+		end.done()
 		refuse()
 		return
 	}
 	out, err := s.dialCounted(dialing, dst, lookups)
 	untrackDial()
-	end.Close()
+	end.done()
 	if err != nil {
 		refuse()
 		return

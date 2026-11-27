@@ -316,3 +316,77 @@ func TestAPauseWaitsForADialItEnds(t *testing.T) {
 		t.Fatalf("the dial sent %v after the pause returned", time.Duration(at-returned))
 	}
 }
+
+// A pause returns only once a DoH dial it ended has, through the client a server starts with: the
+// transport dials for its pool on a context the lookup's end doesn't reach (#336).
+func TestAPauseWaitsForADoHDialItEnds(t *testing.T) {
+	s, c := setup(t)
+	dialing := make(chan struct{}, 4)
+	var sent atomic.Int64
+	s.mu.Lock()
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialing <- struct{}{}
+		<-ctx.Done()
+		time.Sleep(scaled(100 * time.Millisecond)) // past the look at ctx, the SYN goes out late
+		sent.Store(time.Now().UnixNano())
+		return nil, ctx.Err()
+	}
+	s.mu.Unlock()
+	s.SetDNS(&dnsUpstream{doh: "https://127.0.0.1:9/abc123"})
+	go lookupUDP(c, lookupFor(t, 91, "example.com.", 0), answerWait)
+	select {
+	case <-dialing:
+	case <-time.After(answerWait):
+		t.Fatal("the lookup's DoH dial didn't go through s.dial")
+	}
+	pause(t, s, true)
+	returned := time.Now().UnixNano()
+	if at := sent.Load(); at == 0 || at > returned {
+		t.Fatalf("the DoH dial sent %v after the pause returned", time.Duration(at-returned))
+	}
+}
+
+// A lookup that ends on its own leaves its DoH dial to the pool, as before #336: only a pause or
+// removal ends it.
+func TestALookupThatEndsLeavesItsDoHDialToThePool(t *testing.T) {
+	s, c := setup(t)
+	s.lookupTimeout = scaled(300 * time.Millisecond)
+	dialing, release := make(chan struct{}, 4), make(chan struct{})
+	var cancelled atomic.Bool
+	s.mu.Lock()
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialing <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			cancelled.Store(true)
+		}
+		return nil, errors.New("refused")
+	}
+	s.mu.Unlock()
+	defer close(release)
+	s.SetDNS(&dnsUpstream{doh: "https://127.0.0.1:9/abc123"})
+	lookupUDP(c, lookupFor(t, 92, "example.com.", 0), answerWait) // ends with the lookup's timeout
+	select {
+	case <-dialing:
+	case <-time.After(answerWait):
+		t.Fatal("the lookup's DoH dial didn't go through s.dial")
+	}
+	time.Sleep(scaled(200 * time.Millisecond)) // the lookup's end has run
+	if cancelled.Load() {
+		t.Fatal("the lookup's end cancelled its DoH dial")
+	}
+}
+
+// After a pause, a dial for the pool started on the paused task's context doesn't go out at all.
+func TestADialAfterItsTaskIsClosedDoesntGoOut(t *testing.T) {
+	ctx, h := newHeld(context.Background())
+	h.Close()
+	_, err := holdDial(context.WithoutCancel(ctx), func(context.Context) (net.Conn, error) {
+		t.Fatal("dialed for a closed task")
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatal("no error for a closed task")
+	}
+}
