@@ -1047,6 +1047,24 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertNil(session.wireGuardProblem)
     }
 
+    /// A list the server refuses while the saved devices can't be read stops it: starting it again
+    /// would need that setup, and leaving it running with the old list could let in what the new one
+    /// keeps out (#333).
+    func testARefusedListWithTheDevicesUnreadableStopsTheServer() throws {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        let peer = try XCTUnwrap(devices.connectReady())
+        XCTAssertTrue(server.running)
+        secrets.savesFail = true
+        devices.reset()
+        XCTAssertFalse(devices.loaded, "a reset that can't be saved leaves the devices unread")
+        server.refusedAddress = peer.address
+        session.dnsChanged()
+        XCTAssertFalse(server.running, "stopped, not left with the list from before")
+        XCTAssertEqual(server.starts, [hotspot], "not started again without the saved devices")
+    }
+
     /// A retry of the next code that fails for another reason puts that reason in the log too (#190).
     func testEachReasonTheNextCodeCantBeSavedIsLogged() {
         var logged: [String] = []
