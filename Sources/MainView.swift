@@ -99,7 +99,8 @@ struct MainView: View {
                                     deviceRow {
                                         Text(peer.name)
                                         if !textSize.isAccessibilitySize { Spacer() }
-                                        DeviceStatusLabel(status: DeviceStatus(peer, connected: model.wireGuardConnected))
+                                        DeviceStatusLabel(status: DeviceStatus(peer, connected: model.wireGuardConnected),
+                                                          text: DeviceStatus(peer, connected: model.wireGuardConnected).label(now: model.clockNow))
                                             .font(.subheadline)
                                     }
                                     // The label colour: grey text on the card fails the contrast audit.
@@ -154,7 +155,7 @@ extension MainView {
                 deviceRow {
                     Text(ProxyStatus.name)
                     if !textSize.isAccessibilitySize { Spacer() }
-                    DeviceStatusLabel(status: status.look, text: status.label)
+                    DeviceStatusLabel(status: status.look, text: status.label(now: model.clockNow))
                         .font(.subheadline)
                 }
                 Text(Format.used(model.usage(of: proxy.id).thisMonth.total, model.usagePeriod))

@@ -189,11 +189,29 @@ final class ProxyTests: TetherUITestCase {
         openProxy()
         let pause = reveal(app.switches["proxy.pause"].firstMatch)
         pause.switches.firstMatch.exists ? pause.switches.firstMatch.tap() : pause.tap()
+        XCTAssertTrue(app.buttons["Until I resume it"].waitForExistence(timeout: 5), "how long, as for a device")
+        app.buttons["Until I resume it"].tap()
+        waitUntilGone(app.buttons["Until I resume it"])
         XCTAssertEqual(value(of: pause), "1")
         XCTAssertEqual(label(of: "proxy.status"), "Status, Paused")
         XCTAssertEqual(label(of: "proxy.statusDetail"), "Nothing goes through it until you resume it.")
         goBack(to: "Tether")
         XCTAssertTrue(reveal(element("proxy.row")).label.contains("Paused"))
+    }
+
+    func testAPauseForATimeSaysUntilWhen() {
+        launch(.proxy)
+        openProxy()
+        let pause = reveal(app.switches["proxy.pause"].firstMatch)
+        pause.switches.firstMatch.exists ? pause.switches.firstMatch.tap() : pause.tap()
+        XCTAssertTrue(app.buttons["For 1 hour"].waitForExistence(timeout: 5))
+        app.buttons["For 1 hour"].tap()
+        waitUntilGone(app.buttons["For 1 hour"])
+        XCTAssertEqual(value(of: pause), "1")
+        XCTAssertTrue(label(of: "proxy.status").hasPrefix("Status, Paused until "), label(of: "proxy.status"))
+        XCTAssertEqual(label(of: "proxy.statusDetail"), "It works again then, or when you resume it.")
+        goBack(to: "Tether")
+        XCTAssertTrue(reveal(element("proxy.row")).label.contains("Paused until "))
     }
 
     func testALimitPickedFromTheMenuShowsWithTheData() {
