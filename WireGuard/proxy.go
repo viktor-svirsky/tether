@@ -1189,7 +1189,8 @@ func socketError(c any) error {
 // IPv4 first as ip:port, then IPv6 as [ip]:port, and empty while it doesn't: off, or no hotspot
 // address yet. CantListen says it listens nowhere though it has an address to, its port taken say.
 // Open is its client connections. Served is the clients the far end answered in the last
-// servedFor, see markServed. Up and Down are its bytes in this run, the same bytes as the totals.
+// servedFor, see markServed, and the ones it answered before that still have a connection open,
+// a quiet push tunnel say (#325). Up and Down are its bytes in this run, the same bytes as the totals.
 type proxyStats struct {
 	Addresses  []string `json:"addresses"`
 	Paused     bool     `json:"paused"`
@@ -1205,7 +1206,7 @@ func (s *Server) proxyStatsLocked() proxyStats {
 	p := s.proxy
 	st := proxyStats{Addresses: []string{}, Paused: p.paused, Open: p.open, Served: []string{}, Up: p.counts.up.Load(), Down: p.counts.down.Load()}
 	for a, at := range p.served {
-		if s.now().Sub(at) > servedFor {
+		if s.now().Sub(at) > servedFor && p.openBy[a] == 0 {
 			delete(p.served, a)
 			continue
 		}
@@ -1234,8 +1235,8 @@ type configProxy struct {
 // markServed notes that the far end answered client from through the proxy: a response to a plain
 // request, or a tunnel's bytes back. Add a device ticks its last step once a client that wasn't
 // served lately is (#285): it can't go by the proxy's bytes or connections, which a TV already on
-// the proxy moves too. A client drops out once it's had nothing for servedFor, so a device that
-// comes back, or a new one on its address, counts as new again. Past maxServed clients, which an
+// the proxy moves too. A client drops out once it's had nothing for servedFor and has no
+// connection open, so a device that comes back, or a new one on its address, counts as new again. Past maxServed clients, which an
 // IPv6 hotspot's changing addresses could reach, the one served longest ago goes.
 func (s *Server) markServed(from netip.Addr) {
 	if !from.IsValid() {

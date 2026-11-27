@@ -1646,6 +1646,40 @@ func TestATunnelKeepsMarkingItsClientServed(t *testing.T) {
 	}
 }
 
+// A client served once that keeps a quiet connection open through the proxy, a push tunnel say,
+// stays served past servedFor while the connection is open, and drops out once it closes (#325).
+func TestAQuietOpenConnectionKeepsItsClientServed(t *testing.T) {
+	s, proxy := proxyOn(t)
+	conn, r, status := tunnel(t, proxy, echoFarEnd(t))
+	if status != http.StatusOK || !echoes(conn, r) {
+		t.Fatalf("CONNECT got %d, want 200 and an echo", status)
+	}
+	served := func() []string { return s.statsMessage().Proxy.Served }
+	age := func() {
+		s.mu.Lock()
+		for a := range s.proxy.served {
+			s.proxy.served[a] = time.Now().Add(-servedFor - time.Second)
+		}
+		s.mu.Unlock()
+	}
+	age()
+	if got := served(); !slices.Equal(got, []string{"127.0.0.1"}) {
+		t.Fatalf("served %v with its connection still open, want the client", got)
+	}
+	conn.Close()
+	if !waitFor(5*time.Second, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.proxy.open == 0
+	}) {
+		t.Fatal("the proxy still counts the connection open")
+	}
+	age()
+	if got := served(); len(got) != 0 {
+		t.Fatalf("served %v after the connection closed and servedFor went by, want none", got)
+	}
+}
+
 // A plain request that upgrades, a websocket say, goes through with its body as it is, which
 // ReverseProxy needs to carry the connection, and marks its client served, and again while bytes
 // come back, so a websocket open past servedFor keeps its client served (#285).

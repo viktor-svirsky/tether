@@ -1156,10 +1156,11 @@ final class HotspotSession {
         guard sharing, sceneActive else { return forgetNeighbors() }
         let now = self.now()
         neighbors.record(knocks, at: now)
-        // Go names the proxy's devices without a time, only the ones it served in the last 2 minutes
-        // (servedFor in proxy.go), so each counts as served now. A device then counts as using Tether
-        // while Go lists it, and stops 2 minutes after its last page rather than the 3 minutes of
-        // `usingWithin`: close enough, with no times of its own to keep here.
+        // Go names the proxy's devices without a time, the ones it served in the last 2 minutes
+        // (servedFor in proxy.go) or that still have a connection open, so each counts as served now.
+        // A device then counts as using Tether while Go lists it, and stops 2 minutes after its last
+        // page and connection rather than the 3 minutes of `usingWithin`: close enough, with no
+        // times of its own to keep here.
         let proxyClients = Dictionary(proxyStats.served.map { ($0, now) }, uniquingKeysWith: { a, _ in a })
         let list = neighbors.notUsingTether(wireGuard: wireGuardPeerStats, proxyClients: proxyClients, now: now)
         if list != notUsingTether { notUsingTether = list }
