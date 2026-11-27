@@ -150,7 +150,7 @@ final class AccessibilityTests: TetherUITestCase {
 
     func testQRCodeProblemPassesTheStructuralAudit() throws {
         launch(.qrCodeUnsaved)
-        reveal(staticText("add.problem")) // the warning icon carries the identifier too, and comes first on iOS 18
+        reveal(staticText("add.problem")) // the warning icon carries the identifier too
         try audit(types: structuralAudit)
     }
 
