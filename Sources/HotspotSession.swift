@@ -1074,15 +1074,7 @@ final class HotspotSession {
             checkLimits()
             return
         }
-        let snap = server.snapshot()
-        let connected = snap.connected
-        tunnelsUp = connected
-        publishConnected()
-        if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
-        if snap.stale != staleConfig { staleConfig = snap.stale }
-        publishProxyStats(snap.proxy)
-        absorb(snap.peers)
-        countUsage(snap)
+        let snap = readServer(onScreen: true)
         guard let speeds = sampler.sample(snap.totals, at: now) else { return } // nothing to compare with yet
         // Keep zero and unchanged readings too, so an idle graph still moves to the left.
         speedHistory.append(SpeedSample(at: now, up: speeds.up, down: speeds.down))
@@ -1143,12 +1135,28 @@ final class HotspotSession {
             publishProxyStats(ProxyStats(traffic: proxyStats.traffic))
             return
         }
+        readServer(onScreen: false)
+    }
+
+    /// The one read of a running server, on screen (the sampler, every second) or off (the watcher):
+    /// who is connected, the proxy's stats (for the idle stop too), what `absorb` does and this
+    /// month's counts. On screen it also publishes what the screen shows, off screen only who is
+    /// connected, for the notifications.
+    @discardableResult
+    private func readServer(onScreen: Bool) -> ServerSnapshot {
         let snap = server.snapshot()
         tunnelsUp = snap.connected
-        watchedConnected = unpaused(snap.connected)
-        publishProxyStats(snap.proxy) // for the idle stop
+        if onScreen {
+            publishConnected()
+            if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
+            if snap.stale != staleConfig { staleConfig = snap.stale }
+        } else {
+            watchedConnected = unpaused(snap.connected)
+        }
+        publishProxyStats(snap.proxy)
         absorb(snap.peers)
         countUsage(snap)
+        return snap
     }
 
     // MARK: Devices not using Tether (#109)
