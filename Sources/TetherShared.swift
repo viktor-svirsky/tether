@@ -8,7 +8,8 @@ import Foundation
 /// The Live Activity while Tether shares.
 struct TetherActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
-        /// The hotspot is on and WireGuard runs. Not, and Tether waits for a device on the hotspot.
+        /// The hotspot is on and WireGuard runs. Not, and Tether waits for a device on the hotspot, or
+        /// WireGuard couldn't start (`problem`).
         var sharing: Bool
         /// How many devices are connected.
         var count: Int
@@ -16,13 +17,16 @@ struct TetherActivityAttributes: ActivityAttributes {
         var connected: [String]
         var vpn: Bool
         var blockedWithoutVPN: Bool
+        /// Why Tether doesn't share, or can't keep running, as the widgets say it.
+        var problem: String?
 
-        init(sharing: Bool, count: Int, connected: [String], vpn: Bool, blockedWithoutVPN: Bool) {
+        init(sharing: Bool, count: Int, connected: [String], vpn: Bool, blockedWithoutVPN: Bool, problem: String? = nil) {
             self.sharing = sharing
             self.count = count
             self.connected = connected
             self.vpn = vpn
             self.blockedWithoutVPN = blockedWithoutVPN
+            self.problem = problem
         }
 
         /// A Live Activity left by a build from before `count` has every name.
@@ -33,6 +37,7 @@ struct TetherActivityAttributes: ActivityAttributes {
             count = try c.decodeIfPresent(Int.self, forKey: .count) ?? connected.count
             vpn = try c.decode(Bool.self, forKey: .vpn)
             blockedWithoutVPN = try c.decode(Bool.self, forKey: .blockedWithoutVPN)
+            problem = try c.decodeIfPresent(String.self, forKey: .problem)
         }
     }
 }

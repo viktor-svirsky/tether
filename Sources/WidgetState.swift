@@ -62,8 +62,37 @@ struct WidgetState: Codable, Equatable {
 
     func fresh(alive: Date?, now: Date) -> WidgetState {
         guard awake || sharing else { return self }
-        if let alive, abs(now.timeIntervalSince(alive)) < Self.staleAfter { return self }
+        if let alive, Self.gap(since: alive, now: now) < Self.staleAfter { return self }
         return WidgetState() // not the VPN either: nobody has looked since
+    }
+
+    /// The time since `alive`, either way: a clock set back leaves `alive` in the future, and that
+    /// counts as time gone by too, or the app would wait for the clock to catch up while widgets
+    /// read its state as left behind.
+    static func gap(since alive: Date, now: Date) -> TimeInterval {
+        abs(now.timeIntervalSince(alive))
+    }
+
+    /// The Live Activity's headline. Waiting only while Tether waits for a device on the hotspot,
+    /// not when WireGuard couldn't start.
+    static func activityHeadline(sharing: Bool, count: Int, blockedWithoutVPN: Bool, problem: String?) -> String {
+        if !sharing, problem != nil { return "Not running" }
+        guard sharing else { return "Waiting for a device on the hotspot" }
+        if blockedWithoutVPN { return "No VPN, devices kept out" }
+        switch count {
+        case 0: return "Sharing, no device yet"
+        case 1: return "Sharing with 1 device"
+        case let n: return "Sharing with \(n) devices"
+        }
+    }
+
+    /// The line under it: the problem, or the names that fit (`activityNames`) and the count of the rest.
+    static func activityLine(sharing: Bool, count: Int, names: [String], problem: String?) -> String {
+        if let problem { return problem }
+        guard count > 0 else { return sharing ? "No device connected" : "" }
+        let more = count - names.count
+        guard more > 0 else { return names.joined(separator: ", ") }
+        return (names + ["\(more) more"]).joined(separator: ", ")
     }
 
     /// What a widget says when the install has no app group to read Tether's state through, see

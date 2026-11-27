@@ -67,6 +67,36 @@ final class WidgetStateTests: XCTestCase {
         XCTAssertFalse(sharing.fresh(alive: now.addingTimeInterval(3600), now: now).sharing)
     }
 
+    /// A clock set back counts as time gone by, the way `fresh` reads it, so the app stands by its
+    /// state again instead of waiting for the clock to catch up while widgets say Stopped.
+    func testAClockSetBackCountsAsTimeGoneBy() {
+        XCTAssertEqual(WidgetState.gap(since: now.addingTimeInterval(300), now: now), 300)
+        XCTAssertEqual(WidgetState.gap(since: now.addingTimeInterval(-30), now: now), 30)
+        XCTAssertGreaterThanOrEqual(WidgetState.gap(since: now.addingTimeInterval(WidgetState.staleAfter), now: now), WidgetState.staleAfter)
+    }
+
+    /// The Live Activity says waiting only while Tether really waits for a device on the hotspot.
+    func testTheLiveActivitySaysWhereTetherStands() {
+        XCTAssertEqual(WidgetState.activityHeadline(sharing: false, count: 0, blockedWithoutVPN: false, problem: nil), "Waiting for a device on the hotspot")
+        XCTAssertEqual(WidgetState.activityHeadline(sharing: true, count: 0, blockedWithoutVPN: false, problem: nil), "Sharing, no device yet")
+        XCTAssertEqual(WidgetState.activityHeadline(sharing: true, count: 1, blockedWithoutVPN: false, problem: nil), "Sharing with 1 device")
+        XCTAssertEqual(WidgetState.activityHeadline(sharing: true, count: 3, blockedWithoutVPN: false, problem: nil), "Sharing with 3 devices")
+        XCTAssertEqual(WidgetState.activityHeadline(sharing: true, count: 2, blockedWithoutVPN: true, problem: nil), "No VPN, devices kept out")
+        // WireGuard couldn't start: not a wait.
+        XCTAssertEqual(WidgetState.activityHeadline(sharing: false, count: 0, blockedWithoutVPN: false, problem: "Port 51820 is taken."), "Not running")
+    }
+
+    /// The line under it: the problem when there is one, else the names and the count of the rest.
+    func testTheLiveActivityLineSaysTheProblemFirst() {
+        XCTAssertEqual(WidgetState.activityLine(sharing: false, count: 0, names: [], problem: "Port 51820 is taken."), "Port 51820 is taken.")
+        let cantStay = "Tether couldn't keep running in the background. Open it once."
+        XCTAssertEqual(WidgetState.activityLine(sharing: true, count: 2, names: ["iPad", "Pixel"], problem: cantStay), cantStay)
+        XCTAssertEqual(WidgetState.activityLine(sharing: true, count: 2, names: ["iPad", "Pixel"], problem: nil), "iPad, Pixel")
+        XCTAssertEqual(WidgetState.activityLine(sharing: true, count: 3, names: ["iPad"], problem: nil), "iPad, 2 more")
+        XCTAssertEqual(WidgetState.activityLine(sharing: true, count: 0, names: [], problem: nil), "No device connected")
+        XCTAssertEqual(WidgetState.activityLine(sharing: false, count: 0, names: [], problem: nil), "")
+    }
+
     /// Stopped is the app's own last word, so it needs no standing by.
     func testAStoppedStateStaysAsItIs() {
         let stopped = WidgetState(problem: "Its keys can't be read yet. Unlock this iPhone once.")

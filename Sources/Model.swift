@@ -474,10 +474,10 @@ final class Model: ObservableObject {
         let now = Date()
         // The state wasn't stood by for `WidgetState.staleAfter`: iOS had Tether suspended, and a
         // widget may have taken it for left behind and drawn Stopped. The same state is news again.
-        if let alive = widgetAlive, now.timeIntervalSince(alive) >= WidgetState.staleAfter { widgetState = nil }
+        if let alive = widgetAlive, WidgetState.gap(since: alive, now: now) >= WidgetState.staleAfter { widgetState = nil }
         let changed = state != widgetState
         // Stood by once a minute while awake, with no redraw, see `WidgetState.load`.
-        if state.awake, changed || widgetAlive.map({ now.timeIntervalSince($0) >= 60 }) ?? true {
+        if state.awake, changed || widgetAlive.map({ WidgetState.gap(since: $0, now: now) >= 60 }) ?? true {
             WidgetState.markAlive(now)
             widgetAlive = now
         }
@@ -526,9 +526,11 @@ final class Model: ObservableObject {
             activity = nil
             return ending.map { ending in Task { await ending.end(nil, dismissalPolicy: .immediate) } }
         }
-        let content = TetherActivityAttributes.ContentState(sharing: state.sharing, count: state.connected.count,
+        // Sharing as the session has it, not as the widgets do: a call can stop the sound for a while,
+        // and the devices are still there. Why not, from `problem`, so only a real wait reads as one.
+        let content = TetherActivityAttributes.ContentState(sharing: session.sharing, count: state.connected.count,
                                                             connected: WidgetState.activityNames(state.connected.map(\.name)),
-                                                            vpn: state.vpn, blockedWithoutVPN: state.blockedWithoutVPN)
+                                                            vpn: state.vpn, blockedWithoutVPN: state.blockedWithoutVPN, problem: state.problem)
         let fresh = ActivityContent(state: content, staleDate: now.addingTimeInterval(Self.activityFreshFor))
         if let activity {
             let renew = activity.content.staleDate.map { $0.timeIntervalSince(now) < Self.activityRenewWithin } ?? true

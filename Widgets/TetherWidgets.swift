@@ -164,19 +164,10 @@ struct TetherLiveActivity: Widget {
     }
 
     private func headline(_ state: TetherActivityAttributes.ContentState) -> String {
-        guard state.sharing else { return "Waiting for a device on the hotspot" }
-        if state.blockedWithoutVPN { return "No VPN, devices kept out" }
-        switch state.count {
-        case 0: return "Sharing, no device yet"
-        case 1: return "Sharing with 1 device"
-        case let n: return "Sharing with \(n) devices"
-        }
+        WidgetState.activityHeadline(sharing: state.sharing, count: state.count, blockedWithoutVPN: state.blockedWithoutVPN, problem: state.problem)
     }
 
     private func names(_ state: TetherActivityAttributes.ContentState) -> String {
-        guard state.count > 0 else { return state.sharing ? "No device connected" : "" }
-        let more = state.count - state.connected.count // names that didn't fit, see `WidgetState.activityNames`
-        guard more > 0 else { return state.connected.joined(separator: ", ") }
-        return (state.connected + ["\(more) more"]).joined(separator: ", ")
+        WidgetState.activityLine(sharing: state.sharing, count: state.count, names: state.connected, problem: state.problem)
     }
 }
