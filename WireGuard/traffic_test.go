@@ -169,6 +169,13 @@ func TestAPageLoadBurstFromSeveralDevicesLeavesNoCountBehind(t *testing.T) {
 	// download, not fetch: under -race on a busy machine the last of a burst can take longer than
 	// fetch's 15 s, with no packet lost anywhere.
 	target := patternServer(t, size)
+	// At most 32 in flight at once. The loopback server's kernel listener resets connections it
+	// has handshaken but not yet handed to Accept once about 64 wait at once (half of
+	// kern.ipc.somaxconn, 128, on macOS), which a busy machine reaches with Accept behind (#335).
+	// Measured under 8 busy loops: 64 in flight failed 7 runs of 10, 48 and 32 none. Tether only
+	// passes that reset on to the device, as it should: none of the reset connections had reached
+	// the server's Accept. All 300 still go through, from 3 devices at once.
+	inFlight := make(chan struct{}, 32)
 	var wg sync.WaitGroup
 	var failed atomic.Int32
 	var firstErr atomic.Value
@@ -177,6 +184,8 @@ func TestAPageLoadBurstFromSeveralDevicesLeavesNoCountBehind(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				inFlight <- struct{}{}
+				defer func() { <-inFlight }()
 				if err := download(c, target, uint64(i*each+q), size); err != nil {
 					failed.Add(1)
 					firstErr.CompareAndSwap(nil, fmt.Sprintf("device %d: %v", i, err))
