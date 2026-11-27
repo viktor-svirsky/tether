@@ -307,11 +307,14 @@ type held struct {
 
 // Close ends the task for a pause or removal, and what it holds with it.
 func (h *held) Close() error {
-	h.cancel() // first, so hold refuses from here on and the task reads as ended, not failed
+	// What it holds is taken before the task is cancelled: cancelled first, the task could end and
+	// call done in between, which lets go of a pool dial that this Close then wouldn't end. Marked
+	// closed, hold refuses from here on, before and after the cancel.
 	h.mu.Lock()
 	open := h.open
 	h.open, h.closed = nil, true
 	h.mu.Unlock()
+	h.cancel() // before the closes, so the task reads as ended, not failed
 	for c := range open {
 		c.Close()
 	}
@@ -338,7 +341,7 @@ func hold(ctx context.Context, conn io.Closer) (release func(), err error) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if err := ctx.Err(); err != nil { // ended: Close and done cancel ctx before they take h.mu
+	if err := ctx.Err(); err != nil { // ended: done cancels ctx before it takes h.mu
 		return nil, err
 	}
 	// Ended, and ctx doesn't say: a dial for a pool, see holdDial. After a pause it doesn't go
