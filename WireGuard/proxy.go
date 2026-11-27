@@ -250,6 +250,9 @@ func (s *Server) SetProxy(on, paused bool) {
 		return
 	}
 	wasPaused := p.paused
+	if paused != wasPaused {
+		s.dropDoHLocked()
+	}
 	p.paused = paused
 	var start *proxyRun
 	var nowhere bool
@@ -1044,15 +1047,15 @@ func (s *Server) resolveCtx(ctx context.Context, query []byte) ([]byte, error) {
 		return nil, errTooManyLookups
 	}
 	s.proxy.lookups++
-	lookup, cancel := context.WithCancel(s.ctx)
-	untrack := s.trackLocked(proxyFlows, netip.Addr{}, &closer{cancel})
+	lookup, end := newLookup(s.ctx)
+	untrack := s.trackLocked(proxyFlows, netip.Addr{}, end)
 	s.looking.Add(1) // under s.mu, so it comes before Close's Wait or not at all
 	s.mu.Unlock()
 	answered := make(chan []byte, 1)
 	go func() {
 		defer s.looking.Done()
 		defer s.releaseLookup()
-		defer cancel()
+		defer end.Close()
 		defer untrack()
 		answered <- s.resolve(lookup, query, true)
 	}()

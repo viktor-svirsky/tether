@@ -53,13 +53,13 @@ func (d *diagnostics) heard(format string) {
 	}
 }
 
-// dialCounted is dialOut, counting a connection the iPhone makes for a device. Lookups Tether
-// answers itself make no connection, so they don't count.
-func (s *Server) dialCounted(dst netip.AddrPort, lookups bool) (net.Conn, error) {
+// dialCounted is dialOut on ctx, counting a connection the iPhone makes for a device. Lookups
+// Tether answers itself make no connection, so they don't count.
+func (s *Server) dialCounted(ctx context.Context, dst netip.AddrPort, lookups bool) (net.Conn, error) {
 	if lookups {
-		return s.dialOut(dst, lookups)
+		return s.dialOut(ctx, dst, lookups)
 	}
-	return s.diagDial(s.ctx, dst, func() (net.Conn, error) { return s.dialOut(dst, lookups) })
+	return s.diagDial(ctx, dst, func() (net.Conn, error) { return s.dialOut(ctx, dst, lookups) })
 }
 
 // diagDial runs dial, the iPhone's connection to dst for a device or the proxy, on ctx. It counts

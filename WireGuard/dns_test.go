@@ -1681,3 +1681,77 @@ func TestALookupPausedBeforeItsNAT64PrefixIsFoundSendsNothing(t *testing.T) {
 	}
 	p.noneAsked(t)
 }
+
+// A pause that comes after a lookup last looked at its ctx, just before the query leaves, ends it
+// too: the lookup's socket is closed by the time the pause returns, so the query can't go out after
+// it. Over IPv4, and over the socket a lookup opens for the carrier's NAT64 prefix.
+func TestAPauseJustBeforeTheQueryLeavesSendsNothing(t *testing.T) {
+	for _, viaNAT64 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("viaNAT64=%v", viaNAT64), func(t *testing.T) {
+			s, c := setup(t)
+			r := netip.MustParseAddr(remote)
+			if viaNAT64 {
+				withoutIPv4(s)
+			}
+			p := newPlain(t, 1)
+			viaPlain(s, p)
+			// The NAT64 send is the one to the prefix, after the one to the IPv4 address fails.
+			paused := pauseBeforeSend(s, func(to netip.AddrPort) bool { return !viaNAT64 || to.Addr() != r })
+			if _, err := lookupUDP(c, lookupFor(t, 86, "example.com.", 0), scaled(time.Second)); err == nil {
+				t.Fatal("a paused device got an answer")
+			}
+			if err := <-paused; err != nil {
+				t.Fatal(err)
+			}
+			p.noneAsked(t)
+		})
+	}
+}
+
+// The DoH connection kept from before a pause isn't used after it: with Only share through a VPN the
+// pause comes when the VPN drops, and a connection made without the VPN would carry the lookups on
+// outside it once the VPN is back (#277). The next lookup makes a new one, through the route then.
+func TestAPauseDropsTheKeptDoHConnection(t *testing.T) {
+	s, c := setup(t)
+	d := newDoH(t, 1)
+	viaDoH(s, d)
+	tr := d.Client().Transport.(*http.Transport).Clone()
+	tr.ForceAttemptHTTP2 = true
+	var dials atomic.Int32
+	tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dials.Add(1)
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	}
+	s.dohClient = &http.Client{Transport: tr}
+	applyDNS(s)
+	if _, err := lookupUDP(c, lookupFor(t, 87, "example.com.", 0), answerWait); err != nil {
+		t.Fatal(err)
+	}
+	pause(t, s, true)
+	pause(t, s, false)
+	if _, err := lookupUDP(c, lookupFor(t, 88, "example.com.", 0), answerWait); err != nil {
+		t.Fatal(err)
+	}
+	if n := dials.Load(); n != 2 {
+		t.Fatalf("%d DoH connections, want a new one after the pause", n)
+	}
+}
+
+// pauseBeforeSend pauses the device the first time a query is about to be sent to an address when
+// takes, and then sends it as before. The channel gets what the pause returned.
+func pauseBeforeSend(s *Server, when func(netip.AddrPort) bool) <-chan error {
+	done := make(chan error, 1)
+	var once sync.Once
+	s.mu.Lock() // the server reads it after taking s.mu, so the race detector sees the order (#250)
+	defer s.mu.Unlock()
+	send := s.sendTo
+	s.sendTo = func(c *net.UDPConn, payload []byte, to netip.AddrPort) error {
+		if when(to) {
+			once.Do(func() {
+				done <- s.SetPeers([]Peer{{PublicKey: s.keyOf(deviceAddr), Address: deviceAddr, Paused: true}})
+			})
+		}
+		return send(c, payload, to)
+	}
+	return done
+}

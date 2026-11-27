@@ -86,6 +86,41 @@ func TestTCPReachesAnIPv4HostThroughTheCarriersNAT64(t *testing.T) {
 	}
 }
 
+// A device paused while its connection waits for the carrier's NAT64 prefix gets no connection once
+// the prefix is there: its SYN would leave without the VPN, with Only share through a VPN (#277).
+func TestAConnectionPausedBeforeItsNAT64PrefixIsFoundIsntDialed(t *testing.T) {
+	s, c := setup(t)
+	dialed := withoutIPv4(s)
+	looking, release := make(chan struct{}, 1), make(chan struct{})
+	s.mu.Lock() // the server reads it after taking s.mu, so the race detector sees the order (#250)
+	s.nat64.lookup = func(context.Context) (netip.Prefix, error) {
+		looking <- struct{}{}
+		<-release
+		return carrierNAT64, nil
+	}
+	s.mu.Unlock()
+	target := tcpServer(t, 1)
+	done := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), scaled(2*time.Second))
+		defer cancel()
+		conn, err := c.net.DialContext(ctx, "tcp", target)
+		if err == nil {
+			conn.Close()
+		}
+		done <- err
+	}()
+	<-looking
+	pause(t, s, true)
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("a paused device opened a connection")
+	}
+	if d := dialed(); len(d) != 1 {
+		t.Fatalf("dialed %v, want only the IPv4 address, from before the pause", d)
+	}
+}
+
 func TestUDPReachesAnIPv4HostThroughTheCarriersNAT64(t *testing.T) {
 	s, c := setup(t)
 	withoutIPv4(s)

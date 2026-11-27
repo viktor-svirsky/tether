@@ -500,6 +500,9 @@ func (s *Server) SetPeers(peers []Peer) error {
 	// Paused before wireguard-go has the change, so a device added paused gets no traffic through
 	// meanwhile. track refuses a connection being made from now on, since it reads ownerLocked.
 	wasPaused := s.paused
+	if !maps.Equal(paused, wasPaused) {
+		s.dropDoHLocked()
+	}
 	s.paused = paused
 	var closing []io.Closer
 	for key, addr := range s.peers {
@@ -1204,7 +1207,18 @@ func (s *Server) forwardTCP(r forwardRequest) {
 		refuse()
 		return
 	}
-	out, err := s.dialCounted(dst, lookups)
+	// Ended by a pause of the device while it dials, so a dial that waits for the carrier's NAT64
+	// prefix sends no SYN once the pause is done (#277).
+	dialing, cancel := context.WithCancel(s.ctx)
+	untrackDial, ok := s.track(src, a.owner, a.key, netip.Addr{}, &closer{cancel})
+	if !ok {
+		cancel()
+		refuse()
+		return
+	}
+	out, err := s.dialCounted(dialing, dst, lookups)
+	untrackDial()
+	cancel()
 	if err != nil {
 		refuse()
 		return
@@ -1342,14 +1356,14 @@ func (s *Server) forwardTCP(r forwardRequest) {
 
 // dialOut makes the iPhone's side of a device's connection: a TCP connection to dst, or, for
 // lookups to 10.7.0.1, DNS over TCP that Tether answers.
-func (s *Server) dialOut(dst netip.AddrPort, lookups bool) (net.Conn, error) {
+func (s *Server) dialOut(ctx context.Context, dst netip.AddrPort, lookups bool) (net.Conn, error) {
 	if lookups {
 		if c := s.lookupConn(); c != nil {
 			return c, nil
 		}
 		return nil, net.ErrClosed
 	}
-	return s.dialTCP(s.ctx, dst, func(bool) {})
+	return s.dialTCP(ctx, dst, func(bool) {})
 }
 
 // dialTCP dials dst from the iPhone, through the carrier's NAT64 when the iPhone has no IPv4 route.
@@ -1361,6 +1375,9 @@ func (s *Server) dialTCP(ctx context.Context, dst netip.AddrPort, nat64Wait func
 		nat64Wait(true)
 		via, ok := s.viaNAT64(s.ctx, dst)
 		nat64Wait(false)
+		if ctx.Err() != nil {
+			return nil, ctx.Err() // ended while the prefix was looked up: no SYN goes out
+		}
 		if ok {
 			out, err = s.dial(ctx, "tcp", via.String())
 		}

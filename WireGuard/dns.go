@@ -141,13 +141,13 @@ func (s *Server) lookup(device netip.AddrPort, query []byte) {
 	key := s.keys[owner]
 	counts := s.trafficOfLocked(owner)
 	// Kept with the device's connections, so pausing or removing it ends the lookup too.
-	ctx, cancel := context.WithCancel(s.ctx)
-	untrack := s.trackLocked(owner, netip.Addr{}, &closer{cancel})
+	ctx, end := newLookup(s.ctx)
+	untrack := s.trackLocked(owner, netip.Addr{}, end)
 	s.looking.Add(1) // under s.mu, so it comes before Close's Wait or not at all
 	s.mu.Unlock()
 	go func() {
 		defer s.looking.Done()
-		defer cancel()
+		defer end.Close()
 		defer untrack()
 		defer func() {
 			s.mu.Lock()
@@ -282,6 +282,58 @@ func (s *Server) askPlain(ctx context.Context, servers []netip.AddrPort, query [
 	}
 }
 
+// newLookup is the ctx of one lookup, and what ends it: a pause or removal of its device or the
+// proxy closes it, see trackLocked. Ending it also closes the sockets the lookup holds (see hold)
+// before it returns, and the close of a socket waits for a send already on it. So a query that
+// hadn't left when the pause came doesn't leave after the pause returns (#277): looking at ctx
+// before sending isn't enough, since the pause can come between the look and the send.
+func newLookup(parent context.Context) (context.Context, io.Closer) {
+	ctx, cancel := context.WithCancel(parent)
+	l := &lookupSockets{cancel: cancel, open: map[io.Closer]struct{}{}}
+	return context.WithValue(ctx, lookupKey{}, l), l
+}
+
+type lookupKey struct{}
+
+// lookupSockets are the sockets one lookup sends its query through, see newLookup.
+type lookupSockets struct {
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	open   map[io.Closer]struct{} // nil once the lookup has ended
+}
+
+func (l *lookupSockets) Close() error {
+	l.cancel() // first, so hold refuses from here on and the lookup reads as ended, not failed
+	l.mu.Lock()
+	open := l.open
+	l.open = nil
+	l.mu.Unlock()
+	for c := range open {
+		c.Close()
+	}
+	return nil
+}
+
+// hold gives conn to the lookup of ctx, so ending the lookup closes it, and returns what lets go of
+// it again. It fails when ctx has ended. A ctx from no lookup (s.ctx) is only looked at.
+func hold(ctx context.Context, conn io.Closer) (release func(), err error) {
+	l, _ := ctx.Value(lookupKey{}).(*lookupSockets)
+	if l == nil {
+		return func() {}, ctx.Err()
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := ctx.Err(); err != nil { // ended: Close cancels ctx before it takes l.mu
+		return nil, err
+	}
+	l.open[conn] = struct{}{}
+	return func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		delete(l.open, conn)
+	}, nil
+}
+
 func noAnswer(servers []netip.AddrPort) error {
 	var names []string
 	for _, a := range servers {
@@ -304,6 +356,13 @@ func (s *Server) askUDP(ctx context.Context, server netip.AddrPort, query []byte
 	if err != nil {
 		return nil, err
 	}
+	// Held by the lookup before anything is sent, so a pause closes it, see newLookup.
+	release, err := hold(ctx, conn)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	defer release()
 	err = s.sendTo(conn, query, s.toNet(server))
 	if noRoute(err) {
 		nat64Wait(true)
@@ -321,6 +380,12 @@ func (s *Server) askUDP(ctx context.Context, server netip.AddrPort, query []byte
 			if conn, err = net.ListenUDP("udp", nil); err != nil {
 				return nil, err
 			}
+			var release64 func()
+			if release64, err = hold(ctx, conn); err != nil {
+				conn.Close()
+				return nil, err
+			}
+			defer release64()
 			err = s.sendTo(conn, query, s.toNet(via))
 		}
 	}
@@ -647,15 +712,15 @@ func (s *Server) lookupConn() net.Conn {
 	s.mu.Unlock()
 	queriesIn, queriesOut := io.Pipe()
 	answersIn, answersOut := io.Pipe()
-	ctx, cancel := context.WithCancel(s.ctx)
+	ctx, end := newLookup(s.ctx)
 	go func() {
 		defer s.looking.Done()
-		defer cancel()
+		defer end.Close()
 		s.serveTCP(ctx, queriesIn, answersOut)
 		queriesIn.Close()  // a write still waiting fails
 		answersOut.Close() // the device's side gets a FIN
 	}()
-	return &dnsConn{answers: answersIn, queries: queriesOut, cancel: cancel}
+	return &dnsConn{answers: answersIn, queries: queriesOut, end: end}
 }
 
 // serveTCP answers the queries one at a time, in order, each from the upstream set when it's read,
@@ -689,7 +754,7 @@ func (s *Server) serveTCP(ctx context.Context, queries io.Reader, answers io.Wri
 type dnsConn struct {
 	answers *io.PipeReader
 	queries *io.PipeWriter
-	cancel  context.CancelFunc // ends the lookup serveTCP waits for
+	end     io.Closer // ends the lookup serveTCP waits for
 }
 
 func (c *dnsConn) Read(b []byte) (int, error)  { return c.answers.Read(b) }
@@ -697,7 +762,7 @@ func (c *dnsConn) Write(b []byte) (int, error) { return c.queries.Write(b) }
 func (c *dnsConn) CloseWrite() error           { return c.queries.Close() }
 
 func (c *dnsConn) Close() error {
-	c.cancel()
+	c.end.Close()
 	c.queries.Close()
 	return c.answers.Close()
 }
@@ -732,6 +797,15 @@ func newDoHClient(dial func(ctx context.Context, network, address string) (net.C
 		// A redirect would turn the POST into a GET without the query, and answer with a page (#152).
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
+}
+
+// dropDoHLocked closes the DoH connections kept for the next lookup, when a device or the proxy is
+// paused or resumed. With Only share through a VPN that's when the VPN went or came back, and a
+// connection made over another route would carry the lookups on through it (#277). Under s.mu, so
+// a resumed device can't look up on the old connection before it's gone. One a lookup still uses
+// is kept, and goes at the next change.
+func (s *Server) dropDoHLocked() {
+	s.dohClient.CloseIdleConnections()
 }
 
 // newDoHSpare is the client a slow lookup asks again on, see doh. It keeps no connection: after a

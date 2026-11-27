@@ -1722,7 +1722,9 @@ func TestADialInFlightDoesntOpenForTheNextKey(t *testing.T) {
 	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
 		dialing <- struct{}{}
 		<-release
-		return toLoopback(ctx, network, address)
+		// Not on ctx, which the key change ends: a dial whose SYN is out already ends with a
+		// connection anyway.
+		return toLoopback(context.Background(), network, address)
 	}
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
