@@ -77,6 +77,7 @@ final class Model: ObservableObject {
     /// The devices on the hotspot that aren't using Tether (#109), see `HotspotSession.notUsingTether`.
     var notUsingTether: [String] { session.notUsingTether }
     var vpnInterface: String? { session.vpnInterface }
+    var vpnOnlyFamily: Interfaces.Family? { session.vpnOnlyFamily }
     var blockedWithoutVPN: Bool { session.blockedWithoutVPN }
 
     /// iOS blocks Tether's replies to the devices, see `LocalNetworkCheck`. Checked while on screen.
@@ -263,7 +264,7 @@ final class Model: ObservableObject {
                        }, usageDefaults: settings,
                        resetDay: { ResetDay.saved(in: settings) }, hostName: MDNSHostName(log: Self.append),
                        cellular: { "\(Interfaces.pdpIp0(in: Interfaces.addresses())), \(cellular.dataLine())" },
-                       internetVPN: { Interfaces.internetVPN(nat64: WireGuardServer.nat64Prefix) },
+                       internetVPN: { Interfaces.reading(nat64: WireGuardServer.nat64Prefix) },
                        onlyThroughVPN: { settings.bool(forKey: HotspotSession.onlyThroughVPNKey) },
                        log: Self.append)
     }

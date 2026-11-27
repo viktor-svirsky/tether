@@ -31,4 +31,17 @@ final class SettingsVPNTests: TetherUITestCase {
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5))
         XCTAssertFalse(element("vpn.blocked").exists, "off again, the line goes")
     }
+
+    /// A VPN that carries IPv4 only isn't one, and both screens say so, and what to turn on (#334).
+    func testAVPNForIPv4OnlySaysWhyItDoesntCount() throws {
+        launch(.vpnIPv4Only)
+        openSettings()
+        let toggle = reveal(app.switches["vpn.only"].firstMatch)
+        XCTAssertEqual(label(of: "vpn.now"), "Now, VPN for IPv4 only")
+        toggle.switches.firstMatch.exists ? toggle.switches.firstMatch.tap() : toggle.tap()
+        app.buttons["settings.done"].tap()
+        XCTAssertTrue(element("status.title").waitForExistence(timeout: 5))
+        XCTAssertEqual(label(of: "vpn.blocked"), "Your VPN carries only IPv4, and this iPhone's IPv6 goes around it, so no device gets through. Turn on IPv6 in your VPN, or turn off Only share through a VPN in Settings.")
+        try audit(only: "vpn.")
+    }
 }

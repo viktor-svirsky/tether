@@ -69,6 +69,8 @@ enum DemoScenario: String, CaseIterable {
     /// Like `sharing`, and a device at 172.20.10.3 on the hotspot isn't on WireGuard or the proxy
     /// (#109). The iPad answers the knock too, from where its handshake comes, so it isn't listed.
     case notUsingTether
+    /// Like `sharing`, with a VPN that carries IPv4 only while IPv6 goes around it (#334).
+    case vpnIPv4Only
     /// Like `sharing`, with the proxy on (#78): two connections open, 85 MB this month.
     case proxy
     /// Like `proxy`, on a carrier that gives the iPhone IPv6 only: the proxy listens at 172.20.10.1 and
@@ -150,7 +152,7 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .localNetworkDenied, .oldAddress, .nameNotAnswered, .staleConfig, .paused, .notUsingTether,
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .localNetworkDenied, .oldAddress, .nameNotAnswered, .staleConfig, .paused, .notUsingTether, .vpnIPv4Only,
              .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking:
             var setup = WireGuardSetup.new()
             let ipad = setup.addPeer(name: "iPad")
@@ -204,7 +206,7 @@ struct DemoState {
     /// The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states. In `paused` the
     /// session shows the iPad paused instead.
     var connected: Set<String> {
-        ([.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .nameNotAnswered, .staleConfig, .paused, .notUsingTether] + Self.proxyOn).contains(scenario) ? ["10.7.0.2"] : []
+        ([.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .nameNotAnswered, .staleConfig, .paused, .notUsingTether, .vpnIPv4Only] + Self.proxyOn).contains(scenario) ? ["10.7.0.2"] : []
     }
 
     /// The demos with the proxy on.
@@ -235,6 +237,7 @@ struct DemoState {
                                      blockLocal: { !LocalNetworks.allowed(in: UserDefaults(suiteName: Self.settingsSuite)!) },
                                      now: { clock.now }, resetDay: { ResetDay.saved(in: UserDefaults(suiteName: Self.settingsSuite)!) },
                                      // A demo never has a VPN, so the switch in Settings keeps its devices out.
+                                     internetVPN: { [scenario] in Interfaces.Reading(onlyFamily: scenario == .vpnIPv4Only ? .ipv4 : nil) },
                                      onlyThroughVPN: { UserDefaults(suiteName: Self.settingsSuite)!.bool(forKey: HotspotSession.onlyThroughVPNKey) },
                                      log: log)
         session.syncWithHotspot()
