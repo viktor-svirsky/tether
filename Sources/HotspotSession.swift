@@ -1244,39 +1244,44 @@ final class HotspotSession {
         var changed = false
         // A timed pause ends at the first round at or after its end (#312), and the limit below then
         // counts in the same round. One that couldn't be saved is tried again at the next.
-        var timed = devices.setup.peers.map { (id: $0.id, until: $0.paused?.until) }
-        if let proxy = devices.setup.proxy { timed.append((proxy.id, proxy.paused?.until)) }
-        for peer in timed {
-            guard let until = peer.until, now >= until, devices.pause(peer.id, nil) else { continue }
+        for id in LimitRules.timedPausesOver(limitDevices(at: now), at: now) where devices.pause(id, nil) {
             changed = true
             log("WireGuard: a timed pause ended")
         }
-        // The proxy goes by the same rules, named "Proxy" in the notifications.
-        var limited = devices.setup.peers.map { (id: $0.id, name: $0.name, paused: $0.paused, limit: $0.limit) }
-        if let proxy = devices.setup.proxy { limited.append((proxy.id, ProxyStatus.name, proxy.paused, proxy.limit)) }
-        for peer in limited {
-            let used = monthlyUsage.of(peer.id, at: now, calendar: calendar).thisMonth.total
-            switch (peer.paused, peer.limit) {
-            case (.atLimit?, nil):
-                changed = devices.pause(peer.id, nil) || changed
-            case let (.atLimit?, limit?) where used < limit:
-                changed = devices.pause(peer.id, nil) || changed
-            case let (nil, limit?) where used >= limit && !monthlyUsage.resumedOver(peer.id, at: now, calendar: calendar):
-                guard devices.pause(peer.id, .atLimit) else { continue }
+        for device in limitDevices(at: now) {
+            switch LimitRules.action(for: device) {
+            case .resume?:
+                changed = devices.pause(device.id, nil) || changed
+            case .pauseAtLimit?:
+                guard let limit = device.limit, devices.pause(device.id, .atLimit) else { continue }
                 changed = true
                 log("WireGuard: a device reached its limit and is paused until the count resets")
-                alert(peer.id, peer.name, .reached, used: used, limit: limit, now: now)
-            case let (nil, limit?) where used < limit && used >= limit / 10 * 9 && !monthlyUsage.nearTold(peer.id, at: now, calendar: calendar):
-                monthlyUsage.markNearTold(peer.id, at: now, calendar: calendar)
+                alert(device.id, device.name, .reached, used: device.used, limit: limit, now: now)
+            case .near?:
+                guard let limit = device.limit else { continue }
+                monthlyUsage.markNearTold(device.id, at: now, calendar: calendar)
                 usageUnsaved = true
-                alert(peer.id, peer.name, .near, used: used, limit: limit, now: now)
-            default:
+                alert(device.id, device.name, .near, used: device.used, limit: limit, now: now)
+            case nil:
                 break
             }
         }
         if changed {
             wireGuardPeersChanged()
             publishConnected()
+        }
+    }
+
+    /// The devices and the proxy as `LimitRules` reads them, from the saved setup and this period's
+    /// counts. The proxy is named "Proxy" in the notifications.
+    private func limitDevices(at now: Date) -> [LimitRules.Device] {
+        var list = devices.setup.peers.map { (id: $0.id, name: $0.name, paused: $0.paused, limit: $0.limit) }
+        if let proxy = devices.setup.proxy { list.append((proxy.id, ProxyStatus.name, proxy.paused, proxy.limit)) }
+        return list.map { device in
+            LimitRules.Device(id: device.id, name: device.name, paused: device.paused, limit: device.limit,
+                              used: monthlyUsage.of(device.id, at: now, calendar: calendar).thisMonth.total,
+                              resumedOver: monthlyUsage.resumedOver(device.id, at: now, calendar: calendar),
+                              nearTold: monthlyUsage.nearTold(device.id, at: now, calendar: calendar))
         }
     }
 
