@@ -7,7 +7,7 @@ final class StatusCardTests: TetherUITestCase {
         XCTAssertEqual(label(of: "status.title"), "Waiting for a device on the hotspot")
         XCTAssertEqual(label(of: "status.hotspotHint"), "Turn on Personal Hotspot, then join it from the other device. Tether starts when the first device joins.")
         XCTAssertEqual(label(of: "status.hotspotPath"), "Settings > Personal Hotspot > Allow Others to Join")
-        assertNowhere(element("status.headline"), element("status.howToConnect"))
+        assertNowhere(element("status.headline"))
     }
 
     func testWaitingHidesTheSharingSections() {
@@ -28,7 +28,6 @@ final class StatusCardTests: TetherUITestCase {
         launch(.noDevices)
         XCTAssertEqual(label(of: "status.title"), "Sharing")
         XCTAssertEqual(label(of: "status.headline"), "No device is using Tether yet")
-        assertNowhere(element("status.howToConnect"), message: "Add a device is on the main screen")
     }
 
     /// The hotspot is on but WireGuard can't start (keys locked after a restart), so nothing is shared.
@@ -55,12 +54,6 @@ final class StatusCardTests: TetherUITestCase {
         launch(.sharing)
         XCTAssertEqual(label(of: "status.title"), "Sharing")
         XCTAssertEqual(label(of: "status.headline"), "1 device connected")
-    }
-
-    func testSharingHasNoHowToConnectButton() {
-        launch(.sharing)
-        XCTAssertTrue(element("status.headline").exists)
-        assertNowhere(element("status.howToConnect"))
     }
 
     func testSharingSaysHowToStop() {

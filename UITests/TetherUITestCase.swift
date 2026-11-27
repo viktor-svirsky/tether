@@ -137,7 +137,13 @@ class TetherUITestCase: XCTestCase {
     func scroll(by distance: CGFloat) {
         let limit = list.frame.height * 0.6
         let distance = min(max(distance, -limit), limit)
-        let start = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: distance > 0 ? 0.8 : 0.2))
+        // In the list's left margin, clear of the rows and buttons: on iOS 18 a drag that starts on a button can press
+        // it. At the largest text size on an iPhone SE, one from the middle pressed Computer or router on the Add a
+        // device sheet, which then had no QR code to scroll to. At least 8 points from the screen's edge, where a
+        // drag on a full-width list didn't scroll it.
+        let x = max(list.frame.minX + 2, 8) - list.frame.minX
+        let start = list.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: distance > 0 ? 0.8 : 0.2))
+            .withOffset(CGVector(dx: x, dy: 0))
         start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -distance)),
                     withVelocity: .slow, thenHoldForDuration: 0.2)
     }
@@ -160,15 +166,20 @@ class TetherUITestCase: XCTestCase {
     }
 
     /// Fails if any of these elements is anywhere on the screen. A List only builds the rows near the screen, so `exists`
-    /// is false for a row that is only scrolled away. This scrolls to the top of the list, then down to its end, and
-    /// checks at every stop. Pass all the elements of a test at once: each call scrolls the whole list.
-    /// Not on a sheet whose list is at its top: the drag down to the top closes the sheet.
+    /// is false for a row that is only scrolled away. It checks once, then tries two short drags: when neither moves the
+    /// list, the whole list is on the screen and that check was enough. Otherwise it scrolls to the top of the list, then
+    /// down to its end, and checks at every stop. Pass all the elements of a test at once: each call that scrolls goes
+    /// through the whole list. Not on a sheet whose list is at its top: the drag down to the top closes the sheet.
     func assertNowhere(_ elements: XCUIElement..., message: String = "", file: StaticString = #filePath, line: UInt = #line) {
         func found() -> Bool {
             guard let e = elements.first(where: \.exists) else { return false }
             XCTFail("\(e) is on the screen. \(message)", file: file, line: line)
             return true
         }
+        if found() { return }
+        // Most screens fit, and two page-long drags that hit both ends took about 11 s a call. Short ones say the same,
+        // but not with the keyboard up: a drag up starts on it, and a short one lifts on a key and types it.
+        if !app.keyboards.firstMatch.exists, !drag(by: 40), !drag(by: -40) { return }
         let page = list.frame.height * 0.6
         var turns = 0
         while turns < 30, drag(by: -page) { turns += 1 }
