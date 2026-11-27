@@ -163,6 +163,9 @@ type Server struct {
 	// refresher making a newly found router.
 	applying sync.Mutex
 
+	// mu guards the fields below and sits on the UDP path both ways. That works because every
+	// section under it is short. The walk over the peers for each packet is the first place it may
+	// cost something, not measured (#156).
 	mu     sync.Mutex
 	peers  map[[32]byte]netip.Addr // public key -> tunnel address
 	keys   map[netip.Addr][32]byte // tunnel address -> public key
@@ -428,7 +431,9 @@ func (s *Server) close() {
 
 // notice is wireguard-go's verbose logger. A few of the things it says matter here, see
 // noticeHandshake, noticeRouter and noticeStale, and the lines that say something go into the
-// log Settings shares, see keep.
+// log Settings shares, see keep. Router detection, the fast handshake refresh and stale-config
+// detection all match wireguard-go's wording, so a wireguard-go upgrade that rewords a line breaks
+// them without an error: check those strings when upgrading it (#156).
 func (s *Server) notice(format string, args ...any) {
 	if heard := s.heard.Load(); heard != nil {
 		(*heard)(fmt.Sprintf(format, args...))
