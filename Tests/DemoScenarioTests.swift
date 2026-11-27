@@ -140,6 +140,22 @@ final class DemoScenarioTests: XCTestCase {
         XCTAssertEqual(session.connectsFrom(of: device.id), "172.20.10.4")
     }
 
+    /// Closing the sheet doesn't start the wait over: the code is still let in for 10 minutes, and
+    /// the device behind it connects then, as a real one could.
+    func testTheConnectingDemoStillConnectsAfterTheSheetCloses() async throws {
+        var demo = DemoState(.addDeviceConnects)
+        demo.connectsAfter = 2
+        let session = demo.makeSession()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        session.closeAddWindow()
+        XCTAssertTrue(session.addWindowOpen, "the code still works")
+        for _ in 0..<50 where session.wireGuardConnected.isEmpty {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertEqual(session.wireGuardConnected, [ready.address])
+    }
+
     /// A demo's log is its own, emptied at each launch, so the app's log never gets a demo's lines.
     func testADemoKeepsItsOwnLogEmptiedAtEachLaunch() {
         let log = DemoState(.sharing).debugLog()

@@ -306,8 +306,10 @@ struct DemoState {
 
 /// The `addDeviceConnects` demo's device: once Add a device has let its code in for `connectsAfter` whole
 /// seconds, a device that scanned the code connects from an address on the hotspot, as its first
-/// handshake would show, and the sampler a demo doesn't have reads it. A sheet closed before then
-/// starts the wait over. It stops once a device connects or the session is gone.
+/// handshake would show, and the sampler a demo doesn't have reads it. The wait counts while the
+/// code is let in, which goes on for 10 minutes after the sheet closes (see `AddWindow`), so closing
+/// the sheet doesn't start it over, as a real device could still use the code then. It stops once a
+/// device connects or the session is gone.
 extension DemoState {
     @MainActor
     fileprivate func connectTheNextDevice(through server: FakeServer, _ session: HotspotSession) {
