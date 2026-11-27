@@ -230,6 +230,8 @@ struct DemoState {
                                      dns: { DNSChoice.upstream(in: UserDefaults(suiteName: Self.settingsSuite)!) },
                                      blockLocal: { !LocalNetworks.allowed(in: UserDefaults(suiteName: Self.settingsSuite)!) },
                                      now: { clock.now }, resetDay: { ResetDay.saved(in: UserDefaults(suiteName: Self.settingsSuite)!) },
+                                     // A demo never has a VPN, so the switch in Settings keeps its devices out.
+                                     onlyThroughVPN: { UserDefaults(suiteName: Self.settingsSuite)!.bool(forKey: HotspotSession.onlyThroughVPNKey) },
                                      log: log)
         session.syncWithHotspot()
         server.connected = connected

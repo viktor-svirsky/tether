@@ -44,6 +44,9 @@ final class WireGuardServer {
             running = false
             throw error
         }
+        // The lookup of the NAT64 prefix starts now, so the VPN check a few seconds on has it and
+        // doesn't keep the devices out for a round while it's looked up (#277).
+        _ = Self.nat64Prefix()
     }
 
     func stop() {
@@ -126,6 +129,11 @@ final class WireGuardServer {
             return lastRun.disconnected
         }
     }
+
+    /// The NAT64 prefix the running server reaches IPv4 addresses through, like "64:ff9b::/96": the
+    /// carrier's own when it has one. "" while the server first looks it up, which asking starts, and
+    /// nil with no server running. It doesn't wait. There's one server in the app, see exports.go.
+    nonisolated static func nat64Prefix() -> String? { take(TetherWGNAT64()) }
 
     struct Failure: Error, CustomStringConvertible {
         let message: String

@@ -27,10 +27,11 @@ final class NotifierTests: XCTestCase {
     /// One round in the background while sharing, unless said otherwise. Returns what it would post, as "title: body".
     @discardableResult
     private func round(at m: Double, _ connected: Set<String>, onScreen: Bool = false, hotspot: Bool = true, sharing: Bool = true,
-                       devices: [WireGuardSetup.Peer]? = nil, expires: Date? = nil, idleStopped: IdleStopped? = nil) -> [String] {
+                       devices: [WireGuardSetup.Peer]? = nil, expires: Date? = nil, idleStopped: IdleStopped? = nil,
+                       keptOut: Bool = false) -> [String] {
         notifier.check(Notifier.Round(now: minutes(m), onScreen: onScreen, hotspot: hotspot, sharing: sharing,
                                       devices: devices ?? [ipad, pc, router], connected: connected, expires: expires,
-                                      idleStopped: idleStopped))
+                                      idleStopped: idleStopped, keptOut: keptOut))
             .map { "\($0.title): \($0.body)" }
     }
 
@@ -336,7 +337,55 @@ final class NotifierTests: XCTestCase {
             .map { "\($0.title): \($0.body)" }
     }
 
+    // MARK: Only share through a VPN
+
+    /// A device that connects while no VPN is on gets nothing through, so it's told once one is.
+    func testADeviceKeptOutWithoutAVPNIsToldOnceItGetsThrough() {
+        round(at: 0, [])
+        XCTAssertEqual(round(at: 1, [ipad.address], keptOut: true), [])
+        XCTAssertEqual(round(at: 5, [ipad.address], keptOut: true), [])
+        XCTAssertEqual(round(at: 6, [ipad.address]).count, 1)
+    }
+
+    /// A device that leaves while kept out is told as gone from when it left, not from when the VPN
+    /// came back.
+    func testADeviceThatLeftWhileKeptOutIsToldFromWhenItLeft() {
+        round(at: 0, [])
+        XCTAssertEqual(round(at: 1, [ipad.address]).count, 1)
+        XCTAssertEqual(round(at: 10, [ipad.address], keptOut: true), [])
+        XCTAssertEqual(round(at: 11, [], keptOut: true), [], "it left, and nothing is told while kept out")
+        XCTAssertEqual(round(at: 20, []), ["iPad disconnected: It left a few minutes ago."], "long gone by now")
+    }
+
+    /// One gone before, back while kept out, and gone again as the VPN returns waits its minutes anew.
+    func testADeviceBackWhileKeptOutIsNotToldAsGoneFromBefore() {
+        round(at: 0, [])
+        XCTAssertEqual(round(at: 1, [ipad.address]).count, 1)
+        XCTAssertEqual(round(at: 10, [], keptOut: true), [])
+        XCTAssertEqual(round(at: 15, [ipad.address], keptOut: true), [])
+        XCTAssertEqual(round(at: 16, []), [], "gone a moment ago, not since minute 10")
+    }
+
     // MARK: Stopping when idle
+
+    /// Stop on a widget is the person's own doing, so nothing is told.
+    func testAStopFromAWidgetIsNotTold() {
+        round(at: 0, [])
+        let stopped = IdleStopped(at: minutes(5), after: .never, byYou: true)
+        XCTAssertEqual(round(at: 5, [], sharing: false, idleStopped: stopped), [])
+        XCTAssertEqual(round(at: 15, [], sharing: false, idleStopped: stopped), [])
+    }
+
+    /// Also with a device connected before it, which an unasked stop tells as a problem.
+    func testAStopFromAWidgetWithADeviceConnectedIsNotTold() {
+        round(at: 0, [])
+        round(at: 1, [ipad.address])
+        round(at: 4, [ipad.address])
+        let stopped = IdleStopped(at: minutes(5), after: .never, byYou: true)
+        XCTAssertEqual(round(at: 5, [], sharing: false, idleStopped: stopped), [])
+        XCTAssertEqual(round(at: 7, [], sharing: false, idleStopped: stopped), [])
+        XCTAssertEqual(round(at: 30, [], sharing: false, idleStopped: stopped), [])
+    }
 
     /// Sharing stopped after the set time with nobody connected (#76): told once, with the time.
     func testSharingStoppedWhileIdleIsToldOnce() {

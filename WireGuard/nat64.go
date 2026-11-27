@@ -75,6 +75,33 @@ func (n *nat64) prefix(ctx context.Context, now func() time.Time) netip.Prefix {
 	return p
 }
 
+// NAT64 is the prefix a connection through the NAT64 would use now, as text, for Swift's check of
+// where the devices' traffic leaves (#277). It never waits. With no prefix yet, or an old one, it
+// starts the lookup a connection would make: "" until the first one ends, and the last prefix while
+// a later one runs, which is what stays in use when that fails too.
+func (s *Server) NAT64() string {
+	n := &s.nat64
+	if n.mu.TryLock() { // held while a lookup runs
+		fresh := n.found.Load() != nil && s.now().Before(n.expiry)
+		n.mu.Unlock()
+		if !fresh {
+			s.mu.Lock()
+			if !s.closed {
+				s.looking.Add(1) // under s.mu, so it comes before Close's Wait or not at all
+				go func() {
+					defer s.looking.Done()
+					n.prefix(s.ctx, s.now)
+				}()
+			}
+			s.mu.Unlock()
+		}
+	}
+	if p := n.found.Load(); p != nil {
+		return p.String()
+	}
+	return ""
+}
+
 // lookupNAT64 finds the prefix the way RFC 7050 says: the carrier's DNS64 answers the IPv6 lookup
 // of ipv4only.arpa with its two well-known IPv4 addresses inside the prefix.
 func lookupNAT64(ctx context.Context) (netip.Prefix, error) {

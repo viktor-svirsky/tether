@@ -18,6 +18,17 @@ final class ShortcutReplyTests: XCTestCase {
         XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 2, proxyInUse: true)), "Tether is sharing with 2 devices and the proxy.")
     }
 
+    /// Only share through a VPN is on and no VPN is: sharing, but nothing gets through (#277).
+    func testStatusSaysWhenNoVPNKeepsTheDevicesOut() {
+        XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 0, blockedWithoutVPN: true)),
+                       "Tether is sharing, but no VPN is on, so no device gets through until one is.")
+    }
+
+    func testStatusSaysAWidgetStoppedIt() {
+        XCTAssertEqual(ShortcutReply.status(State(running: false, connected: 0, idleStopped: true, stoppedByYou: true)),
+                       "Tether is stopped. Open it, or run Start Tether, to share again.")
+    }
+
     func testStatusPassesOnWhyWireGuardIsNotRunning() {
         let state = State(running: true, connected: 0, problem: "Its keys can't be read yet. Unlock this iPhone once.")
         XCTAssertEqual(ShortcutReply.status(state),

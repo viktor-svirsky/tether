@@ -20,6 +20,8 @@ final class HotspotSessionTests: XCTestCase {
     private var idleAfter = IdleStop.After.never
     private var dns = DNSChoice.Upstream.servers(["1.1.1.1", "1.0.0.1"])
     private var blockLocal = true
+    private var vpn: String?
+    private var onlyThroughVPN = false
     private let usageDefaults: UserDefaults = {
         let defaults = UserDefaults(suiteName: "HotspotSessionTests.usage")!
         defaults.removePersistentDomain(forName: "HotspotSessionTests.usage")
@@ -44,7 +46,8 @@ final class HotspotSessionTests: XCTestCase {
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
                                  carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
                                  dns: { [unowned self] in dns }, blockLocal: { [unowned self] in blockLocal }, usageDefaults: usageDefaults,
-                                 now: { [unowned self] in now }, cellular: cellular, knocker: knocker, log: log)
+                                 now: { [unowned self] in now }, cellular: cellular, knocker: knocker,
+                                 internetVPN: { [unowned self] in vpn }, onlyThroughVPN: { [unowned self] in onlyThroughVPN }, log: log)
     }
 
     private func minutes(_ m: Double) -> Date { start.addingTimeInterval(m * 60) }
@@ -1613,6 +1616,205 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertTrue(sound.playing)
     }
 
+    // MARK: Only share through a VPN
+
+    /// With the switch on, no device gets through while no VPN carries the internet, and all do again
+    /// as they were once one does. Nothing saved changes.
+    func testOnlyThroughAVPNLetsNoDeviceThroughWithoutOne() throws {
+        var saved = WireGuardSetup.new()
+        let ipad = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        makeSession(saved: saved)
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertEqual(server.lastSetup?.serverPeers.first { $0.id == ipad.id }?.paused, nil, "off: let through")
+
+        onlyThroughVPN = true
+        session.checkVPN()
+        XCTAssertTrue(session.blockedWithoutVPN)
+        XCTAssertNotNil(server.lastSetup?.serverPeers.first { $0.id == ipad.id }?.paused, "no VPN: kept out")
+        XCTAssertNil(devices.setup.peers.first { $0.id == ipad.id }?.paused, "the saved device isn't paused")
+        XCTAssertTrue(session.shortcutState().blockedWithoutVPN)
+        server.connected = [ipad.address]
+        session.sampleTraffic()
+        XCTAssertEqual(session.connectedNow, [ipad.address], "kept out, but there, and through by itself once a VPN is on")
+
+        vpn = "utun5"
+        session.checkVPN()
+        XCTAssertFalse(session.blockedWithoutVPN)
+        XCTAssertEqual(session.vpnInterface, "utun5")
+        XCTAssertNil(server.lastSetup?.serverPeers.first { $0.id == ipad.id }?.paused, "a VPN: let through again")
+        session.sampleTraffic()
+        XCTAssertEqual(session.connectedNow, [ipad.address])
+    }
+
+    /// A start while there's no VPN starts with every device kept out, not let through for a round.
+    func testAStartWithoutAVPNKeepsTheDevicesOutFromTheStart() throws {
+        var saved = WireGuardSetup.new()
+        _ = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        onlyThroughVPN = true
+        makeSession(saved: saved)
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertTrue(server.running)
+        XCTAssertEqual(server.lastSetup?.serverPeers.allSatisfy { $0.paused != nil }, true)
+    }
+
+    /// A device added while there's no VPN connects, paused, and isn't taken for one whose config no
+    /// longer works: the code's key stays on the server.
+    func testTheCodeStillWorksWithoutAVPNButLetsNothingThrough() throws {
+        onlyThroughVPN = true
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let ready = try XCTUnwrap(devices.setup.ready)
+        let onServer = try XCTUnwrap(server.lastSetup?.serverPeers.first { $0.id == ready.peer.id }, "the code's key is let in")
+        XCTAssertNotNil(onServer.paused, "but nothing gets through")
+        XCTAssertNil(devices.setup.ready?.paused, "the saved code isn't paused")
+
+        vpn = "utun5"
+        session.checkVPN()
+        XCTAssertNil(server.lastSetup?.serverPeers.first { $0.id == ready.peer.id }?.paused)
+    }
+
+    /// Devices kept out for want of a VPN are still there, so the idle stop waits for them, and they
+    /// get through by themselves once a VPN is on.
+    func testDevicesKeptOutWithoutAVPNHoldOffTheIdleStop() {
+        idleAfter = .tenMinutes
+        onlyThroughVPN = true
+        shareInTheBackground()
+        server.connected = ["10.7.0.2"]
+        now = minutes(5)
+        session.watch()
+        now = minutes(30)
+        session.watch()
+        XCTAssertTrue(session.sharing)
+        XCTAssertNil(session.idleStopped)
+    }
+
+    /// Off screen with the switch off, a round doesn't read the routes again: `Model` hears of a
+    /// change from the system. With it on, each round does.
+    func testARoundReadsTheVPNOnlyWhenItCounts() {
+        makeSession(sceneActive: false)
+        address = hotspot
+        session.watch()
+        XCTAssertNil(session.vpnInterface)
+        vpn = "utun5"
+        session.watch()
+        XCTAssertNil(session.vpnInterface, "not read again")
+        onlyThroughVPN = true
+        session.watch()
+        XCTAssertEqual(session.vpnInterface, "utun5")
+    }
+
+    /// The proxy carries for devices without WireGuard, so it's kept out the same way.
+    func testOnlyThroughAVPNPausesTheProxyWithoutOne() {
+        makeSession()
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertTrue(session.setProxy(on: true))
+        XCTAssertNil(server.lastSetup?.proxy?.paused, "off: it carries")
+
+        onlyThroughVPN = true
+        session.checkVPN()
+        XCTAssertNotNil(server.lastSetup?.proxy?.paused, "no VPN: paused")
+        XCTAssertNil(devices.setup.proxy?.paused, "the saved proxy isn't paused")
+
+        vpn = "utun5"
+        session.checkVPN()
+        XCTAssertNil(server.lastSetup?.proxy?.paused, "a VPN: it carries again")
+    }
+
+    /// Stop on a widget stops at once, stays stopped with the hotspot on, and tells nothing.
+    func testStopFromAWidgetStopsUntilStartTether() {
+        shareInTheBackground()
+        XCTAssertTrue(session.awake)
+        XCTAssertTrue(session.stopNow(), "it was sharing")
+        XCTAssertFalse(session.sharing)
+        XCTAssertFalse(server.running)
+        XCTAssertFalse(sound.playing, "so iOS suspends Tether")
+        XCTAssertFalse(session.awake)
+        XCTAssertFalse(session.up)
+        XCTAssertEqual(session.idleStopped?.byYou, true)
+        XCTAssertTrue(session.shortcutState().stoppedByYou)
+        now = minutes(5)
+        session.watch()
+        XCTAssertFalse(server.running, "the hotspot is still on, but it stays stopped")
+        XCTAssertFalse(session.stopNow(), "stopping again changes nothing")
+        XCTAssertTrue(session.wake())
+        XCTAssertTrue(server.running)
+        XCTAssertTrue(session.awake)
+        XCTAssertFalse(session.shortcutState().stoppedByYou)
+    }
+
+    /// The widgets are told right after a Stop, with no round in between, so nobody is listed as
+    /// connected to the stopped server.
+    func testAStopLeavesNobodyConnected() throws {
+        var saved = WireGuardSetup.new()
+        let ipad = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        makeSession(sceneActive: false, saved: saved)
+        server.connected = [ipad.address]
+        address = hotspot
+        session.wake()
+        session.watch()
+        XCTAssertEqual(session.connectedPeers.map(\.id), [ipad.id])
+        XCTAssertTrue(session.stopNow())
+        XCTAssertEqual(session.connectedPeers.map(\.id), [])
+        XCTAssertEqual(session.connectedNow, [])
+    }
+
+    /// The Live Activity lasts through a call, which takes the sound for a while.
+    func testTetherIsUpWhileTheSoundIsSilent() {
+        makeSession(sceneActive: false)
+        sound.silent = true
+        address = hotspot
+        session.wake()
+        session.watch()
+        XCTAssertFalse(session.awake, "the widgets don't say Sharing")
+        XCTAssertTrue(session.up, "but nothing stopped it")
+    }
+
+    /// On screen nothing stops Tether but the hotspot, and opening it is what starts it again, so a
+    /// Stop from Control Center over the open app does nothing.
+    func testStopFromAWidgetDoesNothingWhileTetherIsOnScreen() {
+        makeSession(sceneActive: true)
+        address = hotspot
+        session.syncWithHotspot()
+        XCTAssertFalse(session.stopNow())
+        XCTAssertTrue(session.sharing)
+        XCTAssertNil(session.idleStopped)
+        XCTAssertTrue(session.awake)
+    }
+
+    /// The sound didn't start, so iOS suspends Tether soon (#164): the widgets mustn't say it shares.
+    func testTheWidgetsAreNotToldSharingWhenTetherCantKeepRunning() {
+        makeSession(sceneActive: false)
+        sound.silent = true
+        address = hotspot
+        session.wake()
+        session.watch()
+        XCTAssertTrue(session.sharing, "the server runs for now")
+        XCTAssertFalse(session.staysRunning)
+        XCTAssertFalse(session.awake)
+        session.cameOnScreen()
+        XCTAssertTrue(session.staysRunning, "on screen it runs whatever the sound does")
+        XCTAssertTrue(session.awake)
+    }
+
+    /// The widgets list the connected devices in the list's order, and two with one name stay two.
+    func testTheWidgetsGetTheConnectedDevices() throws {
+        var saved = WireGuardSetup.new()
+        let first = try XCTUnwrap(saved.addPeer(name: "iPhone"))
+        let second = try XCTUnwrap(saved.addPeer(name: "iPhone"))
+        _ = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        makeSession(saved: saved)
+        server.connected = [second.address, first.address]
+        address = hotspot
+        session.syncWithHotspot()
+        session.sampleTraffic()
+        XCTAssertEqual(session.connectedPeers.map(\.id), [first.id, second.id])
+    }
+
     func testStartTetherSharesAgain() {
         idleAfter = .tenMinutes
         shareInTheBackground()
@@ -2009,5 +2211,96 @@ final class HotspotSessionTests: XCTestCase {
         session.sampleTraffic()
         XCTAssertEqual(session.upSpeed, 0)
         XCTAssertEqual(session.downSpeed, 0)
+    }
+}
+
+final class InternetVPNTests: XCTestCase {
+    /// The internet's local address is on a tunnel: a VPN carries it. On cellular or Wi-Fi, or a tunnel
+    /// that only holds an address (Tailscale without an exit node), no.
+    func testAVPNIsTheInterfaceTheInternetsAddressIsOn() {
+        let lines = ["pdp_ip0: 10.180.2.3", "en0: 192.168.1.158", "utun5: 10.2.0.2", "utun3: fe80::1%utun3", "ipsec2: 10.9.0.4"]
+        XCTAssertEqual(Interfaces.vpn(in: lines, local: ["10.2.0.2"]), "utun5")
+        XCTAssertEqual(Interfaces.vpn(in: lines, local: ["10.9.0.4"]), "ipsec2")
+        XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.180.2.3"]))
+        XCTAssertNil(Interfaces.vpn(in: lines, local: ["192.168.1.158"]))
+        XCTAssertNil(Interfaces.vpn(in: lines, local: []))
+        XCTAssertEqual(Interfaces.vpn(in: lines, local: ["10.2.0.2", "10.9.0.4"]), "utun5", "both through a tunnel")
+    }
+
+    /// IPv4 over cellular and IPv6 through the tunnel, or the other way round: one of them would
+    /// leave without the VPN, so it doesn't count. With no route for the other, the one is enough.
+    func testAVPNThatCarriesOnlyIPv4OrOnlyIPv6IsNotOne() {
+        let lines = ["pdp_ip0: 10.180.2.3", "pdp_ip0: 2607:fb90:1234::5", "utun5: 10.2.0.2", "utun5: fd00::2"]
+        XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.180.2.3", "fd00::2"]), "IPv4 leaves over cellular")
+        XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.2.0.2", "2607:fb90:1234::5"]), "IPv6 leaves over cellular")
+        XCTAssertEqual(Interfaces.vpn(in: lines, local: ["10.2.0.2", "fd00::2"]), "utun5")
+        XCTAssertEqual(Interfaces.vpn(in: lines, local: ["fd00::2"]), "utun5", "an iPhone with no IPv4 route")
+        XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.2.0.2", "198.51.100.7"]), "an address on no interface")
+    }
+
+    /// A question that failed says nothing, so it isn't a VPN. No route for one family is an answer:
+    /// the other decides.
+    func testARouteNothingIsKnownAboutIsNotAVPN() {
+        let lines = ["pdp_ip0: 2607:fb90:1234::5", "utun5: 10.2.0.2", "utun5: fd00::2"]
+        XCTAssertEqual(Interfaces.vpn(in: lines, routes: [.local("10.2.0.2"), .local("fd00::2")]), "utun5")
+        XCTAssertEqual(Interfaces.vpn(in: lines, routes: [.local("10.2.0.2"), .none]), "utun5")
+        XCTAssertNil(Interfaces.vpn(in: lines, routes: [.local("10.2.0.2"), .unknown]))
+        XCTAssertNil(Interfaces.vpn(in: lines, routes: [.none, .none]), "no internet at all")
+        XCTAssertNil(Interfaces.vpn(in: lines, routes: []))
+        XCTAssertTrue(Interfaces.Route.local("10.2.0.2").isIPv4)
+        XCTAssertFalse(Interfaces.Route.local("fd00::2").isIPv4)
+        XCTAssertFalse(Interfaces.Route.none.isIPv4)
+    }
+
+    /// A VPN's inner address can be the same as one the carrier gave: then it isn't known which the
+    /// traffic leaves from.
+    func testAnAddressAlsoOnCellularIsNotAVPN() {
+        let lines = ["utun5: 10.180.2.3", "pdp_ip0: 10.180.2.3"]
+        XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.180.2.3"]))
+    }
+
+    /// An IPv6-only carrier with no CLAT, and a VPN that carries 2000::/3: every IPv6 address, but not
+    /// the well-known NAT64 prefix. The carrier's own NAT64 prefix is inside 2000::/3, so the devices'
+    /// IPv4 traffic goes through the VPN too, and the probe has to be in that prefix to see it.
+    func testTheNAT64ProbeIsInThePrefixTheServerUses() {
+        let lines = ["pdp_ip0: 2607:fb90:1234::5", "utun5: fd00::2"]
+        var probed: [String] = []
+        let route: (String) -> Interfaces.Route = { host in
+            probed.append(host)
+            if !host.contains(":") { return .none } // no IPv4 route
+            return host.hasPrefix("2") ? .local("fd00::2") : .local("2607:fb90:1234::5") // 2000::/3 through the VPN
+        }
+        XCTAssertEqual(Interfaces.internetVPN(nat64: { "2607:7700:0:1d::/96" }, addresses: lines, route: route), "utun5")
+        XCTAssertEqual(probed.last, "2607:7700:0:1d::101:101")
+        XCTAssertNil(Interfaces.internetVPN(nat64: { "64:ff9b::/96" }, addresses: lines, route: route),
+                     "the carrier has no prefix of its own, so IPv4 leaves over cellular")
+        XCTAssertNil(Interfaces.internetVPN(nat64: { nil }, addresses: lines, route: route), "no server yet: the well-known prefix")
+        XCTAssertEqual(probed.last, "64:ff9b::101:101")
+        XCTAssertNil(Interfaces.internetVPN(nat64: { "" }, addresses: lines, route: route), "still looked up, so nothing is known")
+        XCTAssertNil(Interfaces.internetVPN(nat64: { "2607:7700::/64" }, addresses: lines, route: route), "not a /96")
+    }
+
+    /// With an IPv4 route, nothing goes through a NAT64, and the server isn't asked for its prefix.
+    func testWithAnIPv4RouteTheNAT64IsNotProbed() {
+        let lines = ["pdp_ip0: 10.180.2.3", "utun5: 10.2.0.2", "utun5: fd00::2"]
+        let route: (String) -> Interfaces.Route = { $0.contains(":") ? .local("fd00::2") : .local("10.2.0.2") }
+        XCTAssertEqual(Interfaces.internetVPN(nat64: { XCTFail("asked for the prefix"); return nil }, addresses: lines, route: route), "utun5")
+    }
+
+    func testTheNAT64ProbeIsOnePointOnePointOnePointOneBehindThePrefix() {
+        XCTAssertEqual(Interfaces.nat64Probe(prefix: "64:ff9b::/96"), "64:ff9b::101:101")
+        XCTAssertEqual(Interfaces.nat64Probe(prefix: "2001:db8:64::/96"), "2001:db8:64::101:101")
+        XCTAssertEqual(Interfaces.nat64Probe(prefix: nil), "64:ff9b::101:101")
+        XCTAssertNil(Interfaces.nat64Probe(prefix: ""))
+        XCTAssertNil(Interfaces.nat64Probe(prefix: "64:ff9b::"))
+        XCTAssertNil(Interfaces.nat64Probe(prefix: "10.0.0.0/96"))
+    }
+
+    /// Tailscale without an exit node holds its tailnet address on a utun interface, but the internet
+    /// still goes out over cellular, so it isn't a VPN here. With an exit node it is.
+    func testTailscaleWithoutAnExitNodeIsNotAVPN() {
+        let lines = ["pdp_ip0: 10.180.2.3", "pdp_ip0: 2607:fb90:1234::5", "utun4: 100.101.102.103", "utun4: fd7a:115c:a1e0::1"]
+        XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.180.2.3", "2607:fb90:1234::5"]))
+        XCTAssertEqual(Interfaces.vpn(in: lines, local: ["100.101.102.103", "fd7a:115c:a1e0::1"]), "utun4", "with an exit node")
     }
 }

@@ -21,7 +21,7 @@ SideStore and AltStore install apps on your iPhone signed with your own Apple ID
 4. Find Tether in Browse and install it. New releases show up there as updates, and an update keeps your devices.
 5. Open Tether, then [connect a device](#connect-a-device).
 
-A free Apple ID has limits: 3 sideloaded apps at a time (SideStore or AltStore counts as one), and each app has to be refreshed every 7 days. SideStore and AltStore do that refresh for you, see their docs for what they need.
+A free Apple ID has limits: 3 sideloaded apps at a time (SideStore or AltStore counts as one), and each app has to be refreshed every 7 days. SideStore and AltStore do that refresh for you, see their docs for what they need. It also gets 10 App IDs per 7 days. Tether takes two, one for the app and one for its widgets, so an install can ask for one more than before, see [AltStore's App ID FAQ](https://faq.altstore.io/altstore-classic/app-ids). If your signer counts the widgets as one of the 3 apps and offers to leave app extensions out, Tether works without them, only with no widgets and no Live Activity.
 
 You can also skip the source: download `Tether.ipa` from the [latest release](https://github.com/viktor-svirsky/tether/releases/latest) and open it in SideStore or AltStore.
 
@@ -33,7 +33,7 @@ Download `Tether.ipa` from the [latest release](https://github.com/viktor-svirsk
 
 ### Check the download
 
-Each [release](https://github.com/viktor-svirsky/tether/releases) has an unsigned `Tether.ipa`, built by GitHub Actions from the release's commit. GitHub signs a record of that build, so with the [GitHub CLI](https://cli.github.com) this shows the file you downloaded is the one built here:
+Each [release](https://github.com/viktor-svirsky/tether/releases) has a `Tether.ipa` signed with no identity (an ad-hoc signature that only carries the widgets' app group, for your signer to keep), built by GitHub Actions from the release's commit. GitHub signs a record of that build, so with the [GitHub CLI](https://cli.github.com) this shows the file you downloaded is the one built here:
 
 ```sh
 gh attestation verify Tether.ipa -R viktor-svirsky/tether --signer-workflow viktor-svirsky/tether/.github/workflows/release.yml
@@ -48,7 +48,7 @@ A signing app usually changes the bundle ID, so a Tether installed this way is a
 You need a Mac with Xcode. A free Apple ID is enough.
 
 1. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen) and Go (`brew install xcodegen go`). `xcodegen generate` builds the WireGuard part with Go first, see `scripts/build-wireguard.sh`.
-2. Open `project.yml` and set `DEVELOPMENT_TEAM` to your own team ID, and `APP_BUNDLE_ID` to something unique like `com.yourname.tether`. You'll find your team ID in Xcode under Settings > Accounts.
+2. Open `project.yml` and set `DEVELOPMENT_TEAM` to your own team ID, and `APP_BUNDLE_ID` to something unique like `com.yourname.tether`. The widgets' app group follows it, as `group.com.yourname.tether`. You'll find your team ID in Xcode under Settings > Accounts.
 3. Build and install:
 
    ```sh
@@ -106,6 +106,17 @@ iOS has no automation for "Personal Hotspot turned on", so let one shortcut turn
 2. Run it instead of turning on the hotspot in Settings: from the Action button, a widget, or Siri ("Hotspot").
 3. To have it run by itself, add an automation in Shortcuts > Automation that runs Hotspot and is set to Run Immediately. For example, when your car's Bluetooth connects, when you arrive somewhere you share from, or at a time of day.
 
+## Widgets and the Live Activity
+
+Tether shows where it stands without being opened:
+
+- **Home Screen widget**, small or medium: sharing, waiting or stopped, how many devices are connected (named on the medium one), whether a VPN carries the iPhone's internet, and a Start or Stop button.
+- **Lock Screen widgets**, rectangular and circular.
+- **Control Center button** (iOS 18 and later): Tether on or off. It can also go on the Lock Screen or the Action button.
+- **Live Activity** on the Lock Screen and in the Dynamic Island while Tether shares or waits for a device on the hotspot: the connected devices and the VPN. It ends when Tether stops.
+
+Start does what Start Tether in Shortcuts does. Stop stops sharing until you open Tether or start it again, with nothing told in a notification. Both need the iPhone unlocked. While Tether is open, Stop does nothing: there, turning off Personal Hotspot is what stops it. To save the battery, the widgets and the Live Activity are redrawn only when something changes: sharing starts or stops, a device connects or leaves, or the VPN goes on or off. They show no speeds or data counts. If iOS closes Tether without a word, a widget notices the next time it's redrawn, within 15 minutes, and says Stopped. The Live Activity starts when Tether is on screen or a widget starts it, and once swiped away it stays away until Tether is stopped and started. It's renewed about three times an hour, and says Open Tether to check if Tether hasn't renewed it. With SideStore and AltStore the widgets read Tether through an app group in the IPA's signature. A signer that drops it leaves them saying No data.
+
 ## DNS
 
 There's no account and nothing in the cloud. Traffic goes from your devices to your iPhone and out. Tether itself talks only to the DNS server you pick: your devices look names up through Tether at 10.7.0.1, and Tether asks Cloudflare's 1.1.1.1 unless you pick another. Settings > DNS for your devices picks another, and it applies to every device at once: Cloudflare with malware blocking, Quad9, AdGuard (blocks ads), your own Control D profile, or a server of your own. Tether asks the second server only when the first doesn't answer, so a second one under Other is a backup, and when no server answers, your devices are told so instead of waiting. With Control D, Tether asks your profile over HTTPS, so you pick the country sites see in Control D's dashboard (Redirect, on a paid plan). A device added before Tether 1.9.1 keeps the server its config names until you add it again, or set its DNS to 10.7.0.1 in WireGuard. If you narrow a device's Allowed IPs in WireGuard, keep 10.7.0.1/32 in them, or it can't look names up. Redirect works for sites and apps that look a name up first.
@@ -119,6 +130,7 @@ There's no account and nothing in the cloud. Traffic goes from your devices to y
 - **Local networks are a switch.** Settings > Local networks decides whether your devices reach the iPhone's local networks: its Wi-Fi network's other devices, the private addresses behind a VPN on the iPhone, and a Tailscale network. Off, they reach only the internet, and turning it off closes what they have open there. It's off when you first install Tether, and on after an update from an earlier version, as before. Tether's own page opens either way. Never the iPhone itself: apps that listen on the iPhone stay closed to your devices. A public network that only a VPN on the iPhone reaches can't be told apart from the internet, so it stays open.
 - **The main screen** shows whether Tether is sharing, Add a device, your devices with Connected, Not connected or Paused and what each used this month, and the current download and upload speed. While Tether is on screen, a device on the hotspot that isn't using Tether shows under Devices as On your hotspot, not using Tether, with its address, or how many past two. Tap it to open Add a device. Tether checks every 10 seconds, and a device that left goes within 2.5 minutes. A device that ignores the check doesn't show. Tap a device for its screen: its status, when it last connected while it isn't or the address it connects from while it is, Pause, and the data it used through Tether this month (down and up) and last month, kept across relaunches. The counts start again each month on the day in Settings > Data counts start on, in the iPhone's time zone. It's the 1st at first, and you can pick the 1st to the 28th or the last day, to match your plan's billing day. With a day other than the 1st, the screens say since that day instead of this month. iOS Settings > Cellular counts a few percent more, since it adds the iPhone's own headers. A device can have a data limit per month (5, 10, 20, 50 GB or an amount you type): its screen shows a meter, Tether tells you at 90%, and at the limit it pauses the device until the counts start again. Resume it to let it go over until then. A travel router's limit covers every device behind it. The gear opens Settings: when to stop sharing while idle, the day the data counts start, the DNS server Tether asks for your devices, whether they reach local networks, the notification switches, Diagnostics (the server's counters, for a bug report), Share the log, the version, and when this build stops opening. To stop sharing, turn off Personal Hotspot.
 - **The traffic leaves as your iPhone's.** If your iPhone runs a VPN, shared traffic goes through that VPN too.
+- **Only share through a VPN is a switch.** Settings > VPN > Only share through a VPN is off at first. On, your devices and the proxy get through only while a VPN carries the iPhone's internet. When the VPN goes, they're kept out and what they have open closes, and they get through again by themselves once it's back. A VPN that carries only its own network, like Tailscale without an exit node, doesn't count, and neither does one that carries only IPv4 or only IPv6 while the iPhone has both, or a DNS app's tunnel that carries only its own lookups. Devices kept out stay in the list as connected, and no notification says one connected until it gets through. It isn't a kill switch inside the VPN: Tether sees the VPN go and then pauses the devices, within seconds, and what they send in between leaves without it. A VPN set to leave some addresses out (split tunnelling) still counts, and what goes to those addresses leaves without it. Tether can't turn a VPN on: use its app, or Set VPN in Shortcuts.
 - **Your carrier can still notice.** Tether hides where the traffic comes from, not what it is. A Mac's software updates or an iPad's apps still look like a Mac or an iPad to a carrier that looks closely. A VPN app on the iPhone that carries all its traffic hides that too. Tether opens its connections like any other app, so they go into the VPN, and the carrier sees them only as encrypted traffic to the VPN server. It still sees that the line uses a VPN, how much data goes through it and when. Many carrier contracts don't allow tethering workarounds, and a carrier can slow down or close a line that breaks them. Check yours. Using Tether is your call and your risk.
 - **Not for the App Store.** Apple doesn't allow the silent-audio trick, so you sign and install Tether yourself.
 
@@ -150,7 +162,7 @@ With the proxy on, Tether also runs an HTTP proxy on TCP port 8118, on `172.20.1
 Sources/WireGuardServer.swift  runs the WireGuard server; WireGuardSetup.swift has the keys and configs
 WireGuard/                   the WireGuard server in Go: wireguard-go plus a gVisor TCP/IP stack
 scripts/build-wireguard.sh   builds WireGuard/ into TetherWG.xcframework (xcodegen runs it)
-scripts/build-ipa.sh         builds the unsigned Tether.ipa; make_source.py writes source.json for it
+scripts/build-ipa.sh         builds Tether.ipa, signed with no identity, only to carry the widgets' app group; make_source.py writes source.json for it
 scripts/next-version.sh      picks the next release version from the last tag
 scripts/which-release.sh     says whether main is at a release branch, which releases it by itself
 scripts/release-notes.sh     lists the issues a release fixes, for its notes
@@ -164,6 +176,7 @@ Sources/Notices.swift        what to tell in a notification and when (tested on 
 Sources/DebugLog.swift       the log Settings shares, with the Go server's lines, and LogRedaction.swift what it leaves out (tested on the Mac)
 Sources/KeepAlive.swift      silent audio to stay alive in the background
 Sources/Shortcuts.swift      the Start Tether and Is Tether Sharing? actions for Shortcuts and Siri
+Widgets/                     the widgets, the Control Center button and the Live Activity; Sources/WidgetState.swift (tested on the Mac) and TetherShared.swift are what they share with the app
 Sources/DemoMode.swift       the UI tests' demo states, run through the real session (Debug builds only)
 Sources/Fakes.swift          the stand-in server, page and sound the unit tests and demos share (Debug builds only)
 Tests/                       unit tests, run on the Mac

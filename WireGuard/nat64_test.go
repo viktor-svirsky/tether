@@ -334,3 +334,83 @@ func TestTheNAT64PrefixExpiresByTheServersClock(t *testing.T) {
 	k.advance(time.Second)
 	look(3)
 }
+
+// Swift asks which prefix is in use, to check where a connection through it would leave (#277). The
+// answer never waits: nothing until the first lookup ends, then the carrier's prefix, without
+// another lookup while it's kept.
+func TestThePrefixInUseIsToldWithoutWaiting(t *testing.T) {
+	s := startAlone(t)
+	release := make(chan struct{})
+	var lookups atomic.Int32
+	s.nat64.lookup = func(context.Context) (netip.Prefix, error) {
+		lookups.Add(1)
+		<-release
+		return carrierNAT64, nil
+	}
+	if got := s.NAT64(); got != "" {
+		t.Fatalf("%q before any lookup ended, want nothing", got)
+	}
+	if !waitFor(5*time.Second, func() bool { return lookups.Load() == 1 }) {
+		t.Fatal("asking for the prefix didn't start its lookup")
+	}
+	if got := s.NAT64(); got != "" || lookups.Load() != 1 {
+		t.Fatalf("%q with %d lookups while the first one runs", got, lookups.Load())
+	}
+	close(release)
+	if !waitFor(5*time.Second, func() bool { return s.NAT64() == carrierNAT64.String() }) {
+		t.Fatalf("got %q, want the carrier's %v", s.NAT64(), carrierNAT64)
+	}
+	if s.NAT64(); lookups.Load() != 1 {
+		t.Fatalf("%d lookups, want the one kept", lookups.Load())
+	}
+}
+
+// An old prefix is looked up again, a new SIM's carrier has another, and stays the answer meanwhile:
+// nothing in between would stop every device for the length of a lookup.
+func TestAnOldPrefixIsToldWhileItsLookedUpAgain(t *testing.T) {
+	s := startAlone(t)
+	other := netip.MustParsePrefix("2001:db8:65::/96")
+	var next atomic.Pointer[netip.Prefix]
+	next.Store(&carrierNAT64)
+	s.nat64.lookup = func(context.Context) (netip.Prefix, error) { return *next.Load(), nil }
+	if !waitFor(5*time.Second, func() bool { return s.NAT64() == carrierNAT64.String() }) {
+		t.Fatalf("got %q, want the carrier's %v", s.NAT64(), carrierNAT64)
+	}
+	next.Store(&other)
+	s.nat64.mu.Lock()
+	s.nat64.expiry = time.Time{}
+	s.nat64.mu.Unlock()
+	if got := s.NAT64(); got != carrierNAT64.String() && got != other.String() {
+		t.Fatalf("%q while the prefix is looked up again", got)
+	}
+	if !waitFor(5*time.Second, func() bool { return s.NAT64() == other.String() }) {
+		t.Fatalf("got %q, want the new carrier's %v", s.NAT64(), other)
+	}
+}
+
+// When the lookup fails, the well-known prefix is the one in use, and the one told.
+func TestWithoutACarrierPrefixTheWellKnownOneIsTold(t *testing.T) {
+	s := startAlone(t)
+	s.nat64.lookup = func(context.Context) (netip.Prefix, error) { return netip.Prefix{}, errors.New("no DNS64") }
+	if !waitFor(5*time.Second, func() bool { return s.NAT64() == wellKnownNAT64.String() }) {
+		t.Fatalf("got %q, want %v", s.NAT64(), wellKnownNAT64)
+	}
+}
+
+// A stopped server starts no lookup.
+func TestAStoppedServerLooksNoPrefixUp(t *testing.T) {
+	s := startAlone(t)
+	var lookups atomic.Int32
+	s.nat64.lookup = func(context.Context) (netip.Prefix, error) {
+		lookups.Add(1)
+		return carrierNAT64, nil
+	}
+	s.Close()
+	if got := s.NAT64(); got != "" {
+		t.Fatalf("%q from a stopped server", got)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if lookups.Load() != 0 {
+		t.Fatal("a stopped server looked the prefix up")
+	}
+}

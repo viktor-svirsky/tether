@@ -194,6 +194,19 @@ final class HotspotSession {
     private var addWindow = AddWindow()
     /// The ready device is on the server: the add window was open at the last `followAddWindow()`.
     private var readyLetIn = false
+    /// The interface the iPhone's internet goes out through when it's a VPN's, like utun5, nil when
+    /// it isn't, see `Interfaces.internetVPN`. Read each round and when the network changes.
+    private(set) var vpnInterface: String? { willSet { willChange() } }
+    /// Settings > Only share through a VPN is on and no VPN carries the internet, so the server lets
+    /// no device through, nor the proxy, see `serverSetup`. Nothing saved changes: they're let through
+    /// again as they were once a VPN is on.
+    private(set) var blockedWithoutVPN = false { willSet { willChange() } }
+    private let internetVPN: () -> String?
+    /// `checkVPN` ran once, so `vpnInterface` is a reading and not the nil it starts as.
+    private var vpnRead = false
+    /// Settings > Only share through a VPN, read each time, like the idle stop.
+    static let onlyThroughVPNKey = "sharing.onlyThroughVPN"
+    private let onlyThroughVPN: () -> Bool
 
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
@@ -201,7 +214,9 @@ final class HotspotSession {
          blockLocal: @escaping () -> Bool = { false },
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
          resetDay: @escaping () -> ResetDay = { .default }, cellular: @escaping @MainActor () -> String = { "" },
-         knocker: HotspotKnocker = NetworkKnocker(), log: @escaping @MainActor (String) -> Void = { _ in }) {
+         knocker: HotspotKnocker = NetworkKnocker(),
+         internetVPN: @escaping () -> String? = { nil }, onlyThroughVPN: @escaping () -> Bool = { false },
+         log: @escaping @MainActor (String) -> Void = { _ in }) {
         self.devices = devices
         self.server = server
         self.keepAlive = keepAlive
@@ -215,6 +230,8 @@ final class HotspotSession {
         self.usageDefaults = usageDefaults
         self.calendar = calendar
         self.resetDay = resetDay
+        self.internetVPN = internetVPN
+        self.onlyThroughVPN = onlyThroughVPN
         monthlyUsage = usageDefaults.map { MonthlyUsage.load(from: $0, resetDay: resetDay()) } ?? MonthlyUsage(resetDay: resetDay())
         onIPv6OnlyCarrier = carrierIPv6Only()
         self.now = now
@@ -250,6 +267,9 @@ final class HotspotSession {
     /// it appears and stops it when it goes away or changes, so it never listens anywhere else.
     func syncWithHotspot() {
         checkSetup()
+        // Before a start, which lets in what `serverSetup` says. Off screen with the switch off nothing
+        // hangs on it, and `Model` still hears of a change from NWPathMonitor, so the round skips it.
+        if !vpnRead || sceneActive || onlyThroughVPN() { checkVPN() }
         followAddWindow()
         let ipv6Only = carrierIPv6Only()
         if ipv6Only != onIPv6OnlyCarrier { onIPv6OnlyCarrier = ipv6Only }
@@ -324,17 +344,15 @@ final class HotspotSession {
         // A device on the proxy is using Tether too, but not one a paused proxy answers with 403. Only
         // data through it since the last check counts, not a connection open now: a Mac can hold a
         // tunnel open for push with nothing through it for hours (#286).
-        let proxyMoved = proxy?.paused == nil && (idleProxyTraffic.map { $0 != proxyStats.traffic } ?? false)
+        // Nor one the proxy refuses for want of a VPN.
+        let proxyMoved = proxy?.paused == nil && !blockedWithoutVPN && (idleProxyTraffic.map { $0 != proxyStats.traffic } ?? false)
         idleProxyTraffic = proxyStats.traffic
         let connected = !connectedNow.isEmpty || proxyMoved
         guard idleStop.check(sharing: sharing, connected: connected, onScreen: sceneActive, after: after, now: now) else {
             return
         }
         log("no device connected for \(after.spelledOut), stopping until Tether is opened")
-        idleStopped = IdleStopped(at: now, after: after)
-        stopSharing()
-        waitingSince = .distantPast // so the next rounds don't start the sound again, see keepAliveWhileSharing
-        keepAlive.stop()
+        stop(IdleStopped(at: now, after: after))
     }
 
     /// Plays the silent sound while the hotspot is on, and for a while after it goes, see
@@ -499,10 +517,34 @@ final class HotspotSession {
     }
 
     /// What the server lets in: the saved devices, and the ready one only while the add window is open.
+    /// With Only share through a VPN on and no VPN, all of them paused, and the proxy too.
     private var serverSetup: WireGuardSetup {
         var setup = devices.setup
         if !readyLetIn { setup.ready = nil }
+        if blockedWithoutVPN {
+            // The ready one stays, paused like the rest: left out, a device scanning the code now would
+            // look like one whose config no longer works.
+            if setup.ready?.paused == nil { setup.ready?.paused = .byYou }
+            for i in setup.peers.indices where setup.peers[i].paused == nil { setup.peers[i].paused = .byYou }
+            if setup.proxy?.paused == nil { setup.proxy?.paused = .byYou }
+        }
         return setup
+    }
+
+    /// Reads whether the internet goes out through a VPN, and with Only share through a VPN on, lets
+    /// the devices through or not by it. Each watcher round, and when iOS says the network changed.
+    func checkVPN() {
+        vpnRead = true
+        let vpn = internetVPN()
+        if vpn != vpnInterface {
+            log(vpn.map { "the internet goes out through a VPN (\($0))" } ?? "the internet goes out without a VPN")
+            vpnInterface = vpn
+        }
+        let blocked = onlyThroughVPN() && vpn == nil
+        guard blocked != blockedWithoutVPN else { return }
+        blockedWithoutVPN = blocked
+        log(blocked ? "no VPN, so no device gets through until one is on" : "a VPN is on, devices get through again")
+        if server.running { wireGuardPeersChanged() }
     }
 
     /// For the Shortcuts actions. Off screen the sampler doesn't run, so the connected devices are read now.
@@ -516,7 +558,51 @@ final class HotspotSession {
         }
         let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running).inUse } ?? false
         return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem, proxyInUse: proxyInUse,
-                                   idleStopped: idleStopped != nil, keptAlive: !running || keepAlive.sounding)
+                                   idleStopped: idleStopped != nil, stoppedByYou: idleStopped?.byYou == true,
+                                   keptAlive: !running || keepAlive.sounding, blockedWithoutVPN: blockedWithoutVPN)
+    }
+
+    /// On screen, or the sound sounds while the hotspot is on: without it iOS suspends Tether soon,
+    /// so it isn't sharing for long (#164), and the widgets mustn't say it is.
+    var staysRunning: Bool { sceneActive || !running || keepAlive.sounding }
+
+    /// For the Live Activity: not stopped, whether or not the sound sounds this moment (a call takes
+    /// it for a while), so it lasts from a start to a stop and through a wait for the hotspot.
+    var up: Bool { idleStopped == nil && (sceneActive || running || keepAlive.playing) }
+
+    /// For the widgets: sharing, or waiting for the hotspot, and staying so: on screen, or with the
+    /// sound keeping Tether running.
+    var awake: Bool { idleStopped == nil && (sceneActive || (running ? keepAlive.sounding : keepAlive.playing)) }
+
+    /// The connected devices for the widgets, in the list's order, by the latest read.
+    var connectedPeers: [WireGuardSetup.Peer] {
+        let connected = connectedNow
+        return wireGuardPeers.filter { connected.contains($0.address) }
+    }
+
+    /// Stop on a widget or in Control Center: stops sharing now, as the idle stop does, and stays
+    /// stopped with the hotspot on until Tether is opened or started again (`wake`). The sound stops,
+    /// so iOS suspends Tether. Says whether it was sharing. Not while Tether is on screen, where
+    /// nothing stops it but the hotspot, like the idle stop: opening it is what starts it again.
+    @discardableResult
+    func stopNow() -> Bool {
+        guard !sceneActive, idleStopped == nil else { return false }
+        let was = running
+        log("stopped from a widget, until Tether is opened or started")
+        stop(IdleStopped(at: now(), after: idleStopAfter(), byYou: true))
+        return was
+    }
+
+    /// Stops sharing and the sound, and stays stopped with the hotspot on until `wake`.
+    private func stop(_ stopped: IdleStopped) {
+        idleStopped = stopped
+        if running { stopSharing() }
+        // Nobody is connected to a stopped server, and no later round may get to say so: iOS suspends
+        // Tether once the sound stops, and the widgets are told right after this.
+        watchedConnected = []
+        if !wireGuardConnected.isEmpty { wireGuardConnected = [] }
+        waitingSince = .distantPast // so the next rounds don't start the sound again, see keepAliveWhileSharing
+        keepAlive.stop()
     }
 
     var wireGuardNeedsReset: Bool { devices.needsReset }
@@ -683,6 +769,8 @@ final class HotspotSession {
     var notifiedPeers: [WireGuardSetup.Peer] { wireGuardPeers.filter { $0.paused == nil } }
 
     /// Who is connected, from who has a tunnel up: a paused device's tunnel can be up, but nothing gets through.
+    /// A device kept out for want of a VPN still counts: it's there and gets through by itself once a
+    /// VPN is on, so it stays in the list, holds the idle stop off, and Add a device can finish with it.
     private func unpaused(_ connected: Set<String>) -> Set<String> {
         connected.subtracting(devices.setup.peers.filter { $0.paused != nil }.map(\.address))
     }
@@ -840,7 +928,9 @@ final class HotspotSession {
             try server.setPeers(serverSetup, dns: dns(), blockLocal: blockLocal())
         } catch {
             log("WireGuard devices: \(error), restarting")
-            if running, let boundHost { startWireGuard(on: boundHost) }
+            // Never left running with the list from before: it may let in what this one keeps out.
+            guard running, let boundHost, devices.loaded else { return server.stop() }
+            startWireGuard(on: boundHost)
         }
     }
 
@@ -1169,6 +1259,113 @@ enum Interfaces {
     private static func isCLAT(_ address: String) -> Bool {
         guard address.hasPrefix("192.0.0."), let last = Int(address.dropFirst("192.0.0.".count)) else { return false }
         return last < 8
+    }
+
+    /// The interface the internet goes out through when it's a VPN's (utun or ipsec), nil when it's
+    /// cellular, Wi-Fi or nothing: the one holding the local address iOS picks for each of
+    /// `internetProbes`. All of them have to go through a tunnel. IPv4 and IPv6 both, when the iPhone
+    /// has both, since a device's traffic leaves over IPv4 and the proxy's over either: a VPN that
+    /// carries only one of them isn't one here. A tunnel that carries no default route, like
+    /// Tailscale without an exit node, isn't one either. No packet is sent.
+    ///
+    /// `nat64` is the NAT64 prefix the server uses, see `WireGuardServer.nat64Prefix`, asked only on
+    /// an iPhone with no IPv4 route.
+    static func internetVPN(nat64: () -> String?) -> String? {
+        internetVPN(nat64: nat64, addresses: addresses(), route: route(toward:))
+    }
+
+    static func internetVPN(nat64: () -> String?, addresses: [String], route: (String) -> Route) -> String? {
+        var routes = internetProbes.map(route)
+        // With no IPv4 route, a device's IPv4 traffic leaves through the carrier's NAT64 (nat64.go),
+        // at the carrier's own prefix when it has one. A VPN that carries only 2000::/3 carries a
+        // prefix inside it and leaves the well-known one out, so the probe is in the prefix the
+        // server uses. While the server still looks it up, nothing is known.
+        if !routes.contains(where: { $0.isIPv4 }) {
+            routes.append(nat64Probe(prefix: nat64()).map(route) ?? .unknown)
+        }
+        return vpn(in: addresses, routes: routes)
+    }
+
+    /// Two addresses per family, far apart. A DNS app's tunnel can carry only its resolver's address
+    /// (1.1.1.1, say) and nothing else, so the second of each is one no such tunnel is for: from the
+    /// ranges kept for documentation, which the default route covers like any other address.
+    static let internetProbes = ["1.1.1.1", "198.51.100.1", "2606:4700:4700::1111", "2001:db8::1"]
+    /// The prefix most NAT64s use (RFC 6052), which the server uses when the carrier has none of its own.
+    static let wellKnownNAT64 = "64:ff9b::/96"
+
+    /// 1.1.1.1 behind a NAT64 prefix like "2607:7700:0:1d::/96": the address in its last 32 bits, as
+    /// nat64.go puts it. With no server running, nil, it's the well-known prefix, where a server
+    /// starts from. Nil for a prefix still looked up, "", or one that can't be read.
+    static func nat64Probe(prefix: String?) -> String? {
+        let parts = (prefix ?? wellKnownNAT64).split(separator: "/")
+        var address = in6_addr()
+        guard parts.count == 2, parts[1] == "96", inet_pton(AF_INET6, String(parts[0]), &address) == 1 else { return nil }
+        withUnsafeMutableBytes(of: &address) { $0[12..<16].copyBytes(from: [1, 1, 1, 1]) }
+        var text = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        guard inet_ntop(AF_INET6, &address, &text, socklen_t(text.count)) != nil else { return nil }
+        return String(cString: text)
+    }
+
+    /// Where iOS would send from toward one address.
+    enum Route: Equatable {
+        /// From this local address.
+        case local(String)
+        /// Nowhere: the iPhone has no route there, like IPv4 on an IPv6-only carrier without CLAT.
+        case none
+        /// The question itself failed (no socket left, say), so nothing is known.
+        case unknown
+
+        var isIPv4: Bool {
+            if case .local(let address) = self { return !address.contains(":") }
+            return false
+        }
+    }
+
+    /// A route nothing is known about counts against a VPN: guessing would let devices through.
+    static func vpn(in interfaces: [String], routes: [Route]) -> String? {
+        guard !routes.contains(.unknown) else { return nil }
+        return vpn(in: interfaces, local: routes.compactMap { if case .local(let address) = $0 { address } else { nil } })
+    }
+
+    static func vpn(in interfaces: [String], local: [String]) -> String? {
+        let lines = parse(interfaces)
+        var tunnel: String?
+        for address in local {
+            // Every interface that holds it: a VPN's inner address can be the carrier's too.
+            let names = lines.filter { $0.address == address }.map(\.name)
+            guard let name = names.first, names.allSatisfy({ $0.hasPrefix("utun") || $0.hasPrefix("ipsec") }) else { return nil }
+            tunnel = tunnel ?? name
+        }
+        return tunnel
+    }
+
+    /// The local address a UDP socket connected toward `host` gets, port 53. Connecting a UDP socket
+    /// only picks the route.
+    private static func route(toward host: String) -> Route {
+        var hints = addrinfo(ai_flags: AI_NUMERICHOST, ai_family: AF_UNSPEC, ai_socktype: SOCK_DGRAM, ai_protocol: 0,
+                             ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
+        var info: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, "53", &hints, &info) == 0, let info else { return .unknown }
+        defer { freeaddrinfo(info) }
+        let fd = socket(info.pointee.ai_family, SOCK_DGRAM, 0)
+        guard fd >= 0 else { return [EAFNOSUPPORT, EPROTONOSUPPORT].contains(errno) ? .none : .unknown }
+        defer { close(fd) }
+        guard connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0 else {
+            return [ENETUNREACH, EHOSTUNREACH, ENETDOWN, EADDRNOTAVAIL].contains(errno) ? .none : .unknown
+        }
+        var local = sockaddr_storage()
+        var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
+        let named = withUnsafeMutablePointer(to: &local) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
+        }
+        guard named == 0 else { return .unknown }
+        var name = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let found = withUnsafePointer(to: &local) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getnameinfo($0, length, &name, socklen_t(name.count), nil, 0, NI_NUMERICHOST)
+            }
+        }
+        return found == 0 ? .local(String(cString: name)) : .unknown
     }
 
     /// Every address but loopback's, IPv4 and IPv6, as "name: address".
