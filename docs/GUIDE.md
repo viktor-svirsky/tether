@@ -4,7 +4,7 @@ The [README](../README.md) has the short version. This page has the details.
 
 ## Install
 
-You need an iPhone with iOS 17 or later and a plan with Personal Hotspot. Tether isn't in the App Store, so you install it yourself: with a signing app like SideStore or AltStore (easiest), or by building it on a Mac.
+You need an iPhone with iOS 26 or later and a plan with Personal Hotspot. Tether isn't in the App Store, so you install it yourself: with a signing app like SideStore or AltStore (easiest), or by building it on a Mac.
 
 ### With SideStore or AltStore
 
@@ -112,7 +112,7 @@ Tether shows where it stands without being opened:
 
 - **Home Screen widget**, small or medium: sharing, waiting or stopped, how many devices are connected (named on the medium one), whether a VPN carries the iPhone's internet, and a Start or Stop button.
 - **Lock Screen widgets**, rectangular and circular.
-- **Control Center button** (iOS 18 and later): Tether on or off. It can also go on the Lock Screen or the Action button.
+- **Control Center button**: Tether on or off. It can also go on the Lock Screen or the Action button.
 - **Live Activity** on the Lock Screen and in the Dynamic Island while Tether shares or waits for a device on the hotspot: the connected devices and the VPN. It ends when Tether stops.
 
 Start does what Start Tether in Shortcuts does. Stop stops sharing until you open Tether or start it again, with nothing told in a notification. Both need the iPhone unlocked. While Tether is open, Stop does nothing: there, turning off Personal Hotspot is what stops it. To save the battery, the widgets and the Live Activity are redrawn only when something changes: sharing starts or stops, a device connects or leaves, or the VPN goes on or off. They show no speeds or data counts. If iOS closes Tether without a word, a widget notices the next time it's redrawn, within 15 minutes, and says Stopped. The Live Activity starts when Tether is on screen or a widget starts it, and once swiped away it stays away until Tether is stopped and started. It's renewed about three times an hour, and says Open Tether to check if Tether hasn't renewed it. With SideStore and AltStore the widgets read Tether through an app group in the IPA's signature. A signer that drops it leaves them saying No data.

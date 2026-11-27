@@ -46,10 +46,8 @@ struct TetherActivityAttributes: ActivityAttributes {
 /// app's process, launched in the background if it isn't running, so Start does what Start Tether
 /// in Shortcuts does, and Stop stops sharing until Tether is opened or started again. The widget
 /// extension compiles it too, for its buttons, but never runs it.
-///
-/// The widgets' buttons work from iOS 17. The Control Center button is iOS 18's, and so is
-/// SetValueIntent, which its toggle asks for: see the extension below.
-struct SetSharingIntent: LiveActivityIntent {
+/// SetValueIntent is what the Control Center button's toggle asks for.
+struct SetSharingIntent: LiveActivityIntent, SetValueIntent {
     static let title: LocalizedStringResource = "Turn Tether On or Off"
     static let isDiscoverable = false
     /// Not from a locked iPhone: whoever holds it could start sharing again after a Stop.
@@ -76,6 +74,3 @@ struct SetSharingIntent: LiveActivityIntent {
         return .result()
     }
 }
-
-@available(iOS 18, *)
-extension SetSharingIntent: SetValueIntent {}

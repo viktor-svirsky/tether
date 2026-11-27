@@ -5,7 +5,7 @@
 [![CodeRabbit reviews](https://img.shields.io/coderabbit/prs/github/viktor-svirsky/tether?label=CodeRabbit%20reviews)](https://coderabbit.ai)
 [![Latest release](https://img.shields.io/github/v/release/viktor-svirsky/tether)](https://github.com/viktor-svirsky/tether/releases/latest)
 [![Add to SideStore or AltStore](https://img.shields.io/badge/SideStore%20%7C%20AltStore-add%20source-0069b8)](https://viktor-svirsky.github.io/tether/add/)
-![iOS 17+](https://img.shields.io/badge/iOS-17%2B-blue)
+![iOS 26+](https://img.shields.io/badge/iOS-26%2B-blue)
 [![License: MIT](https://img.shields.io/github/license/viktor-svirsky/tether)](LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/viktor-svirsky/tether/badge)](https://scorecard.dev/viewer/?uri=github.com/viktor-svirsky/tether)
 [![Website](https://img.shields.io/badge/website-viktor--svirsky.github.io%2Ftether-0069b8)](https://viktor-svirsky.github.io/tether/)
@@ -33,7 +33,7 @@ Your device still joins the hotspot, but its WireGuard client hands the traffic 
 
 ## Install
 
-You need an iPhone with iOS 17 or later. Tether isn't in the App Store, so you install it with SideStore or AltStore. A free Apple ID works.
+You need an iPhone with iOS 26 or later. Tether isn't in the App Store, so you install it with SideStore or AltStore. A free Apple ID works.
 
 1. Set up [SideStore](https://docs.sidestore.io) or [AltStore](https://faq.altstore.io). It needs a computer once.
 2. Turn on Settings > Privacy & Security > Developer Mode.
