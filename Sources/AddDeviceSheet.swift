@@ -812,7 +812,7 @@ private struct StepRow<Content: View>: View {
 
 /// Selects a text field's whole text when it starts editing, while `pending` is on, and turns it
 /// off, so a name is replaced by typing and a later tap can place the cursor. iOS starts editing
-/// with the cursor at the end, and SwiftUI has no selection before iOS 18.
+/// with the cursor at the end. One modifier serves the sheet's field and the field in Rename's alert.
 struct SelectsAllOnEdit: ViewModifier {
     @Binding var pending: Bool
 
