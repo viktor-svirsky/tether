@@ -326,12 +326,55 @@ func hold(ctx context.Context, conn io.Closer) (release func(), err error) {
 	if err := ctx.Err(); err != nil { // ended: Close cancels ctx before it takes l.mu
 		return nil, err
 	}
+	if l.open == nil { // ended, and ctx doesn't say: a dial for a pool, see holdDial
+		return nil, context.Canceled
+	}
 	l.open[conn] = struct{}{}
 	return func() {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		delete(l.open, conn)
 	}, nil
+}
+
+// holdDial runs dial on a ctx that the end of ctx's lookup (see newLookup) also ends, and makes
+// that end wait for the dial to return, up to dialWaitMax. Ending a dial's context doesn't stop a
+// SYN that's about to leave: the dial may be past its look at the context. So without the wait, a
+// pause could return and a SYN go out after it, outside a VPN that just went (#336). A dial
+// returns at once when its context ends, so the wait is short. The ctx of a dial for an HTTP
+// transport's pool has the lookup's values but not its end, hence the ctx of its own.
+func holdDial(ctx context.Context, dial func(context.Context) (net.Conn, error)) (net.Conn, error) {
+	if _, ok := ctx.Value(lookupKey{}).(*lookupSockets); !ok {
+		return dial(ctx)
+	}
+	dialing, cancel := context.WithCancel(ctx)
+	defer cancel()
+	w := &dialWait{cancel: cancel, done: make(chan struct{})}
+	release, err := hold(ctx, w)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	defer close(w.done)
+	return dial(dialing)
+}
+
+// dialWaitMax is the longest a lookup's end waits for a dial, see holdDial.
+var dialWaitMax = time.Second
+
+// dialWait is a dial in flight as its lookup holds it: closing it ends the dial and waits for it.
+type dialWait struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func (w *dialWait) Close() error {
+	w.cancel()
+	select {
+	case <-w.done:
+	case <-time.After(dialWaitMax):
+	}
+	return nil
 }
 
 func noAnswer(servers []netip.AddrPort) error {

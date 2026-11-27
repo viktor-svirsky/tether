@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -287,5 +288,31 @@ func TestAPausedCandidateIsntMadeTheRouter(t *testing.T) {
 	s.makeRouter(deviceAddr)
 	if r := s.routerOf(); r.IsValid() {
 		t.Fatalf("router %v, want none while it's paused", r)
+	}
+}
+
+// A pause returns only once a dial it ended has: the dial can be past its look at the context and
+// about to connect, and its SYN would leave after the pause, outside a VPN that just went (#336).
+func TestAPauseWaitsForADialItEnds(t *testing.T) {
+	s, c := setup(t)
+	dialing := make(chan struct{}, 1)
+	var sent atomic.Int64
+	s.mu.Lock()
+	s.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialing <- struct{}{}
+		<-ctx.Done()
+		time.Sleep(scaled(100 * time.Millisecond)) // past the look at ctx, the SYN goes out late
+		sent.Store(time.Now().UnixNano())
+		return nil, ctx.Err()
+	}
+	s.mu.Unlock()
+	done := make(chan error, 1)
+	go func() { _, err := fetch(t, c, viaRemote("127.0.0.1:9")); done <- err }()
+	<-dialing
+	pause(t, s, true)
+	returned := time.Now().UnixNano()
+	<-done
+	if at := sent.Load(); at == 0 || at > returned {
+		t.Fatalf("the dial sent %v after the pause returned", time.Duration(at-returned))
 	}
 }
