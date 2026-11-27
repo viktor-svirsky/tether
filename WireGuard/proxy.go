@@ -847,12 +847,18 @@ func (r *proxyRun) dial(ctx context.Context, host string, port uint16, counts *t
 			to = a
 		}
 		s.mu.Lock() // s.dial is read after this, see failure_test.go
-		gone := r.stopped
-		s.mu.Unlock()
-		if gone {
+		if r.stopped || r.p.paused {
+			s.mu.Unlock()
 			return nil, net.ErrClosed
 		}
-		c, err := s.diagDial(ctx, dst, func() (net.Conn, error) { return s.dialTCP(ctx, dst, func(bool) {}) })
+		// Kept with the proxy's connections, so a pause or off ends the dial and waits for it, and
+		// no SYN leaves after it (#344). See holdDial.
+		dialing, end := newHeld(ctx)
+		untrack := s.trackLocked(proxyFlows, netip.Addr{}, end)
+		s.mu.Unlock()
+		c, err := s.diagDial(dialing, dst, func() (net.Conn, error) { return s.dialTCP(dialing, dst, func(bool) {}) })
+		untrack()
+		end.done()
 		if err != nil {
 			last = err
 			if ctx.Err() != nil {
