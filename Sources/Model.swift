@@ -29,6 +29,7 @@
 //   Shortcuts.swift     the Shortcuts actions; ShortcutReply.swift has what they say, Foundation only
 //   WireGuardSetup.swift  the hotspot address, WireGuard keys, devices and client configs, Foundation only
 //   WireGuardServer.swift  runs the WireGuard server (WireGuard/, Go)
+//   HostName.swift      the iPhone's name on the hotspot for configs on IPv6, by mDNS (#65)
 //   KeepAlive.swift, KeepAlivePolicy.swift  the silent sound that keeps Tether running
 //   WidgetState.swift   what the widgets show, Foundation only; TetherShared.swift has the Live
 //     Activity's contents and the intent their buttons run. Both are also compiled into the widget
@@ -260,7 +261,7 @@ final class Model: ObservableObject {
                            settleLocalNetworks(settings, secrets: secrets) // once the Keychain can be read
                            return !LocalNetworks.allowed(in: settings)
                        }, usageDefaults: settings,
-                       resetDay: { ResetDay.saved(in: settings) },
+                       resetDay: { ResetDay.saved(in: settings) }, hostName: MDNSHostName(log: Self.append),
                        cellular: { "\(Interfaces.pdpIp0(in: Interfaces.addresses())), \(cellular.dataLine())" },
                        internetVPN: { Interfaces.internetVPN(nat64: WireGuardServer.nat64Prefix) },
                        onlyThroughVPN: { settings.bool(forKey: HotspotSession.onlyThroughVPNKey) },
@@ -635,6 +636,11 @@ final class Model: ObservableObject {
     /// See `HotspotSession.needsNewConfig`.
     func needsNewConfig(_ peer: WireGuardSetup.Peer) -> Bool {
         session.needsNewConfig(peer)
+    }
+
+    /// See `HotspotSession.newConfig`.
+    func newConfig(_ peer: WireGuardSetup.Peer) -> HotspotSession.NewConfig? {
+        session.newConfig(peer)
     }
 
     func wireGuardConfig(for ready: WireGuardSetup.Ready) -> String? {

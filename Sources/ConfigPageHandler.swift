@@ -26,6 +26,10 @@ struct ConfigPageHandler {
         /// tunnel, so a device asks from there. Devices behind one router share it, and go out
         /// through the router's tunnel.
         var live: [String] = []
+        /// The iPhone's name, while it works for this client, and the ready device's config for it.
+        /// The page then offers a Mac that config too, see `ConfigPage.macConfigPath`.
+        var name: String? = nil
+        var nameConfig: String? = nil
     }
 
     enum Decision: Equatable {
@@ -39,7 +43,10 @@ struct ConfigPageHandler {
     /// key (#160).
     static let repeatWithin: TimeInterval = 5
 
+    /// The last download from each link, the usual one and the Mac one (`ConfigPage.macConfigPath`),
+    /// kept apart: one link right after the other isn't a repeat, and doesn't end the other's.
     private var lastDownload: (client: String, at: Date, response: ConfigPage.Response)?
+    private var lastMacDownload: (client: String, at: Date, response: ConfigPage.Response)?
     /// Why the page last failed, so a page that fails every round is logged once.
     private var problem: String?
 
@@ -59,14 +66,17 @@ struct ConfigPageHandler {
         }
         // Only while a download could happen anyway: a closed window or Tether off screen hands out
         // no key, a repeated one neither (#160).
-        let repeated = state != .ready ? nil : lastDownload.flatMap {
+        let mac = request == .macConfig || request == .macConfigHead
+        let name = inputs.nameConfig == nil ? nil : inputs.name
+        // A Mac config only while the name works: once mDNS fails it points nowhere.
+        let repeated = state != .ready || mac && name == nil ? nil : (mac ? lastMacDownload : lastDownload).flatMap {
             $0.client == client && inputs.now.timeIntervalSince($0.at) < Self.repeatWithin ? $0.response : nil
         }
         switch request {
         case .page:
-            return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel))
+            return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel, name: name))
         case .pageHead:
-            return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel).forHead)
+            return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel, name: name).forHead)
         case .configHead:
             if let repeated { return .answer(repeated.forHead) }
             guard state == .ready, let config = inputs.config else { return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel, status: .notFound).forHead) }
@@ -77,6 +87,18 @@ struct ConfigPageHandler {
                 return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel, status: .notFound))
             }
             return .download(ready, host: host, config: config)
+        case .macConfigHead:
+            if let repeated { return .answer(repeated.forHead) }
+            guard state == .ready, name != nil, let config = inputs.nameConfig else {
+                return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel, status: .notFound).forHead)
+            }
+            return .answer(ConfigPage.config(config, fileName: WireGuardSetup.fileName(for: "")).forHead)
+        case .macConfig:
+            if let repeated { return .answer(repeated) }
+            guard state == .ready, let ready = inputs.ready, let name, let config = inputs.nameConfig else {
+                return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel, status: .notFound))
+            }
+            return .download(ready, host: name, config: config)
         case .configWithoutToken: return .answer(ConfigPage.page(state, stale: stale, tunnel: tunnel, status: .notFound))
         case .notFound: return .answer(ConfigPage.notFound)
         case .notGet: return .answer(ConfigPage.notGet)
@@ -85,13 +107,14 @@ struct ConfigPageHandler {
     }
 
     /// The session saved the device and answers with `response`.
-    mutating func downloaded(_ response: ConfigPage.Response, by client: String, at now: Date) {
-        lastDownload = (client, now, response)
+    mutating func downloaded(_ response: ConfigPage.Response, by client: String, forMac mac: Bool = false, at now: Date) {
+        if mac { lastMacDownload = (client, now, response) } else { lastDownload = (client, now, response) }
     }
 
     /// That config mustn't be handed out again: the hotspot went, the keys started over, or a device was removed.
     mutating func forget() {
         lastDownload = nil
+        lastMacDownload = nil
     }
 
     /// The line to log for this failure, nil when the last one said the same.

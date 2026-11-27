@@ -21,6 +21,9 @@ final class ConfigPageTests: XCTestCase {
             ("GET /Tether.conf/ HTTP/1.1\r\n\r\n", .notFound, #line),
             ("HEAD / HTTP/1.1\r\n\r\n", .pageHead, #line),
             ("HEAD /Tether.conf?t=\(ConfigPage.token) HTTP/1.1\r\n\r\n", .configHead, #line),
+            ("GET /Tether-Mac.conf?t=\(ConfigPage.token) HTTP/1.1\r\n\r\n", .macConfig, #line), // #65
+            ("HEAD /Tether-Mac.conf?t=\(ConfigPage.token) HTTP/1.1\r\n\r\n", .macConfigHead, #line),
+            ("GET /Tether-Mac.conf HTTP/1.1\r\n\r\n", .configWithoutToken, #line),
             ("HEAD /favicon.ico HTTP/1.1\r\n\r\n", .notFound, #line),
             ("OPTIONS / HTTP/1.1\r\n\r\n", .notGet, #line),
             ("POST /Tether.conf HTTP/1.1\r\n\r\n", .notGet, #line),
@@ -80,6 +83,32 @@ final class ConfigPageTests: XCTestCase {
                        .answer(ConfigPage.page(.ready, tunnel: .notConnected, status: .notFound)), "the page with a 404, not a download")
         XCTAssertTrue(String(decoding: ConfigPage.page(.ready).body, as: UTF8.self).contains("href=\"\(ConfigPage.downloadPath)\""))
         XCTAssertGreaterThanOrEqual(ConfigPage.token.count, 16)
+    }
+
+    /// A Mac on an IPv6-only hotspot gets a second link, for a config that names the iPhone (#65).
+    /// Only on the ready page, only with a name, and labelled for a Mac: the usual one stays first.
+    func testTheMacLinkShowsOnlyWithAName() throws {
+        let html = { (state: ConfigPage.State, name: String?) in String(decoding: ConfigPage.page(state, name: name).body, as: UTF8.self) }
+        let withName = html(.ready, "tether-2a9a.local")
+        XCTAssertTrue(withName.contains("href=\"\(ConfigPage.macDownloadPath)\">For a Mac: a config that follows the iPhone when its address changes</a>"))
+        XCTAssertTrue(withName.contains("tether-2a9a.local"))
+        XCTAssertLessThan(try XCTUnwrap(withName.range(of: ConfigPage.downloadPath)).lowerBound,
+                          try XCTUnwrap(withName.range(of: ConfigPage.macDownloadPath)).lowerBound)
+        XCTAssertFalse(html(.ready, nil).contains(ConfigPage.macConfigPath))
+        XCTAssertFalse(html(.openTether, "tether-2a9a.local").contains(ConfigPage.macConfigPath))
+
+        var setup = WireGuardSetup.new()
+        setup.prepareReady()
+        let ready = try XCTUnwrap(setup.ready)
+        let handler = ConfigPageHandler()
+        var inputs = ConfigPageHandler.Inputs(letIn: true, onScreen: true, ready: ready, host: "2001:db8::1",
+                                              config: "A", stale: [], hosts: ["172.20.10.1", "2001:db8::1"], now: Date())
+        XCTAssertEqual(handler.answer(.macConfig, from: "2001:db8::9", inputs), .answer(ConfigPage.page(.ready, tunnel: .notConnected, status: .notFound)))
+        inputs.name = "tether-2a9a.local"
+        inputs.nameConfig = "B"
+        XCTAssertEqual(handler.answer(.page, from: "2001:db8::9", inputs), .answer(ConfigPage.page(.ready, tunnel: .notConnected, name: "tether-2a9a.local")))
+        XCTAssertEqual(handler.answer(.macConfig, from: "2001:db8::9", inputs), .download(ready, host: "tether-2a9a.local", config: "B"))
+        XCTAssertEqual(handler.answer(.config, from: "2001:db8::9", inputs), .download(ready, host: "2001:db8::1", config: "A"))
     }
 
     /// On an IPv6-only carrier the page listens on a global address. Only the hotspot's own /64 and

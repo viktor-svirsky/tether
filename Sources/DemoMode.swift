@@ -61,6 +61,9 @@ enum DemoScenario: String, CaseIterable {
     /// Like `sharing`, but the Windows PC's config points at an IPv6 address this iPhone had before,
     /// the way a new cellular session moves it on an IPv6-only carrier, so it needs adding again.
     case oldAddress
+    /// Like `oldAddress` on a carrier that gives the iPhone IPv6 only, but the Windows PC's config uses
+    /// this iPhone's name, which the demo's mDNS never answers (#65).
+    case nameNotAnswered
     /// Like `sharing`, but the iPad is paused: its tunnel is up, and nothing gets through.
     case paused
     /// Like `sharing`, and a device at 172.20.10.3 on the hotspot isn't on WireGuard or the proxy
@@ -147,7 +150,7 @@ struct DemoState {
     func secrets() -> SecretStore {
         let secrets = InMemorySecrets()
         switch scenario {
-        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .localNetworkDenied, .oldAddress, .staleConfig, .paused, .notUsingTether,
+        case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .localNetworkDenied, .oldAddress, .nameNotAnswered, .staleConfig, .paused, .notUsingTether,
              .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking:
             var setup = WireGuardSetup.new()
             let ipad = setup.addPeer(name: "iPad")
@@ -155,7 +158,8 @@ struct DemoState {
             // A 10 GB limit, so its screen shows the meter. The Windows PC has none.
             if let ipad { setup.limitPeer(ipad.id, 10_000_000_000) }
             // A documentation address. The demo listens on 172.20.10.1, so it's an old one.
-            _ = setup.addPeer(name: "Windows PC", host: scenario == .oldAddress ? "2001:db8::1" : nil)
+            let name = scenario == .nameNotAnswered ? HostName.name(for: setup.serverPublicKey) : nil
+            _ = setup.addPeer(name: "Windows PC", host: scenario == .oldAddress ? "2001:db8::1" : name)
             if Self.proxyOn.contains(scenario) { setup.turnProxy(on: true) }
             secrets.data = try? JSONEncoder().encode(setup) // no ready device yet: loading makes and saves one
         case .wireGuardNeedsReset:
@@ -200,14 +204,14 @@ struct DemoState {
     /// The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states. In `paused` the
     /// session shows the iPad paused instead.
     var connected: Set<String> {
-        ([.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .staleConfig, .paused, .notUsingTether] + Self.proxyOn).contains(scenario) ? ["10.7.0.2"] : []
+        ([.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .nameNotAnswered, .staleConfig, .paused, .notUsingTether] + Self.proxyOn).contains(scenario) ? ["10.7.0.2"] : []
     }
 
     /// The demos with the proxy on.
     private static let proxyOn: [DemoScenario] = [.proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
 
     /// A carrier that gives the iPhone IPv6 only: Tether listens on a documentation IPv6 address too.
-    private var ipv6Only: Bool { [.addDeviceComputerIPv6, .proxyIPv6].contains(scenario) }
+    private var ipv6Only: Bool { [.addDeviceComputerIPv6, .proxyIPv6, .nameNotAnswered].contains(scenario) }
 
     /// When this build stops opening: two days on for `expiring`, never for the others.
     var expires: Date? { scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil }
