@@ -265,7 +265,8 @@ class TetherUITestCase: XCTestCase {
     /// iOS's own secondary text colour on the grouped background (section headers, footers, footnotes).
     /// It passes for large text only, and it is the system's colour, not ours. Only plain texts without an
     /// identifier qualify, plus the elements named in `systemStyled`, each checked to use only system styling.
-    /// Any other element, an issue with no element, and every full contrast failure still fail the test.
+    /// Any other element, an issue with no element, and every other full contrast failure still fail the test: the one
+    /// let through is a short system header, see `shortSystemHeaders`.
     ///
     /// `types` defaults to everything but Dynamic Type and clipped text. Contrast reads the pixels, so it is only right for what
     /// is fully on screen: a contrast issue on an element that isn't fully inside the window (a row under the home
@@ -319,6 +320,7 @@ class TetherUITestCase: XCTestCase {
                 let known = (issue.compactDescription == "Contrast nearly passed" && (systemText || systemStyled))
                     || (underSheet && issue.compactDescription == "Potentially inaccessible text" && element == nil)
                     || offScreen || systemBarButton
+                    || (issue.auditType == .contrast && systemText && Self.shortSystemHeaders.contains(element?.label ?? ""))
                 if known {
                     allowed.append("\(issue.compactDescription): \(element?.label ?? "(no element)")")
                 } else {
@@ -393,6 +395,10 @@ class TetherUITestCase: XCTestCase {
 
     /// Toolbar buttons, drawn by the system in its own tint.
     static let systemButtons: Set<String> = ["Cancel", "Done"]
+    /// Short section headers in the system style that the audit fails although longer ones only nearly fail. Before iOS 26 a header is small grey
+    /// capitals, and on an iPhone SE the audit calls Settings' "VPN" a full contrast failure while "SHARING", in the same
+    /// colour and size, only nearly passes. Both are the system's header style, not Tether's.
+    static let shortSystemHeaders: Set<String> = ["VPN"]
     /// Filled buttons over the bottom bar's material, which the audit's contrast estimate gets just short of.
     /// Their tests read the real contrast from the pixels instead, see `textContrast`.
     static let filledButtons: Set<String> = ["intro.continue"]
