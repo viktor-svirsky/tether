@@ -1318,9 +1318,11 @@ enum Interfaces {
     }
 
     /// Two addresses per family, far apart. A DNS app's tunnel can carry only its resolver's address
-    /// (1.1.1.1, say) and nothing else, so the second of each is one no such tunnel is for: from the
-    /// ranges kept for documentation, which the default route covers like any other address.
-    static let internetProbes = ["1.1.1.1", "198.51.100.1", "2606:4700:4700::1111", "2001:db8::1"]
+    /// (1.1.1.1, say) and nothing else, so the second of each is one no such tunnel is for: a CDN's
+    /// (Fastly), routed like any website. Not one from the ranges kept for documentation: VPN apps
+    /// leave the special-purpose ranges out of their tunnel by default (Shadowrocket leaves out
+    /// 198.51.100.0/24), so a full tunnel would read as none (#277). No packet is sent to them.
+    static let internetProbes = ["1.1.1.1", "151.101.0.1", "2606:4700:4700::1111", "2a04:4e42::1"]
     /// The prefix most NAT64s use (RFC 6052), which the server uses when the carrier has none of its own.
     static let wellKnownNAT64 = "64:ff9b::/96"
 

@@ -2319,6 +2319,59 @@ final class InternetVPNTests: XCTestCase {
         XCTAssertNil(Interfaces.vpn(in: lines, local: ["10.2.0.2", "198.51.100.7"]), "an address on no interface")
     }
 
+    /// VPN apps leave the special-purpose ranges out of their tunnel by default (Shadowrocket's TUN
+    /// Excluded Routes holds 198.51.100.0/24, for one), so a probe there reads a full tunnel as none.
+    /// Every probe is ordinary global unicast, outside the IANA special-purpose registries (RFC 6890
+    /// and its updates), and the second of each family is no public resolver's.
+    func testTheProbesAreAddressesEveryTunnelCarries() {
+        let special = ["0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+                       "192.0.0.0/24", "192.0.2.0/24", "192.31.196.0/24", "192.52.193.0/24", "192.88.99.0/24",
+                       "192.168.0.0/16", "192.175.48.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
+                       "224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32",
+                       "::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64",
+                       "2001::/23", "2001:db8::/32", "2002::/16", "2620:4f:8000::/48", "3fff::/20",
+                       "5f00::/16", "fc00::/7", "fe80::/10", "ff00::/8"]
+        let resolvers = ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112", "208.67.222.222",
+                         "208.67.220.220", "94.140.14.14", "76.76.2.0", "2606:4700:4700::1111", "2606:4700:4700::1001",
+                         "2001:4860:4860::8888", "2001:4860:4860::8844", "2620:fe::fe", "2620:fe::9",
+                         "2620:119:35::35", "2a10:50c0::ad1:ff", "2606:1a40::"]
+        for probe in Interfaces.internetProbes {
+            for range in special {
+                XCTAssertFalse(Self.address(probe, isIn: range), "\(probe) is in \(range), which tunnels leave out")
+            }
+        }
+        let ipv4 = Interfaces.internetProbes.filter { !$0.contains(":") }
+        let ipv6 = Interfaces.internetProbes.filter { $0.contains(":") }
+        XCTAssertEqual(ipv4.count, 2)
+        XCTAssertEqual(ipv6.count, 2)
+        XCTAssertFalse(resolvers.contains(ipv4[1]), "a DNS app's tunnel can carry \(ipv4[1]) alone")
+        XCTAssertFalse(resolvers.contains(ipv6[1]), "a DNS app's tunnel can carry \(ipv6[1]) alone")
+        XCTAssertTrue(Self.address("198.51.100.1", isIn: "198.51.100.0/24"))
+        XCTAssertTrue(Self.address("2001:db8::1", isIn: "2001:db8::/32"))
+        XCTAssertFalse(Self.address("2001:db9::1", isIn: "2001:db8::/32"))
+    }
+
+    private static func address(_ address: String, isIn range: String) -> Bool {
+        let parts = range.split(separator: "/")
+        guard let base = bytes(String(parts[0])), let mine = bytes(address), base.count == mine.count,
+              let length = Int(parts[1]) else { return false }
+        for bit in 0..<length where (base[bit / 8] >> (7 - bit % 8)) & 1 != (mine[bit / 8] >> (7 - bit % 8)) & 1 {
+            return false
+        }
+        return true
+    }
+
+    private static func bytes(_ address: String) -> [UInt8]? {
+        if address.contains(":") {
+            var a = in6_addr()
+            guard inet_pton(AF_INET6, address, &a) == 1 else { return nil }
+            return withUnsafeBytes(of: &a) { Array($0) }
+        }
+        var a = in_addr()
+        guard inet_pton(AF_INET, address, &a) == 1 else { return nil }
+        return withUnsafeBytes(of: &a) { Array($0) }
+    }
+
     /// A question that failed says nothing, so it isn't a VPN. No route for one family is an answer:
     /// the other decides.
     func testARouteNothingIsKnownAboutIsNotAVPN() {
