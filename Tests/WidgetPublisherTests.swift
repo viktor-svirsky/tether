@@ -143,4 +143,21 @@ final class WidgetPublisherTests: XCTestCase {
         XCTAssertTrue(ended.forget)
         XCTAssertNotEqual(ended.action, .none)
     }
+
+    /// The clock set back by hours: a start tried before isn't held off until the clock catches up (#329).
+    func testAClockSetBackDoesNotHoldOffTheNextStart() {
+        var publisher = WidgetPublisher()
+        _ = publisher.activity(nil, up: true, facts: facts, mayStart: true, now: now)
+        XCTAssertNotEqual(publisher.activity(nil, up: true, facts: facts, mayStart: true, now: now.addingTimeInterval(-3 * 3600)).action, .none)
+    }
+
+    /// The clock set back by hours, then the activity is gone: that's no swipe a round ago, so it's
+    /// started again, not kept away (#329).
+    func testAClockSetBackDoesNotReadAsASwipe() {
+        var publisher = WidgetPublisher()
+        _ = publisher.activity(shown(.active), up: true, facts: facts, mayStart: true, now: now)
+        let plan = publisher.activity(shown(.dismissed), up: true, facts: facts, mayStart: true, now: now.addingTimeInterval(-3 * 3600))
+        XCTAssertTrue(plan.forget)
+        XCTAssertNotEqual(plan.action, .none)
+    }
 }

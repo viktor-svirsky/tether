@@ -140,7 +140,8 @@ struct WidgetPublisher {
         if let shown, shown.state != .active, shown.state != .stale {
             // Swiped away by the person if it was there a round ago. After a long suspension it's as
             // likely iOS, which removes one it ended itself, and that one is started again.
-            let justNow = activityChecked.map { now.timeIntervalSince($0) < WidgetState.staleAfter } ?? false
+            // Both times are taken either way, so a clock set back reads as time gone by, see `WidgetState.gap`.
+            let justNow = activityChecked.map { WidgetState.gap(since: $0, now: now) < WidgetState.staleAfter } ?? false
             if shown.state == .dismissed, justNow { activityDismissed = true }
             plan.forget = true
             live = nil
@@ -157,7 +158,7 @@ struct WidgetPublisher {
             if live.facts != facts || renew { plan.action = .update(facts, staleDate: staleDate) }
             return plan
         }
-        guard mayStart, !activityDismissed, activityTried.map({ now.timeIntervalSince($0) >= Self.activityTryEvery }) ?? true else { return plan }
+        guard mayStart, !activityDismissed, activityTried.map({ WidgetState.gap(since: $0, now: now) >= Self.activityTryEvery }) ?? true else { return plan }
         activityTried = now
         plan.action = .start(facts, staleDate: staleDate)
         return plan
