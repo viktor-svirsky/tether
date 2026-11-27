@@ -13,7 +13,7 @@ final class DemoScenarioTests: XCTestCase {
                                                     .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .nameNotAnswered, .staleConfig,
                                                     .notUsingTether, .vpnIPv4Only, .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
     private let noSpeed: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro, .noDevices, .wireGuardUnsaved,
-                                              .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6]
+                                              .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6, .addDeviceConnects]
 
     /// Only its own demo has a device on the hotspot that isn't using Tether. The iPad answers the
     /// knock too, from where its handshake comes, so it isn't listed (#109).
@@ -119,6 +119,25 @@ final class DemoScenarioTests: XCTestCase {
                        ["172.20.10.1:8118", "[2001:db8:9e74:4eaa:459:5cd0:7ec7:f792]:8118"])
         XCTAssertEqual(DemoState(.addDeviceProxy).makeSession().proxyStats.open, 0)
         XCTAssertEqual(DemoState(.addDeviceProxyWorking).makeSession().proxyStats.open, 1)
+    }
+
+    /// In `addDeviceConnects` nothing connects until Add a device lets the code in. Then the device
+    /// behind it connects from the hotspot and is listed (#315).
+    func testTheConnectingDemoConnectsTheCodesDeviceOnceTheSheetIsOpen() async throws {
+        var demo = DemoState(.addDeviceConnects)
+        demo.connectsAfter = 1
+        let session = demo.makeSession()
+        try await Task.sleep(for: .seconds(2))
+        XCTAssertEqual(session.wireGuardConnected, [], "not before the sheet opens")
+        XCTAssertEqual(session.wireGuardPeers, [])
+        session.openAddWindow()
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        for _ in 0..<40 where session.wireGuardConnected.isEmpty {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertEqual(session.wireGuardConnected, [ready.address])
+        let device = try XCTUnwrap(session.wireGuardPeers.first { $0.address == ready.address }, "listed")
+        XCTAssertEqual(session.connectsFrom(of: device.id), "172.20.10.4")
     }
 
     /// A demo's log is its own, emptied at each launch, so the app's log never gets a demo's lines.

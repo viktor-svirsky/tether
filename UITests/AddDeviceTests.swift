@@ -171,6 +171,26 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertTrue(element("add.address").waitForExistence(timeout: 5))
     }
 
+    /// The whole walk from the code (#315): the sheet shows the code, a device scans it and connects a
+    /// moment later, and the sheet moves on by itself to Connected and the name field.
+    func testTheSheetGoesFromTheCodeToConnected() {
+        launch(.addDeviceConnects)
+        openAddDevice()
+        XCTAssertTrue(element("add.qr").waitForExistence(timeout: 5))
+        XCTAssertEqual(value(of: element("add.step1")), "Done")
+        XCTAssertEqual(value(of: element("add.step3")), "")
+        XCTAssertFalse(element("add.result").exists, "not connected yet")
+        XCTAssertFalse(app.textFields["add.name"].exists)
+        XCTAssertTrue(element("add.result").waitForExistence(timeout: 20), "it connects after a moment")
+        XCTAssertEqual(label(of: "add.result"), "Connected")
+        XCTAssertEqual(value(of: element("add.step2")), "Done")
+        XCTAssertEqual(value(of: element("add.step3")), "Done")
+        let field = app.textFields["add.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertFalse((field.value as? String ?? "").isEmpty, "it has the name it got")
+        assertNowhere(element("add.qr"))
+    }
+
     /// Once the code's device is listed, the code goes and the last step waits for its tunnel.
     func testADownloadedCodeWaitsForTheTunnel() {
         launch(.addDeviceWaiting)
