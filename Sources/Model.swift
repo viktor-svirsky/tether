@@ -1,7 +1,8 @@
 // File map (all in Sources/):
 //   TetherApp.swift     the @main App only
 //   Model.swift         Model: what the screen and the Shortcuts actions see, and the timers
-//   HotspotSession.swift  the hotspot lifecycle Model runs, and Interfaces, Foundation only
+//   HotspotSession.swift  the hotspot lifecycle Model runs, Foundation only
+//   Interfaces.swift    the hotspot address, the carrier and the VPN probe, Foundation only
 //   AddWindow.swift     when the code behind Add a device works, by the clock, Foundation only
 //   TrafficSampler.swift  the speeds from two reads of the counters, Foundation only
 //   Traffic.swift       the server's byte counters, Foundation only
