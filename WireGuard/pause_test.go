@@ -390,3 +390,33 @@ func TestADialAfterItsTaskIsClosedDoesntGoOut(t *testing.T) {
 		t.Fatal("no error for a closed task")
 	}
 }
+
+// Close takes what the task holds before it cancels the task: cancelled first, the task could run
+// its own done in between, which lets go of a pool dial, and Close would return with that dial
+// still going (#336).
+func TestClosingATaskEndsItsDialEvenIfTheTaskEndsMeanwhile(t *testing.T) {
+	ctx, h := newHeld(context.Background())
+	dialing, ended := make(chan struct{}), make(chan struct{})
+	go holdDial(context.WithoutCancel(ctx), func(ctx context.Context) (net.Conn, error) {
+		close(dialing)
+		<-ctx.Done()
+		close(ended)
+		return nil, ctx.Err()
+	})
+	<-dialing
+	h.mu.Lock()
+	closed := make(chan struct{})
+	go func() { h.Close(); close(closed) }()
+	select {
+	case <-ctx.Done():
+		h.open = nil // the task's own done, run as soon as it's cancelled
+	case <-time.After(scaled(100 * time.Millisecond)):
+	}
+	h.mu.Unlock()
+	<-closed
+	select {
+	case <-ended:
+	default:
+		t.Fatal("Close returned with the dial still going")
+	}
+}
