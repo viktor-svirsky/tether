@@ -516,9 +516,12 @@ final class Model: ObservableObject {
         session.renameWireGuardDevice(id, to: name)
     }
 
+    /// The session's clock, see `HotspotSession.clockNow`.
+    var clockNow: Date { session.clockNow }
+
     /// See `HotspotSession.pauseWireGuardDevice`.
-    func pauseWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {
-        session.pauseWireGuardDevice(id)
+    func pauseWireGuardDevice(_ id: WireGuardSetup.Peer.ID, for length: WireGuardSetup.PauseLength = .untilResumed) {
+        session.pauseWireGuardDevice(id, for: length)
     }
 
     func resumeWireGuardDevice(_ id: WireGuardSetup.Peer.ID) {

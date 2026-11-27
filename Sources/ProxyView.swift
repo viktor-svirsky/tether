@@ -8,6 +8,8 @@ struct ProxyView: View {
     /// Other amount, typed in GB.
     @State private var typingLimit = false
     @State private var typedLimit = ""
+    /// Pause was turned on: how long is asked, as for a device (#312).
+    @State private var askingPauseLength = false
     @Environment(\.dismiss) private var dismiss
 
     /// Off once turned off from here, until the screen goes.
@@ -30,7 +32,7 @@ struct ProxyView: View {
             Section {
                 VStack(alignment: .leading, spacing: 4) {
                     LabeledContent("Status") {
-                        DeviceStatusLabel(status: status.look, text: status.title)
+                        DeviceStatusLabel(status: status.look, text: status.title(now: model.clockNow))
                             .foregroundStyle(Color.primary)
                     }
                     .accessibilityElement(children: .combine)
@@ -49,7 +51,7 @@ struct ProxyView: View {
                 }
                 serverRow(ProxyAddress.port, label: "Port", copyLabel: "Copy the port", id: "proxy.port")
                 Toggle("Pause", isOn: Binding(get: { proxy.paused != nil }, set: { pause in
-                    if pause { model.pauseWireGuardDevice(proxy.id) } else { model.resumeWireGuardDevice(proxy.id) }
+                    if pause { askingPauseLength = true } else { model.resumeWireGuardDevice(proxy.id) }
                 }))
                 .accessibilityIdentifier("proxy.pause")
                 limitPicker
@@ -69,6 +71,12 @@ struct ProxyView: View {
         }
         .navigationTitle(ProxyStatus.name)
         .navigationBarTitleDisplayMode(.inline)
+        // On the list, not the row: on the row its choices didn't run.
+        .confirmationDialog("Pause", isPresented: $askingPauseLength, titleVisibility: .hidden) {
+            ForEach(WireGuardSetup.PauseLength.allCases, id: \.self) { length in
+                Button(length.title) { model.pauseWireGuardDevice(proxy.id, for: length) }
+            }
+        }
         .alert("Data limit", isPresented: $typingLimit) {
             TextField("GB", text: $typedLimit)
                 .keyboardType(.decimalPad)

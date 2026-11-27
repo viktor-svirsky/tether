@@ -63,22 +63,35 @@ struct WireGuardSetup: Codable, Equatable {
         }
     }
 
-    /// Why a device is paused, saved as `{"why": "you"}` or `{"why": "limit"}`. Each reason has its
-    /// own words, see `DeviceStatus`. A reason this version doesn't know, from a newer one, reads as
-    /// paused by you, so the device stays paused and can be resumed here. Saved again, it's saved as that.
+    /// Why a device is paused, saved as `{"why": "you"}`, `{"why": "limit"}` or `{"why": "until",
+    /// "at": <seconds since 1970>}`. Each reason has its own words, see `DeviceStatus`. A reason this
+    /// version doesn't know, from a newer one, reads as paused by you, so the device stays paused and
+    /// can be resumed here. Saved again, it's saved as that.
     enum Pause: Codable, Hashable {
         /// Paused on its screen, until it's resumed there.
         case byYou
         /// It used its data limit for the month, see `Peer.limit`. It connects again when the count
         /// starts over, or when it's resumed. An older release reads it as paused by you.
         case atLimit
+        /// Paused on its screen for a set time (#312): the first watcher round at or after this
+        /// resumes it, see `HotspotSession.checkLimits`. An older release reads it as paused by you.
+        case until(Date)
 
-        private enum CodingKeys: String, CodingKey { case why }
+        /// Paused by the person, for a time or until resumed: what turning the proxy on again resumes.
+        var byPerson: Bool { self != .atLimit }
+
+        private enum CodingKeys: String, CodingKey { case why, at }
 
         /// Whatever was saved, so a newer version's shape never makes the setup unreadable.
         init(from decoder: Decoder) throws {
-            let why = try? decoder.container(keyedBy: CodingKeys.self).decode(String.self, forKey: .why)
-            self = why == "limit" ? .atLimit : .byYou
+            let container = try? decoder.container(keyedBy: CodingKeys.self)
+            switch try? container?.decode(String.self, forKey: .why) {
+            case "limit": self = .atLimit
+            case "until":
+                // Without its end it can't resume by itself, so it waits to be resumed.
+                self = (try? container?.decode(Double.self, forKey: .at)).map { .until(Date(timeIntervalSince1970: $0)) } ?? .byYou
+            default: self = .byYou
+            }
         }
 
         func encode(to encoder: Encoder) throws {
@@ -86,6 +99,36 @@ struct WireGuardSetup: Codable, Equatable {
             switch self {
             case .byYou: try container.encode("you", forKey: .why)
             case .atLimit: try container.encode("limit", forKey: .why)
+            case let .until(end):
+                try container.encode("until", forKey: .why)
+                try container.encode(end.timeIntervalSince1970, forKey: .at)
+            }
+        }
+    }
+
+    /// How long Pause on a device's screen pauses it for (#312).
+    enum PauseLength: CaseIterable {
+        case halfHour, hour, untilTomorrow, untilResumed
+
+        var title: String {
+            switch self {
+            case .halfHour: "For 30 minutes"
+            case .hour: "For 1 hour"
+            case .untilTomorrow: "Until tomorrow"
+            case .untilResumed: "Until I resume it"
+            }
+        }
+
+        /// The pause it makes from `now`. Until tomorrow ends at 6:00 the next morning.
+        func pause(from now: Date, calendar: Calendar) -> Pause {
+            switch self {
+            case .halfHour: .until(now.addingTimeInterval(30 * 60))
+            case .hour: .until(now.addingTimeInterval(60 * 60))
+            case .untilTomorrow:
+                calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))
+                    .flatMap { calendar.date(bySettingHour: 6, minute: 0, second: 0, of: $0) }
+                    .map { .until($0) } ?? .byYou
+            case .untilResumed: .byYou
             }
         }
     }
@@ -229,7 +272,7 @@ struct WireGuardSetup: Codable, Equatable {
         }
         var next = proxy ?? Proxy()
         next.on = true
-        if next.paused == .byYou { next.paused = nil }
+        if next.paused?.byPerson == true { next.paused = nil }
         proxy = next
     }
 

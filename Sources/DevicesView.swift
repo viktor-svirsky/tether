@@ -125,7 +125,7 @@ struct DeviceView: View {
                 }
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
-                        DeviceStatusLabel(status: status, text: status.title)
+                        DeviceStatusLabel(status: status, text: status.title(now: model.clockNow))
                             .accessibilityIdentifier("device.status")
                         if let detail = status.detail(resets: model.nextResetDay, period: model.usagePeriod) {
                             // The label colour, like the status: grey text on the card fails the contrast audit.
@@ -296,10 +296,20 @@ extension DeviceView {
     @ViewBuilder private var pauseSection: some View {
         if current.paused == nil {
             Section {
-                Button("Pause") { model.pauseWireGuardDevice(peer.id) }
-                    .accessibilityIdentifier("device.pause")
+                // How long, as Do Not Disturb asks (#312). The last one is the pause it always was.
+                Menu {
+                    ForEach(WireGuardSetup.PauseLength.allCases, id: \.self) { length in
+                        Button(length.title) { model.pauseWireGuardDevice(peer.id, for: length) }
+                    }
+                } label: {
+                    // The whole row opens it, as the button it replaced did.
+                    Text("Pause")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("device.pause")
             } footer: {
-                Text("Pause stops it from connecting until you resume it.")
+                Text("Pause stops it from connecting for a while, or until you resume it.")
             }
         } else {
             Section {
