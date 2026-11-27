@@ -78,6 +78,9 @@ enum DemoScenario: String, CaseIterable {
     case addDeviceProxy
     /// Like `addDeviceProxy`, with a device's page going through the proxy, so it's working.
     case addDeviceProxyWorking
+    /// Like `noDevices`: a moment after Add a device lets its code in, a device that scanned it
+    /// connects from the hotspot, so a test walks the sheet from the code to connected (#315).
+    case addDeviceConnects
 
     static let argument = "-TetherDemo"
 
@@ -130,6 +133,8 @@ struct DemoState {
     private(set) var running = true
     private(set) var downSpeed = 0.0
     private(set) var upSpeed = 0.0
+    /// How many whole seconds `addDeviceConnects` waits with the code let in, long enough for a UI test to see the code first.
+    var connectsAfter = 8
 
     static func fromLaunchArguments() -> DemoState? {
         DemoScenario.current.map(DemoState.init)
@@ -141,7 +146,7 @@ struct DemoState {
             running = false
             return
         }
-        if [.noDevices, .wireGuardUnsaved, .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6].contains(scenario) { return }
+        if [.noDevices, .wireGuardUnsaved, .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6, .addDeviceConnects].contains(scenario) { return }
         downSpeed = 3_200_000
         upSpeed = 400_000
     }
@@ -271,6 +276,7 @@ struct DemoState {
             session.sampleTraffic()
         }
         if scenario == .addDeviceProxyWorking { loadAPage(through: server, session) }
+        if scenario == .addDeviceConnects { connectTheNextDevice(through: server, session) }
         if scenario == .notUsingTether {
             session.neighborsAnswered([HotspotKnock(address: "172.20.10.2", answer: .open),
                                        HotspotKnock(address: "172.20.10.3", answer: .refused)])
@@ -290,6 +296,33 @@ struct DemoState {
                 server.proxyServed.insert("172.20.10.\(10 + i)")
                 server.proxyTraffic += TrafficTotals(bytesUp: 1_000, bytesDown: 30_000)
                 session.sampleTraffic()
+            }
+        }
+    }
+}
+
+/// The `addDeviceConnects` demo's device: once Add a device has let its code in for `connectsAfter` whole
+/// seconds, a device that scanned the code connects from an address on the hotspot, as its first
+/// handshake would show, and the sampler a demo doesn't have reads it. A sheet closed before then
+/// starts the wait over. It stops once a device connects or the session is gone.
+extension DemoState {
+    @MainActor
+    fileprivate func connectTheNextDevice(through server: FakeServer, _ session: HotspotSession) {
+        Task { [weak session] in
+            var openFor = 0
+            while true {
+                try? await Task.sleep(for: .seconds(1))
+                guard let session else { return }
+                guard session.addWindowOpen, let ready = session.wireGuardReady else {
+                    openFor = 0
+                    continue
+                }
+                openFor += 1
+                guard openFor >= connectsAfter else { continue }
+                server.connected.insert(ready.address)
+                server.endpoints[ready.address] = "172.20.10.4:51234"
+                session.sampleTraffic()
+                return
             }
         }
     }
