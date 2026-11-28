@@ -146,7 +146,8 @@ enum SharedGroup {
         return original
     }()
 
-    static let defaults = UserDefaults(suiteName: id)
+    /// UserDefaults is thread-safe (Apple documents it so), but the SDK doesn't mark it Sendable.
+    nonisolated(unsafe) static let defaults = UserDefaults(suiteName: id)
 
     /// The signature really carries the group. Without it `UserDefaults(suiteName:)` still gives a
     /// store, but each process its own, so the widgets would say Stopped for ever: a signer that

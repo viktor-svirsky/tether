@@ -42,51 +42,6 @@ final class ConfigPageServerTests: XCTestCase {
         return try XCTUnwrap(server.port)
     }
 
-    /// What the server sent before it closed (nil when the connection failed), and how it ended, so a
-    /// failed assertion says why nothing came (#131).
-    private struct Reply {
-        var data: Data?
-        var why: String
-    }
-
-    /// Sends `bytes` and reads until the server closes.
-    private nonisolated func exchange(_ bytes: Data, port: UInt16, host: NWEndpoint.Host = "127.0.0.1") async -> Reply {
-        await withCheckedContinuation { done in
-            let connection = NWConnection(host: host, port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
-            let queue = DispatchQueue(label: "test.client")
-            var received = Data()
-            var finished = false
-            func finish(_ result: Data?, _ why: String) {
-                guard !finished else { return }
-                finished = true
-                connection.cancel()
-                done.resume(returning: Reply(data: result, why: why))
-            }
-            func read() {
-                connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, isComplete, error in
-                    if let data { received.append(data) }
-                    if isComplete {
-                        finish(received, "closed by the server")
-                    } else if let error {
-                        finish(received.isEmpty ? nil : received, "receive failed: \(error)")
-                    } else {
-                        read()
-                    }
-                }
-            }
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    if !bytes.isEmpty { connection.send(content: bytes, completion: .contentProcessed { _ in }) }
-                    read()
-                case .failed, .waiting: finish(nil, "connection \(state)")
-                default: break
-                }
-            }
-            connection.start(queue: queue)
-        }
-    }
-
     /// The answer as text, or why there is none.
     private func text(_ reply: Reply) -> String {
         guard let data = reply.data, !data.isEmpty else { return "no answer, \(reply.why)" }
@@ -296,5 +251,68 @@ final class ConfigPageServerTests: XCTestCase {
         addr.sin6_port = port.bigEndian
         addr.sin6_addr = in6addr_loopback
         return withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) == 0 } }
+    }
+}
+
+/// What the server sent before it closed (nil when the connection failed), and how it ended, so a
+/// failed assertion says why nothing came (#131).
+private struct Reply {
+    var data: Data?
+    var why: String
+}
+
+/// Sends `bytes` and reads until the server closes. Outside the test class, so a call from it sends
+/// nothing main-actor-isolated to another thread.
+private func exchange(_ bytes: Data, port: UInt16, host: NWEndpoint.Host = "127.0.0.1") async -> Reply {
+    await withCheckedContinuation { done in
+        RawClient(host: host, port: port, done: done).run(sending: bytes)
+    }
+}
+
+/// One raw TCP exchange. Every callback runs on its own serial queue, and nothing else touches
+/// `received` or `finished`, which is what makes the unchecked Sendable safe.
+private final class RawClient: @unchecked Sendable {
+    private let connection: NWConnection
+    private let queue = DispatchQueue(label: "test.client")
+    private let done: CheckedContinuation<Reply, Never>
+    private var received = Data()
+    private var finished = false
+
+    init(host: NWEndpoint.Host, port: UInt16, done: CheckedContinuation<Reply, Never>) {
+        connection = NWConnection(host: host, port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+        self.done = done
+    }
+
+    func run(sending bytes: Data) {
+        connection.stateUpdateHandler = { [self] state in
+            switch state {
+            case .ready:
+                if !bytes.isEmpty { connection.send(content: bytes, completion: .contentProcessed { _ in }) }
+                read()
+            case .failed, .waiting: finish(nil, "connection \(state)")
+            default: break
+            }
+        }
+        connection.start(queue: queue)
+    }
+
+    private func finish(_ result: Data?, _ why: String) {
+        guard !finished else { return }
+        finished = true
+        connection.cancel()
+        done.resume(returning: Reply(data: result, why: why))
+    }
+
+    private func read() {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [self] data, _, isComplete, error in
+            if let data { received.append(data) }
+            if isComplete {
+                finish(received, "closed by the server")
+            } else if let error {
+                finish(received.isEmpty ? nil : received, "receive failed: \(error)")
+            } else {
+                read()
+            }
+        }
     }
 }

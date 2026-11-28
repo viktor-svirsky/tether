@@ -8,16 +8,16 @@ final class LocalNetworkIntroTests: XCTestCase {
     private var defaults: UserDefaults!
     private var checks = 0
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         UserDefaults.standard.removePersistentDomain(forName: "LocalNetworkIntroTests")
         defaults = UserDefaults(suiteName: "LocalNetworkIntroTests")
         checks = 0
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
         UserDefaults.standard.removePersistentDomain(forName: "LocalNetworkIntroTests")
-        super.tearDown()
+        try await super.tearDown()
     }
 
     private func intro() -> LocalNetworkIntro {

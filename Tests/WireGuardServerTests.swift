@@ -33,6 +33,7 @@ final class WireGuardServerTests: XCTestCase {
         return UInt16(bigEndian: a.sin_port)
     }
 
+    @discardableResult
     private func start(_ setup: WireGuardSetup = .new()) throws -> UInt16 {
         let port = freePort()
         try server.start(hosts: ["127.0.0.1"], setup: setup, port: port)
