@@ -613,10 +613,11 @@ final class HotspotSession {
     }
 
     /// Every saved device for List Tether Devices (#310), connected by the server's latest read,
-    /// like `shortcutState`, so a launch in the background for the action says it right too.
-    func shortcutDevices() -> [ShortcutReply.Device] {
-        var connected = wireGuardConnected
-        if running, server.running { connected = unpaused(server.snapshot().connected) }
+    /// so a launch in the background for the action says it right too, and none while not sharing.
+    /// Nil while the saved setup can't be read, before the first unlock after a restart, say.
+    func shortcutDevices() -> [ShortcutReply.Device]? {
+        guard devices.loaded else { return nil }
+        let connected = running && server.running ? unpaused(server.snapshot().connected) : []
         return devices.setup.peers.map {
             ShortcutReply.Device(id: $0.id, name: $0.name, status: DeviceStatus($0, connected: connected).label(now: now(), calendar: calendar))
         }
@@ -626,6 +627,7 @@ final class HotspotSession {
     /// paused takes the new length, whatever paused it: one at its limit is paused at it again at the
     /// end, see `checkLimits`. `name` is the shortcut's, for a device removed since it was picked.
     func shortcutPause(_ id: WireGuardSetup.Peer.ID, named name: String, for length: WireGuardSetup.PauseLength) -> String {
+        guard devices.loaded else { return ShortcutReply.unreadable }
         guard let peer = devices.setup.peers.first(where: { $0.id == id }) else { return ShortcutReply.gone(name) }
         let pause = length.pause(from: now(), calendar: calendar)
         guard self.pause(id, pause, problem: "The device couldn't be paused.") else { return ShortcutReply.notSaved }
@@ -635,6 +637,7 @@ final class HotspotSession {
 
     /// Resume Tether Device (#310): what Resume on its screen does, and what to say.
     func shortcutResume(_ id: WireGuardSetup.Peer.ID, named name: String) -> String {
+        guard devices.loaded else { return ShortcutReply.unreadable }
         guard let peer = devices.setup.peers.first(where: { $0.id == id }) else { return ShortcutReply.gone(name) }
         guard peer.paused != nil else { return ShortcutReply.notPaused(peer.name) }
         resumeWireGuardDevice(id)
