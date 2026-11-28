@@ -11,7 +11,9 @@ final class DemoScenarioTests: XCTestCase {
     /// The list shows both states: the iPad connected, the Windows PC not.
     private let iPadConnected: Set<DemoScenario> = [.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying,
                                                     .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .nameNotAnswered, .staleConfig,
-                                                    .notUsingTether, .vpnIPv4Only, .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking]
+                                                    .notUsingTether, .vpnIPv4Only, .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking,
+                                                    .vpnBlocked, .stoppedIdle, .stoppedBattery, .manyWarnings, .addDeviceProxyOff,
+                                                    .askNotifications, .replaceDevice]
     private let noSpeed: Set<DemoScenario> = [.waiting, .wireGuardLockedWaiting, .localNetworkIntro, .noDevices, .wireGuardUnsaved,
                                               .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6, .addDeviceConnects]
 
@@ -33,7 +35,8 @@ final class DemoScenarioTests: XCTestCase {
     func testTheIPadIsConnectedWhereTheListShowsBothStates() {
         for scenario in DemoScenario.allCases {
             let session = DemoState(scenario).makeSession()
-            XCTAssertEqual(session.wireGuardConnected, iPadConnected.contains(scenario) ? ["10.7.0.2"] : [], "\(scenario)")
+            let connected: Set<String> = scenario == .limits ? ["10.7.0.2", "10.7.0.4"] : iPadConnected.contains(scenario) ? ["10.7.0.2"] : []
+            XCTAssertEqual(session.wireGuardConnected, connected, "\(scenario)")
             if iPadConnected.contains(scenario) {
                 XCTAssertEqual(session.wireGuardPeers.first { $0.address == "10.7.0.2" }?.name, "iPad", "\(scenario)")
             }
@@ -83,16 +86,76 @@ final class DemoScenarioTests: XCTestCase {
         XCTAssertEqual(session.wireGuardPeers.first { $0.id == ipad.id }?.name, "iPad")
     }
 
-    func testOnlyTheStaleConfigDemoShowsOne() {
+    func testOnlyTheStaleConfigDemosShowOne() {
         for scenario in DemoScenario.allCases {
-            XCTAssertEqual(DemoState(scenario).makeSession().showsStaleConfig, scenario == .staleConfig, "\(scenario)")
+            XCTAssertEqual(DemoState(scenario).makeSession().showsStaleConfig, [.staleConfig, .manyWarnings].contains(scenario), "\(scenario)")
         }
     }
 
-    func testTheOldAddressDemoNeedsTheWindowsPCAddedAgain() throws {
-        let session = DemoState(.oldAddress).makeSession()
+    func testTheOldAddressDemosNeedTheWindowsPCGivenANewConfig() throws {
+        for scenario in [DemoScenario.oldAddress, .replaceDevice] {
+            let session = DemoState(scenario).makeSession()
+            let pc = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "Windows PC" })
+            XCTAssertEqual(session.newConfig(pc), .oldAddress, "\(scenario)")
+        }
+    }
+
+    // MARK: The 1.14 UX demos (#349)
+
+    /// Only `vpnBlocked` has Only share through a VPN on, and it doesn't leak into the next demo.
+    func testOnlyTheVPNBlockedDemoKeepsTheDevicesOut() {
+        for scenario in DemoScenario.allCases {
+            XCTAssertEqual(DemoState(scenario).makeSession().blockedWithoutVPN, scenario == .vpnBlocked, "\(scenario)")
+        }
+    }
+
+    /// The stopped demos have a last stop for Home's note, 4:00 PM on the demo's day, and the others none.
+    func testTheStoppedDemosHaveTheirLastStop() {
+        let at = DemoScenario.now.addingTimeInterval(-2 * 3600)
+        for scenario in DemoScenario.allCases {
+            let expected: LastStop? = switch scenario {
+            case .stoppedIdle, .manyWarnings: LastStop(at: at, reason: .idle(.thirtyMinutes))
+            case .stoppedBattery: LastStop(at: at, reason: .lowBattery(.twenty))
+            default: nil
+            }
+            let session = DemoState(scenario).makeSession()
+            XCTAssertEqual(session.lastStop, expected, "\(scenario)")
+            XCTAssertNil(session.idleStopped, "\(scenario): sharing again since")
+        }
+    }
+
+    /// `limits`: the iPad near its limit and connected, the Windows PC paused at its, the Pixel resumed over its.
+    func testTheLimitsDemoHasOneNearOneAtAndOneOver() throws {
+        let session = DemoState(.limits).makeSession()
+        let ipad = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "iPad" })
         let pc = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "Windows PC" })
-        XCTAssertEqual(session.newConfig(pc), .oldAddress)
+        let pixel = try XCTUnwrap(session.wireGuardPeers.first { $0.name == "Pixel" })
+        XCTAssertNil(ipad.paused)
+        XCTAssertEqual(session.limitStanding(of: ipad.id), .near)
+        XCTAssertEqual(pc.paused, .atLimit)
+        XCTAssertNil(pixel.paused)
+        XCTAssertEqual(session.limitStanding(of: pixel.id), .over)
+        XCTAssertTrue(session.overLimit(pixel.id))
+        XCTAssertEqual(session.shortcutDevices()?.map(\.status),
+                       ["Connected, near its limit", "Paused at its limit", "Connected, over its limit"])
+    }
+
+    /// `manyWarnings`: the battery at the stop level, a stale config and a last stop at once.
+    func testTheManyWarningsDemoHasEveryWarning() {
+        let session = DemoState(.manyWarnings).makeSession()
+        XCTAssertEqual(session.belowBatteryStop, BelowBatteryStop(percent: 15, level: .twenty))
+        XCTAssertTrue(session.sharing, "on screen it doesn't stop")
+        XCTAssertTrue(session.showsStaleConfig)
+        XCTAssertNotNil(session.lastStop)
+        XCTAssertNotNil(DemoState(.manyWarnings).expires)
+    }
+
+    func testTheProxyOffDemoHasNoProxyAndOnlyAskNotificationsOffersThem() {
+        XCTAssertNil(DemoState(.addDeviceProxyOff).makeSession().proxy)
+        XCTAssertEqual(ProxyStatus.blocked(DemoState(.addDeviceProxyOff).makeSession().proxy), .off)
+        for scenario in DemoScenario.allCases {
+            XCTAssertEqual(DemoState(scenario).offersNotifications, scenario == .askNotifications, "\(scenario)")
+        }
     }
 
     /// The Windows PC's config uses the iPhone's name, which the demo never answers (#65).

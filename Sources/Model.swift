@@ -200,12 +200,16 @@ final class Model: ObservableObject {
     private var demo: DemoState?
     /// The `notificationsScreen` demo opens on the Settings sheet.
     var opensSettings: Bool { demo?.scenario == .notificationsScreen }
+    /// The `replaceDevice` demo opens Add a device to give the Windows PC a new config (M1).
+    var addDeviceReplaces: WireGuardSetup.Peer.ID? {
+        demo?.scenario == .replaceDevice ? wireGuardPeers.first { $0.name == "Windows PC" }?.id : nil
+    }
     /// Some demos open on the Add a device sheet, past its first question.
     var opensAddDevice: Bool { addDeviceOpensOn != nil }
     var addDeviceOpensOn: AddDeviceWay? {
         switch demo?.scenario {
-        case .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved: .wireGuard
-        case .addDeviceProxy, .addDeviceProxyWorking: .proxy
+        case .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .replaceDevice: .wireGuard
+        case .addDeviceProxy, .addDeviceProxyWorking, .addDeviceProxyOff: .proxy
         default: nil
         }
     }
@@ -224,6 +228,7 @@ final class Model: ObservableObject {
     }
     #else
     var opensSettings: Bool { false }
+    var addDeviceReplaces: WireGuardSetup.Peer.ID? { nil }
     var opensAddDevice: Bool { false }
     var addDeviceOpensOn: AddDeviceWay? { nil }
     var addDeviceFollows: WireGuardSetup.Peer.ID? { nil }
@@ -260,6 +265,7 @@ final class Model: ObservableObject {
             showsLocalNetworkIntro = demo.showsLocalNetworkIntro
             staleConfigShown = session.showsStaleConfig
             if demo.scenario == .notifying { postDemoNoticeInBackground() }
+            offersNotifications = demo.offersNotifications
             return // no watcher, sampler or scene observers
         }
         #endif

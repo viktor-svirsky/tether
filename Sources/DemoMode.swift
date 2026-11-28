@@ -83,6 +83,25 @@ enum DemoScenario: String, CaseIterable {
     /// Like `noDevices`: a moment after Add a device lets its code in, a device that scanned it
     /// connects from the hotspot, so a test walks the sheet from the code to connected (#315).
     case addDeviceConnects
+    /// Like `sharing`, with Only share through a VPN on and no VPN: the devices are kept out (H1).
+    case vpnBlocked
+    /// Like `sharing`, after sharing stopped at 4:00 PM today with no device connected for 30
+    /// minutes: Home's note says so until Got it (H3).
+    case stoppedIdle
+    /// Like `stoppedIdle`, stopped at 20% battery.
+    case stoppedBattery
+    /// Three devices against their limits (M2): the iPad near its 10 GB, connected, the Windows PC
+    /// paused at its 5 GB, and a Pixel resumed over its 1 GB, connected.
+    case limits
+    /// Like `sharing`, with every warning and a note on Home at once (M13): the battery at the stop
+    /// level, a stale config, two days before this build stops opening, and the last stop.
+    case manyWarnings
+    /// Like `sharing`, opened on Add a device's proxy path with the proxy never turned on (H5).
+    case addDeviceProxyOff
+    /// Like `sharing`, with Home's note that offers notifications (M7).
+    case askNotifications
+    /// Like `oldAddress`, opened on Add a device to give the Windows PC a new config (M1).
+    case replaceDevice
 
     static let argument = "-TetherDemo"
 
@@ -159,7 +178,8 @@ struct DemoState {
         let secrets = InMemorySecrets()
         switch scenario {
         case .sharing, .wireGuardLocked, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .localNetworkDenied, .oldAddress, .nameNotAnswered, .staleConfig, .paused, .notUsingTether, .vpnIPv4Only,
-             .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking:
+             .proxy, .proxyIPv6, .addDeviceProxy, .addDeviceProxyWorking,
+             .vpnBlocked, .stoppedIdle, .stoppedBattery, .limits, .manyWarnings, .addDeviceProxyOff, .askNotifications, .replaceDevice:
             var setup = WireGuardSetup.new()
             let ipad = setup.addPeer(name: "iPad")
             if scenario == .paused, let ipad { setup.pausePeer(ipad.id, .byYou) }
@@ -167,7 +187,11 @@ struct DemoState {
             if let ipad { setup.limitPeer(ipad.id, 10_000_000_000) }
             // A documentation address. The demo listens on 172.20.10.1, so it's an old one.
             let name = scenario == .nameNotAnswered ? HostName.name(for: setup.serverPublicKey) : nil
-            _ = setup.addPeer(name: "Windows PC", host: scenario == .oldAddress ? "2001:db8::1" : name)
+            let pc = setup.addPeer(name: "Windows PC", host: [.oldAddress, .replaceDevice].contains(scenario) ? "2001:db8::1" : name)
+            if scenario == .limits {
+                if let pc { setup.limitPeer(pc.id, 5_000_000_000) }
+                if let pixel = setup.addPeer(name: "Pixel") { setup.limitPeer(pixel.id, 1_000_000_000) }
+            }
             if Self.proxyOn.contains(scenario) { setup.turnProxy(on: true) }
             secrets.data = try? JSONEncoder().encode(setup) // no ready device yet: loading makes and saves one
         case .wireGuardNeedsReset:
@@ -210,9 +234,11 @@ struct DemoState {
     }
 
     /// The iPad's tunnel is up, the Windows PC's isn't, so the list shows both states. In `paused` the
-    /// session shows the iPad paused instead.
+    /// session shows the iPad paused instead. In `limits` the Pixel's is up too.
     var connected: Set<String> {
-        ([.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .nameNotAnswered, .staleConfig, .paused, .notUsingTether, .vpnIPv4Only] + Self.proxyOn).contains(scenario) ? ["10.7.0.2"] : []
+        if scenario == .limits { return ["10.7.0.2", "10.7.0.4"] }
+        return ([.sharing, .expiring, .qrCodeUnsaved, .notificationsOff, .notifying, .notificationsScreen, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .oldAddress, .nameNotAnswered, .staleConfig, .paused, .notUsingTether, .vpnIPv4Only,
+                 .vpnBlocked, .stoppedIdle, .stoppedBattery, .manyWarnings, .addDeviceProxyOff, .askNotifications, .replaceDevice] + Self.proxyOn).contains(scenario) ? ["10.7.0.2"] : []
     }
 
     /// The demos with the proxy on.
@@ -221,8 +247,28 @@ struct DemoState {
     /// A carrier that gives the iPhone IPv6 only: Tether listens on a documentation IPv6 address too.
     private var ipv6Only: Bool { [.addDeviceComputerIPv6, .proxyIPv6, .nameNotAnswered].contains(scenario) }
 
-    /// When this build stops opening: two days on for `expiring`, never for the others.
-    var expires: Date? { scenario == .expiring ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil }
+    /// When this build stops opening: two days on for `expiring` and `manyWarnings`, never for the others.
+    var expires: Date? { [.expiring, .manyWarnings].contains(scenario) ? DemoScenario.now.addingTimeInterval(2 * 86_400) : nil }
+
+    /// Home offers notifications at launch (M7).
+    var offersNotifications: Bool { scenario == .askNotifications }
+
+    /// The stop Home's note tells of (H3): 4:00 PM on the demo's day.
+    var lastStop: LastStop? {
+        let at = DemoScenario.now.addingTimeInterval(-2 * 3600)
+        return switch scenario {
+        case .stoppedIdle, .manyWarnings: LastStop(at: at, reason: .idle(.thirtyMinutes))
+        case .stoppedBattery: LastStop(at: at, reason: .lowBattery(.twenty))
+        default: nil
+        }
+    }
+
+    /// The settings a scenario starts with, in the demo's own suite: Only share through a VPN, and
+    /// the last stop. Set or cleared for every scenario, so one doesn't leak into the next in a test run.
+    private func seedSettings(_ settings: UserDefaults) {
+        settings.set(scenario == .vpnBlocked, forKey: HotspotSession.onlyThroughVPNKey)
+        if let lastStop { lastStop.save(to: settings) } else { LastStop.clear(in: settings) }
+    }
 
     var localNetworkDenied: Bool { scenario == .localNetworkDenied }
 
@@ -237,11 +283,17 @@ struct DemoState {
         // As long as a carrier's address gets, in the documentation range, so the screen is tried at full length.
         let ipv6 = "2001:db8:9e74:4eaa:459:5cd0:7ec7:f792"
         let address = running ? (ipv6Only ? ipv6 : Hotspot.host) : nil
+        let settings = UserDefaults(suiteName: Self.settingsSuite)!
+        seedSettings(settings)
+        // `manyWarnings`: 15%, not charging, under the 20% stop level.
+        let lowBattery = scenario == .manyWarnings
         let session = HotspotSession(devices: WireGuardDevices(secrets: secrets()), server: server, keepAlive: FakeSound(),
                                      page: FakePage(), sceneActive: true, hotspotAddress: { address },
+                                     lowBatteryStop: { lowBattery ? .twenty : .never },
+                                     battery: { _ in lowBattery ? LowBatteryStop.Battery(percent: 15, charging: false) : .unknown },
                                      dns: { DNSChoice.upstream(in: UserDefaults(suiteName: Self.settingsSuite)!) },
                                      blockLocal: { !LocalNetworks.allowed(in: UserDefaults(suiteName: Self.settingsSuite)!) },
-                                     now: { clock.now }, resetDay: { ResetDay.saved(in: UserDefaults(suiteName: Self.settingsSuite)!) },
+                                     noteDefaults: settings, now: { clock.now }, resetDay: { ResetDay.saved(in: UserDefaults(suiteName: Self.settingsSuite)!) },
                                      // A demo never has a VPN, so the switch in Settings keeps its devices out.
                                      internetVPN: { [scenario] in Interfaces.Reading(onlyFamily: scenario == .vpnIPv4Only ? .ipv4 : nil) },
                                      onlyThroughVPN: { UserDefaults(suiteName: Self.settingsSuite)!.bool(forKey: HotspotSession.onlyThroughVPNKey) },
@@ -255,7 +307,13 @@ struct DemoState {
         // The Windows PC last connected two hours ago, so its screen says when.
         server.handshakes = ["10.7.0.3": clock.now.addingTimeInterval(-2 * 3600)]
         if connected.contains("10.7.0.2") { server.handshakes["10.7.0.2"] = clock.now.addingTimeInterval(-30) }
-        if scenario == .staleConfig { server.stale = StaleConfig(kind: .device, at: clock.now) }
+        if [.staleConfig, .manyWarnings].contains(scenario) { server.stale = StaleConfig(kind: .device, at: clock.now) }
+        // `limits`: the iPad at 95% of its 10 GB, the Windows PC at its 5 GB, the Pixel over its 1 GB.
+        if scenario == .limits {
+            server.peerTraffic = ["10.7.0.2": TrafficTotals(bytesUp: 500_000_000, bytesDown: 9_000_000_000),
+                                  "10.7.0.3": TrafficTotals(bytesUp: 1_000_000_000, bytesDown: 4_000_000_000),
+                                  "10.7.0.4": TrafficTotals(bytesUp: 100_000_000, bytesDown: 1_400_000_000)]
+        }
         // The Diagnostics screen's counters: the iPad's traffic, and one connection the iPhone couldn't make.
         if connected.contains("10.7.0.2") {
             server.diagnostics = ServerDiagnostics(udpIn: 1_250, udpFrom: "172.20.10.2:52345",
@@ -279,6 +337,12 @@ struct DemoState {
             server.totals += TrafficTotals(bytesUp: UInt64(upSpeed * upFactor / 8), bytesDown: UInt64(downSpeed * downFactor / 8))
             session.sampleTraffic()
         }
+        // The first read paused the Windows PC and the Pixel at their limits. The Pixel is resumed over it.
+        if scenario == .limits, let pixel = session.wireGuardPeers.first(where: { $0.name == "Pixel" }) {
+            session.resumeWireGuardDevice(pixel.id)
+        }
+        // A watcher round reads the battery, which only it does.
+        if scenario == .manyWarnings { session.watch() }
         if scenario == .addDeviceProxyWorking { loadAPage(through: server, session) }
         if scenario == .addDeviceConnects { connectTheNextDevice(through: server, session) }
         if scenario == .notUsingTether {
