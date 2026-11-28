@@ -60,6 +60,38 @@ final class InterfacesTests: XCTestCase {
         XCTAssertNil(Interfaces.internetVPN(nat64: { nil }, addresses: lines, route: v4Only), "still no VPN: blocking stays as it was")
     }
 
+    /// No route for a family the iPhone has, on cellular or Wi-Fi, is a route that failed for a
+    /// moment, not an answer (#330): it counts against a VPN, so the devices aren't let through while
+    /// that family goes around the tunnel. No route for a family it doesn't have is still an answer.
+    func testNoRouteForAFamilyTheIPhoneHasIsNotAVPN() {
+        let dualStack = ["pdp_ip0: 10.180.2.3", "pdp_ip0: 2607:fb90:1234::5", "pdp_ip0: fe80::1%pdp_ip0", "utun5: 10.2.0.2"]
+        let v6Fails = { (host: String) -> Interfaces.Route in host.contains(":") ? .none : .local("10.2.0.2") }
+        XCTAssertNil(Interfaces.internetVPN(nat64: { nil }, addresses: dualStack, route: v6Fails), "IPv6 failed for a moment")
+
+        let ipv4Only = ["pdp_ip0: 10.180.2.3", "pdp_ip0: fe80::1%pdp_ip0", "utun5: 10.2.0.2"]
+        XCTAssertEqual(Interfaces.internetVPN(nat64: { nil }, addresses: ipv4Only, route: v6Fails), "utun5",
+                       "only a link-local IPv6 address: the iPhone has no IPv6 to leave by")
+
+        let ipv6OnlyWithCLAT = ["pdp_ip0: 2607:fb90:1234::5", "pdp_ip0: 192.0.0.4", "utun5: fd00::2"]
+        let v4Fails = { (host: String) -> Interfaces.Route in host.contains(":") ? .local("fd00::2") : .none }
+        XCTAssertEqual(Interfaces.internetVPN(nat64: { nil }, addresses: ipv6OnlyWithCLAT, route: v4Fails), "utun5",
+                       "the CLAT address isn't IPv4 of the carrier's own")
+
+        let wifi = ["en0: 192.168.1.184", "pdp_ip0: 2607:fb90:1234::5", "utun5: fd00::2"]
+        XCTAssertNil(Interfaces.internetVPN(nat64: { nil }, addresses: wifi, route: v4Fails), "IPv4 on Wi-Fi failed for a moment")
+
+        let tunnelOnly = ["pdp_ip0: 2607:fb90:1234::5", "utun5: 10.2.0.2", "utun5: fd00::2", "bridge100: 172.20.10.1"]
+        XCTAssertEqual(Interfaces.internetVPN(nat64: { nil }, addresses: tunnelOnly, route: v4Fails), "utun5",
+                       "IPv4 only on the tunnel and the hotspot: the carrier gives none")
+
+        // IPv4 on another pdp_ip counts too, and fails closed: on dual SIM the data line isn't always
+        // pdp_ip0. On an IPv6-only carrier whose VoLTE has IPv4 on pdp_ip1 that keeps the devices out
+        // while a route can't be read, a pause that's wrong, never a family around the tunnel.
+        let dataOnPdpIP1 = ["pdp_ip0: 2607:fb90:1234::5", "pdp_ip1: 10.170.0.9", "utun5: fd00::2"]
+        XCTAssertNil(Interfaces.internetVPN(nat64: { nil }, addresses: dataOnPdpIP1, route: v4Fails),
+                     "IPv4 on pdp_ip1 failed for a moment")
+    }
+
     func testWhatTheScreensSay() {
         XCTAssertEqual(VPNText.now(vpn: true, onlyFamily: nil), "Through a VPN")
         XCTAssertEqual(VPNText.now(vpn: false, onlyFamily: nil), "No VPN")

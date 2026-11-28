@@ -7,8 +7,8 @@ enum Interfaces {
     /// on the hotspot takes no IPv4 (it asks for IPv6 only and makes up 192.0.0.2 for itself) and
     /// can't reach 172.20.10.1. Then it's the iPhone's IPv6 address on the same bridge, and the session
     /// listens on 172.20.10.1 too, for a Windows PC, which does take IPv4 (#98). A CLAT's address in
-    /// 192.0.0.0/29 is no IPv4 from the carrier, and nor is IPv4 on another cellular interface than
-    /// pdp_ip0, the internet's: VoLTE often has its own, with IPv4 on an IPv6-only carrier.
+    /// 192.0.0.0/29 is no IPv4 from the carrier. Only pdp_ip0 is read here, which is usually the data
+    /// line (iOS doesn't promise it): another pdp_ip is often VoLTE's, with IPv4 on an IPv6-only carrier.
     /// The bridge may have more than one IPv6 address, some of them temporary ones that come and go.
     /// `current` is kept while the bridge has it, since a new address restarts the server and makes
     /// the devices' configs point at the wrong place. `HotspotAddressKeeper` keeps it across launches.
@@ -32,7 +32,8 @@ enum Interfaces {
     /// The carrier gives this iPhone IPv6 and no IPv4, so a Mac, an iPhone or an iPad on the hotspot
     /// will take no IPv4 either. Unlike `hotspotAddress`, this is known before a device joins and the
     /// bridge appears.
-    /// It takes pdp_ip0 with IPv6 to say so: no cellular at all, or Wi-Fi only, isn't IPv6 only.
+    /// It takes pdp_ip0, usually the data line, with IPv6 to say so: no cellular at all, or Wi-Fi
+    /// only, isn't IPv6 only.
     static func carrierIPv6Only(in interfaces: [String]) -> Bool {
         let lines = parse(interfaces)
         let ipv6 = lines.contains { $0.name == "pdp_ip0" && $0.address.contains(":") && !$0.address.contains("%") }
@@ -50,7 +51,7 @@ enum Interfaces {
         lines.contains { $0.name == "pdp_ip0" && !$0.address.contains(":") && !isCLAT($0.address) }
     }
 
-    /// What pdp_ip0, the cellular data's interface, has, for the log: "pdp_ip0: IPv6", say, or
+    /// What pdp_ip0, usually the cellular data's interface, has, for the log: "pdp_ip0: IPv6", say, or
     /// "pdp_ip0: no address". Never the address itself.
     static func pdpIp0(in interfaces: [String]) -> String {
         let lines = parse(interfaces).filter { $0.name == "pdp_ip0" && !$0.address.contains("%") }
@@ -95,16 +96,40 @@ enum Interfaces {
     }
 
     static func reading(nat64: () -> String?, addresses: [String], route: (String) -> Route) -> Reading {
-        var routes = internetProbes.map(route)
+        // No route for a family the iPhone has, on cellular or Wi-Fi, is a route that failed for a
+        // moment, not an answer, so it's unknown and counts against a VPN (#330). Left as "none", the
+        // other family would decide, and the devices would get through while this one goes around
+        // the tunnel until the next check.
+        let probe = { (host: String) -> Route in
+            let found = route(host)
+            return found == .none && hasOwn(ipv6: host.contains(":"), in: addresses) ? .unknown : found
+        }
+        var routes = internetProbes.map(probe)
         // With no IPv4 route, a device's IPv4 traffic leaves through the carrier's NAT64 (nat64.go),
         // at the carrier's own prefix when it has one. A VPN that carries only 2000::/3 carries a
         // prefix inside it and leaves the well-known one out, so the probe is in the prefix the
         // server uses. While the server still looks it up, nothing is known.
         if !routes.contains(where: { $0.isIPv4 }) {
-            routes.append(nat64Probe(prefix: nat64()).map(route) ?? .unknown)
+            routes.append(nat64Probe(prefix: nat64()).map(probe) ?? .unknown)
         }
         if let vpn = vpn(in: addresses, routes: routes) { return Reading(vpn: vpn) }
         return Reading(onlyFamily: onlyFamily(in: addresses, routes: routes))
+    }
+
+    /// The iPhone has an address of that family to reach the internet by, on cellular (pdp_ip) or
+    /// Wi-Fi (en): IPv6 in 2000::/3, IPv4 that isn't link-local or the CLAT's (192.0.0.0/29, which
+    /// an IPv6-only carrier gives for its own translation). Tunnels and the hotspot don't count. Every
+    /// pdp_ip, VoLTE's too: on dual SIM the data line isn't always pdp_ip0, and a wrong pause beats a
+    /// family going around the tunnel.
+    static func hasOwn(ipv6: Bool, in interfaces: [String]) -> Bool {
+        parse(interfaces).contains { line in
+            guard line.name.hasPrefix("pdp_ip") || line.name.hasPrefix("en") else { return false }
+            let address = line.address
+            if ipv6 {
+                return address.contains(":") && !address.contains("%") && (address.hasPrefix("2") || address.hasPrefix("3"))
+            }
+            return !address.contains(":") && !address.hasPrefix("169.254.") && !isCLAT(address)
+        }
     }
 
     /// A tunnel carries every probe of one family, and every probe of the other leaves on an address
@@ -153,7 +178,8 @@ enum Interfaces {
     enum Route: Equatable {
         /// From this local address.
         case local(String)
-        /// Nowhere: the iPhone has no route there, like IPv4 on an IPv6-only carrier without CLAT.
+        /// Nowhere: the iPhone has no route there, like IPv4 on an IPv6-only carrier without CLAT. For
+        /// a family the iPhone has, `reading` counts it as unknown.
         case none
         /// The question itself failed (no socket left, say), so nothing is known.
         case unknown
