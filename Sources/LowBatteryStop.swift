@@ -5,7 +5,7 @@ import Foundation
 /// while it isn't charging, Tether stops sharing in the background, like the idle stop (`IdleStop`),
 /// and lets iOS suspend it until it's opened again. Foundation only, so `swift test` covers it.
 enum LowBatteryStop {
-    /// The setting in Settings > Sharing.
+    /// The setting in Settings > When to stop.
     enum Level: Int, CaseIterable {
         case never = 0
         case ten = 10

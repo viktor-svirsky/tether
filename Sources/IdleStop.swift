@@ -6,7 +6,7 @@ import Foundation
 /// screen the person sees nothing is shared, and the time runs from leaving the screen, like the
 /// keep-alive's 10 minutes. Foundation only, with the clock passed in, so `swift test` covers it.
 struct IdleStop {
-    /// The setting in Settings > Sharing.
+    /// The setting in Settings > When to stop.
     enum After: Int, CaseIterable {
         case never = 0
         case tenMinutes = 600

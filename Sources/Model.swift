@@ -8,10 +8,11 @@
 //   Traffic.swift       the server's byte counters, Foundation only
 //   Format.swift        bytes and speeds as text
 //   MainView.swift      MainView (the main screen), StatusCard, and the speeds
-//   HomeStatus.swift    what the status card says, and the warnings and notes under it, Foundation only
+//   HomeStatus.swift    what the status card says, and the warnings and notes under it, Foundation only;
+//     HomeNotes.swift shows those warnings and notes
 //   LastStop.swift      the last stop, kept for a note on the main screen, Foundation only
-//   DevicesView.swift   a device's own screen
-//   HomeSections.swift  Add a device and why WireGuard isn't running, on the main screen
+//   DevicesView.swift   a device's own screen; DeviceScreenParts.swift has what it shares with the proxy's
+//   HomeSections.swift  Add a device on the main screen, and the status card's way out of a WireGuard problem
 //   ProxyView.swift     the HTTP proxy's own screen (#78)
 //   AddDeviceSheet.swift the steps to add a device, with the QR code for it
 //   AddDeviceProgress.swift  how far adding a device has got, for the sheet, Foundation only
@@ -25,7 +26,8 @@
 //   LocalNetworkIntro.swift  no check before the first launch's screen about it, Foundation only;
 //     LocalNetworkIntroView.swift is that screen
 //   Notices.swift       what to tell in a notification and when, and asking for permission, Foundation only
-//   SettingsView.swift  the Settings sheet behind the gear, and the system's notification center
+//   SettingsView.swift  the Settings sheet behind the gear, and the system's notification center;
+//     NotificationsView.swift is its Notifications screen
 //   LogFile.swift       the log Settings shares, as a file
 //   CopiedToast.swift   "Copied" for a moment after a copy, on every screen that copies
 //   DebugLog.swift      the log Settings shares, kept in a file, Foundation only
@@ -72,7 +74,6 @@ final class Model: ObservableObject {
     var wireGuardDeviceProblem: HotspotSession.DeviceProblem? { session.wireGuardDeviceProblem }
     var wireGuardProblem: WireGuardProblem? { session.wireGuardProblem }
     var sharing: Bool { session.sharing }
-    var wireGuardNeedsReset: Bool { session.wireGuardNeedsReset }
     /// The HTTP proxy (#78), see `HotspotSession.proxy`. Paused, limited and counted by its id, like a device.
     var proxy: WireGuardSetup.Proxy? { session.proxy }
     var proxyStats: ProxyStats { session.proxyStats }
@@ -715,7 +716,7 @@ final class Model: ObservableObject {
     /// "Last month", or "Oct 15 to Nov 14" with another reset day: see `Format.lastPeriod`.
     var lastPeriodLabel: String { Format.lastPeriod(session.lastPeriod, calendar: .current) }
 
-    /// Settings > Sharing changed the reset day, see `HotspotSession.resetDayChanged`.
+    /// Settings > Data changed the reset day, see `HotspotSession.resetDayChanged`.
     func resetDayChanged() { session.resetDayChanged() }
 
     /// See `HotspotSession.needsNewConfig`.

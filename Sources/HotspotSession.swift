@@ -147,9 +147,9 @@ final class HotspotSession {
     private let page: ConfigPageServing
     private let hotspotAddress: () -> String?
     private let carrierIPv6Only: () -> Bool
-    /// The setting in Settings > Sharing, read each round, so a change counts at once.
+    /// The setting in Settings > When to stop, read each round, so a change counts at once.
     private let idleStopAfter: () -> IdleStop.After
-    /// Settings > Sharing > Stop sharing at low battery, read each round, like `idleStopAfter`.
+    /// Settings > When to stop > Stop sharing at low battery, read each round, like `idleStopAfter`.
     private let lowBatteryStop: () -> LowBatteryStop.Level
     /// What iOS says about the battery. `true` asks for monitoring, which iOS needs before it says
     /// anything, `false` turns it off again and reads nothing, so Never costs nothing.
