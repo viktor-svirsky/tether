@@ -115,12 +115,13 @@ enum Interfaces {
         return Reading(onlyFamily: onlyFamily(in: addresses, routes: routes))
     }
 
-    /// The iPhone has an address of that family to reach the internet by, on cellular (pdp_ip) or
+    /// The iPhone has an address of that family to reach the internet by, on cellular (pdp_ip0) or
     /// Wi-Fi (en): IPv6 in 2000::/3, IPv4 that isn't link-local or the CLAT's (192.0.0.0/29, which
-    /// an IPv6-only carrier gives for its own translation). Tunnels and the hotspot don't count.
+    /// an IPv6-only carrier gives for its own translation). Tunnels, the hotspot and VoLTE's
+    /// pdp_ip1 (IPv4 on an IPv6-only carrier, not the internet's) don't count.
     static func hasOwn(ipv6: Bool, in interfaces: [String]) -> Bool {
         parse(interfaces).contains { line in
-            guard line.name.hasPrefix("pdp_ip") || line.name.hasPrefix("en") else { return false }
+            guard line.name == "pdp_ip0" || line.name.hasPrefix("en") else { return false }
             let address = line.address
             if ipv6 {
                 return address.contains(":") && !address.contains("%") && (address.hasPrefix("2") || address.hasPrefix("3"))
