@@ -115,9 +115,13 @@ enum SpeedLine {
 
     /// The move from one sample to the next. The new line is drawn once, at its place, and starts
     /// out shifted and scaled so it looks exactly like the old one: `slide` (a fraction of the width)
-    /// to the right, and `stretch` times as tall. Both then ease to 0 and 1. The live dot sits on
-    /// the newest sample and starts `dotRise` (a fraction of the height) above it, where the old one was.
+    /// to the right, and `stretch` times as tall, unless that's past `easedScale`. Both then ease to
+    /// 0 and 1. The live dot sits on the newest sample and starts `dotRise` (a fraction of the
+    /// height) above it, where the old one was.
     struct Step {
+        /// How far the scale may change and still ease, as new top over old.
+        static let easedScale = 0.5 - 1e-9...2 + 1e-9
+
         let frame: Frame
         var slide: CGFloat = 0
         var stretch: CGFloat = 1
@@ -136,8 +140,13 @@ enum SpeedLine {
             let kept = old.shown.filter { $0.at < first.at && end.at.timeIntervalSince($0.at) <= leftEdge + 1.5 }
             frame = Frame(shown: kept + samples, top: top)
             slide = CGFloat(min(gap / SpeedSample.historyDuration, 1))
-            stretch = CGFloat(top / old.top)
-            dotRise = CGFloat(oldEnd.down / old.top - end.down / top)
+            // Scaling the drawn line also scales its stroke and dots, which is fine from half to
+            // double. A bigger change, like idle to a download, steps the scale with the dot instead.
+            let ratio = top / old.top
+            if Self.easedScale.contains(ratio) {
+                stretch = CGFloat(ratio)
+                dotRise = CGFloat(oldEnd.down / old.top - end.down / top)
+            }
         }
     }
 }

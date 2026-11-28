@@ -65,18 +65,19 @@ final class AccessibilityTests: TetherUITestCase {
         add(shot)
     }
 
-    /// The orange card holds a button, so the waiting screen gets its own contrast check.
+    /// The waiting screen has its own texts, the Settings link and the Add a device button, so it
+    /// gets its own audit.
     func testWaitingScreenPassesTheAccessibilityAudit() throws {
         launch(.waiting)
         try audit()
     }
 
-    /// The upload colour is Tether's own, so it gets a contrast check where it shows, in both appearances.
+    /// The speeds are ink and the secondary colour on the card, checked where they show, in both appearances.
     func testTrafficSpeedsPassTheContrastAudit() throws {
         for appearance in [XCUIDevice.Appearance.light, .dark] {
             XCUIDevice.shared.appearance = appearance
             launch(.sharing)
-            reveal(element("traffic.speeds"))
+            reveal(element("traffic.upload"))
             try audit(types: .contrast, only: "traffic.")
             app.terminate()
         }
@@ -86,13 +87,16 @@ final class AccessibilityTests: TetherUITestCase {
     /// they broke over three lines each, which made the row at least three lines tall.
     func testTheSpeedsStackAtTheLargestTextSize() throws {
         launch(.sharing, arguments: largestText)
-        let speeds = reveal(element("traffic.speeds"))
+        let down = reveal(element("traffic.download"))
+        let up = element("traffic.upload")
+        XCTAssertGreaterThanOrEqual(up.frame.minY, down.frame.maxY - 1, "upload under download: \(down.frame), \(up.frame)")
+        // A speed that doesn't fit shrinks rather than break, so each is at most one line tall.
         let line = UIFont.preferredFont(forTextStyle: .title1,
                                         compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge)).lineHeight
-        // A speed that doesn't fit shrinks, down to half, rather than break.
-        XCTAssertGreaterThan(speeds.frame.height, 0.75 * line, "stacked, one line for each speed: \(speeds.frame), line \(line)")
-        XCTAssertLessThan(speeds.frame.height, 2.5 * line, "no speed breaks over lines: \(speeds.frame), line \(line)")
-        XCTAssertLessThanOrEqual(speeds.frame.maxX, app.windows.firstMatch.frame.maxX)
+        for speed in [down, up] {
+            XCTAssertLessThan(speed.frame.height, 1.5 * line, "one line: \(speed.frame), line \(line)")
+            XCTAssertLessThanOrEqual(speed.frame.maxX, app.windows.firstMatch.frame.maxX)
+        }
         try audit(types: [.textClipped], only: "traffic.")
     }
 

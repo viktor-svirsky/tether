@@ -47,11 +47,13 @@ final class DevicesTests: TetherUITestCase {
 
     func testShowsTheCurrentSpeeds() {
         launch(.sharing)
-        XCTAssertEqual(reveal(element("traffic.speeds")).label, "Download 3.2 Mbit/s, upload 400 kbit/s")
+        XCTAssertEqual(reveal(element("traffic.download")).label, "Download 3.2 Mbit/s")
+        XCTAssertEqual(label(of: "traffic.upload"), "Upload 400 kbit/s")
     }
 
     func testIdleHotspotShowsZeroSpeeds() {
         launch(.noDevices)
-        XCTAssertEqual(reveal(element("traffic.speeds")).label, "Download 0 bit/s, upload 0 bit/s")
+        XCTAssertEqual(reveal(element("traffic.download")).label, "Download 0 bit/s")
+        XCTAssertEqual(label(of: "traffic.upload"), "Upload 0 bit/s")
     }
 }

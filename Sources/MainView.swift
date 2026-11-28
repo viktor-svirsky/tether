@@ -9,16 +9,32 @@ struct MainView: View {
     /// The Settings button grows with the text size, so the dots stay inside its tap area.
     @ScaledMetric(relativeTo: .title3) private var settingsSize: CGFloat = 44
 
-    /// A state change on this screen: the status, and a device that comes, goes, connects or pauses.
-    /// The list animates it, so rows and blocks fade in and out and the heights ease instead of jumping.
-    private var change: [Int] {
-        [StatusCard.Phase(model).hashValue] + model.wireGuardPeers.map {
-            var hasher = Hasher()
-            hasher.combine($0.id)
-            hasher.combine(DeviceStatus($0, connected: model.wireGuardConnected).hashKey)
-            return hasher.finalize()
-        }
+    /// A state change on this screen: the status, a warning that comes or goes, and a device or the
+    /// proxy that comes, goes, connects or pauses. The list animates it, so rows and blocks fade in
+    /// and out and the heights ease instead of jumping.
+    private struct Change: Hashable {
+        let phase: StatusCard.Phase
+        let warnings: [Bool]
+        let devices: [Int]
+        let proxy: Int?
     }
+
+    private var change: Change {
+        Change(phase: StatusCard.Phase(model),
+               warnings: [model.expiryWarning != nil, model.wireGuardProblem != nil, model.blockedWithoutVPN,
+                          model.sharing && model.belowBatteryStop != nil, model.staleConfigShown,
+                          model.notUsingTether.isEmpty, model.wireGuardReady != nil],
+               devices: model.wireGuardPeers.map {
+                   var hasher = Hasher()
+                   hasher.combine($0.id)
+                   hasher.combine(DeviceStatus($0, connected: model.wireGuardConnected).hashKey)
+                   return hasher.finalize()
+               },
+               proxy: model.proxyOn ? model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running).look.hashKey } : nil)
+    }
+
+    /// A sheet or the intro covers Home, so its chart needn't move.
+    private var covered: Bool { showSettings || addingDevice || model.showsLocalNetworkIntro }
 
     var body: some View {
         NavigationStack {
@@ -45,7 +61,7 @@ struct MainView: View {
                         .accessibilityIdentifier("settings.open")
                     }
                     // In the same section, so no section gap opens between TETHER and the title.
-                    StatusCard(model: model)
+                    StatusCard(model: model, covered: covered)
                 }
                 .paperRow()
                 .listRowInsets(.vertical, 0)
@@ -89,8 +105,11 @@ struct MainView: View {
                         // Opens Add a device, to set that device up (#109).
                         if !model.notUsingTether.isEmpty {
                             Button { addingDevice = true } label: {
+                                // Underlined, like the app's other links, since it opens a sheet.
                                 Text(Format.notUsingTether(model.notUsingTether))
                                     .font(.subheadline)
+                                    .underline()
+                                    .multilineTextAlignment(.leading)
                                     .foregroundStyle(Theme.ink)
                             }
                             .accessibilityHint("Opens Add a device")
@@ -263,6 +282,10 @@ struct HotspotSettingsLink: View {
 /// a second instead.
 struct SpeedHistoryGraph: View {
     @ObservedObject var history: SpeedHistory
+    /// A sheet covers Home: the line steps instead of moving, as nobody sees it.
+    var covered = false
+    /// Off while another screen is pushed over Home.
+    @State private var onScreen = false
     private var samples: [SpeedSample] { history.samples }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var textSize
@@ -291,7 +314,7 @@ struct SpeedHistoryGraph: View {
             : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
     }
 
-    private var moving: Bool { Self.motionAllowed(reduceMotion: reduceMotion) }
+    private var moving: Bool { Self.motionAllowed(reduceMotion: reduceMotion) && onScreen && !covered }
 
     /// Whether the speeds move between samples: not under Reduce Motion, nor in Low Power Mode,
     /// read at each sample, so turning it on stops the motion at the next second.
@@ -314,13 +337,18 @@ struct SpeedHistoryGraph: View {
                 Text("30 s")
             }
             .monoCaps()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Speed history, last 30 seconds")
         .accessibilityValue(samples.isEmpty ? "Waiting for traffic samples" :
             "Peak download \(Format.speed(samples.map(\.down).max() ?? 0)), peak upload \(Format.speed(samples.map(\.up).max() ?? 0))")
         .accessibilityIdentifier("traffic.history")
-        .onAppear { frame = SpeedLine.Step(from: nil, to: samples).frame }
+        .onAppear {
+            onScreen = true
+            frame = SpeedLine.Step(from: nil, to: samples).frame
+        }
+        .onDisappear { onScreen = false }
         .onChange(of: samples) { _, new in advance(to: new) }
     }
 
@@ -406,12 +434,15 @@ struct SpeedRow: View {
         layout {
             speed("arrow.down", down)
                 .foregroundStyle(Theme.ink)
+                .accessibilityLabel("Download \(Format.speed(down))")
+                .accessibilityIdentifier("traffic.download")
             speed("arrow.up", up)
                 .foregroundStyle(Theme.secondary)
+                .accessibilityLabel("Upload \(Format.speed(up))")
+                .accessibilityIdentifier("traffic.upload")
         }
         .animation(SpeedHistoryGraph.motionAllowed(reduceMotion: reduceMotion) ? .snappy(duration: 0.3) : nil, value: [down, up])
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Download \(Format.speed(down)), upload \(Format.speed(up))")
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("traffic.speeds")
     }
 
@@ -445,6 +476,8 @@ extension Color {
 /// do. Turning off Personal Hotspot is how sharing stops, so there's no switch.
 struct StatusCard: View {
     @ObservedObject var model: Model
+    /// A sheet covers Home, see `SpeedHistoryGraph.covered`.
+    var covered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The board's 52 points, growing with the text and capped so a long title still fits a few lines.
     @ScaledMetric(relativeTo: .largeTitle) private var titleSize: CGFloat = 52
@@ -520,12 +553,13 @@ struct StatusCard: View {
                 switch phase {
                 case .blocked:
                     VStack(alignment: .leading, spacing: 12) {
+                        // Its text and its button: two views, so this stack spaces them.
                         LocalNetworkWarning(id: "localNetwork")
                     }
                 case .sharing:
                     VStack(alignment: .leading, spacing: 14) {
                         SpeedRow(down: model.downSpeed, up: model.upSpeed)
-                        SpeedHistoryGraph(history: model.speedHistory)
+                        SpeedHistoryGraph(history: model.speedHistory, covered: covered)
                     }
                     .liveCard()
                 case .waiting:
@@ -546,14 +580,13 @@ struct StatusCard: View {
     }
 }
 
-/// The large round sign of the state, in the app icon's colours. Home doesn't show it any more
+/// The large round sign of sharing, in the app icon's colours. Home doesn't show it any more
 /// (#349): Add a device and the Local Network intro still do, until their screens move over.
 struct StatusOrb: View {
-    enum Look { case sharing, waiting, problem }
+    enum Look { case sharing }
     let look: Look
-    /// Grows with the text size, like the title next to it.
+    /// Grows with the text size.
     @ScaledMetric(relativeTo: .title) private var size: CGFloat = 84
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The app icon's gradient, sampled from its corners.
     static let iconColors = [Color(red: 0.12, green: 0.40, blue: 0.94), Color(red: 0.08, green: 0.74, blue: 0.75)]
@@ -562,16 +595,12 @@ struct StatusOrb: View {
         ZStack {
             Circle()
                 .fill(LinearGradient(colors: Self.iconColors, startPoint: .topLeading, endPoint: .bottomTrailing))
-                .opacity(look == .sharing ? 1 : 0)
-            Circle().fill(Color(.systemGray5)).opacity(look == .waiting ? 1 : 0)
-            Circle().fill(Color.orange.opacity(0.18)).opacity(look == .problem ? 1 : 0)
-            Circle().strokeBorder(.white.opacity(look == .sharing ? 0.25 : 0), lineWidth: size * 0.06)
+            Circle().strokeBorder(.white.opacity(0.25), lineWidth: size * 0.06)
             Image(systemName: "link")
                 .font(.system(size: size * 0.38, weight: .semibold))
-                .foregroundStyle(look == .sharing ? AnyShapeStyle(.white) : look == .problem ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                .foregroundStyle(.white)
         }
         .frame(width: size, height: size)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: look)
         .accessibilityHidden(true)
     }
 }

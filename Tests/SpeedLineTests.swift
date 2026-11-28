@@ -109,6 +109,22 @@ final class SpeedLineTests: XCTestCase {
         XCTAssertEqual(step.dotRise, 1_000.0 / 2_300 - 4_000.0 / 4_600, accuracy: 0.0001)
     }
 
+    /// From idle to a download, the scale grows hundreds of times. Scaling the drawn line that much
+    /// would stretch its stroke into a solid slab, so the scale steps at once and only the slide eases.
+    func testABigPeakChangeStepsTheScale() {
+        let idle = SpeedLine.Step(from: nil, to: samples([5_000, 5_000])).frame
+        let up = SpeedLine.Step(from: idle, to: samples([5_000, 5_000, 3_200_000]))
+        XCTAssertEqual(up.stretch, 1)
+        XCTAssertEqual(up.dotRise, 0, "the dot steps with the line")
+        XCTAssertEqual(up.slide, 1.0 / 30, accuracy: 0.0001)
+        let down = SpeedLine.Step(from: up.frame, to: samples([5_000], from: 33))
+        XCTAssertEqual(down.stretch, 1, "and back down to idle")
+        // Inside the limits it still eases: half or double.
+        XCTAssertEqual(SpeedLine.Step(from: idle, to: samples([5_000, 10_000])).stretch, 2, accuracy: 0.0001)
+        XCTAssertEqual(SpeedLine.Step(from: SpeedLine.Step(from: nil, to: samples([10_000])).frame,
+                                      to: samples([5_000], from: 31)).stretch, 0.5, accuracy: 0.0001)
+    }
+
     func testAGapLongerThanTheWindowSlidesOneWidthAtMost() {
         let before = SpeedLine.Step(from: nil, to: samples([1_000])).frame
         let step = SpeedLine.Step(from: before, to: samples([1_000], from: 90))
