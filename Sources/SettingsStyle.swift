@@ -26,19 +26,32 @@ struct PaperTitle: View {
     }
 }
 
-/// A row's title after a dash in the secondary colour. VoiceOver and the UI tests read only the title.
+/// A row's title after a dash in the secondary colour, and with `note`, a short line under the title
+/// that says what the setting does. VoiceOver and the UI tests read the title, then the note.
 struct DashLabel: View {
     let title: String
+    var note: String?
 
-    init(_ title: String) { self.title = title }
+    init(_ title: String, note: String? = nil) {
+        self.title = title
+        self.note = note
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("–")
                 .foregroundStyle(Theme.secondary)
                 .accessibilityHidden(true)
-            Text(title)
-                .foregroundStyle(Theme.ink)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .foregroundStyle(Theme.ink)
+                if let note {
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 }

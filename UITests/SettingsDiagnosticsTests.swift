@@ -1,7 +1,8 @@
 import XCTest
 
-/// Settings > Diagnostics (#256): the server's counters, and a tap that copies one. What each row
-/// says is covered by the unit tests (DiagnosticsTests), and the counters by Go's.
+/// Settings > Diagnostics (#256): the server's counters, a tap that copies one, and Copy all (L5).
+/// What each row says, and what Copy all copies, is covered by the unit tests (DiagnosticsTests,
+/// DiagnosticsCopyAllTests), and the counters by Go's.
 final class SettingsDiagnosticsTests: TetherUITestCase {
     /// "Copied" shows for a minute, not 2 s: under load a check after the menu closes can come later
     /// than that, and miss it.
@@ -37,6 +38,18 @@ final class SettingsDiagnosticsTests: TetherUITestCase {
     func testATapCopiesAValue() {
         openDiagnostics()
         reveal(element("diagnostics.udpFrom")).tap()
+        XCTAssertEqual(label(of: "diagnostics.copied"), "Copied")
+    }
+
+    /// Copy all is the first row, and says Copied the same way.
+    func testCopyAllIsTheFirstRow() {
+        openDiagnostics()
+        let all = element("diagnostics.copyAll")
+        XCTAssertTrue(all.waitForExistence(timeout: 5))
+        XCTAssertTrue(all.label.contains("Copy all"), all.label)
+        XCTAssertLessThan(all.frame.maxY, element("diagnostics.listening").frame.minY, "above the counters")
+        XCTAssertTrue(label(of: "diagnostics.portFooter").hasSuffix("Tap a row to copy its value, or Copy all for a bug report."))
+        all.tap()
         XCTAssertEqual(label(of: "diagnostics.copied"), "Copied")
     }
 

@@ -1,6 +1,7 @@
 import XCTest
 
-/// The Settings sheet's Help section: the log to share for a bug report, and the source link.
+/// The Settings sheet's Help section: the ways to wake Tether without opening it (H2), the log to
+/// share for a bug report, and the source link.
 /// What the log holds and leaves out is covered by the unit tests (DebugLogTests, LogRedactionTests).
 final class SettingsHelpTests: TetherUITestCase {
     static let footer = "The log is a text file of what Tether did lately, for a bug report. Keys and full addresses are left out."
@@ -15,6 +16,26 @@ final class SettingsHelpTests: TetherUITestCase {
         XCTAssertLessThan(share.frame.maxY, help.frame.minY + 1, "Share the log is above Help and source code")
         XCTAssertEqual(showHelp("help", "settings.logFooter").label, Self.footer)
         XCTAssertTrue(sectionHeader("Help").exists)
+    }
+
+    /// Start without opening Tether shows the three ways, and how long each keeps Tether awake.
+    func testStartWithoutOpeningTetherShowsTheWays() {
+        launch(.sharing)
+        openSettings()
+        let wake = reveal(element("settings.wake"))
+        XCTAssertTrue(wake.label.contains("Start without opening Tether"), wake.label)
+        XCTAssertLessThan(wake.frame.maxY, reveal(element("settings.log")).frame.minY + 1, "above Share the log")
+        XCTAssertFalse(element("settings.wakeHelp").exists, "hidden at first")
+        reveal(element("settings.wake")).tap()
+        let ways = reveal(element("settings.wakeHelp")).label
+        for line in ["Shortcuts: put Start Tether after Set Personal Hotspot, and run that shortcut.",
+                     "Widget: add the Tether widget and tap Start.",
+                     "Control Center: add the Tether button and turn it on.",
+                     "Each one wakes Tether for 10 minutes, the same as opening it."] {
+            XCTAssertTrue(ways.contains(line), "\(line) in \(ways)")
+        }
+        reveal(element("settings.wake")).tap()
+        waitUntilGone(element("settings.wakeHelp"))
     }
 
     /// The share sheet opens with the log in it.

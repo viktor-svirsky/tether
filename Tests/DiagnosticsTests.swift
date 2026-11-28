@@ -57,7 +57,7 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertEqual(titles["tcpTried"], "TCP connections tried", "it counts the failed ones too")
         XCTAssertEqual(titles["lastError"], "Last connection error")
         // What a reset and a tap do is said once, up top.
-        XCTAssertTrue(sections[0].footer.hasSuffix("The counts start again each time sharing starts. Tap a row to copy its value."), sections[0].footer)
+        XCTAssertTrue(sections[0].footer.hasSuffix("The counts start again each time sharing starts. Tap a row to copy its value, or Copy all for a bug report."), sections[0].footer)
         XCTAssertFalse(sections[2].footer.contains("start again"))
     }
 

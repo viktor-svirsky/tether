@@ -19,6 +19,8 @@ final class SettingsVPNTests: TetherUITestCase {
         try audit(only: "vpn.")
         flip(toggle)
         XCTAssertEqual(value(of: toggle), "1", "the tap turned it on")
+        // Right where it's turned on, the effect (M8).
+        XCTAssertEqual(label(of: "vpn.now"), "Now, No VPN, devices kept out")
         app.buttons["settings.done"].tap()
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5))
         XCTAssertEqual(label(of: "vpn.blocked"), Self.blocked)
@@ -39,6 +41,7 @@ final class SettingsVPNTests: TetherUITestCase {
         let toggle = reveal(app.switches["vpn.only"].firstMatch)
         XCTAssertEqual(label(of: "vpn.now"), "Now, VPN for IPv4 only")
         flip(toggle)
+        XCTAssertEqual(label(of: "vpn.now"), "Now, VPN for IPv4 only, devices kept out")
         app.buttons["settings.done"].tap()
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5))
         XCTAssertEqual(label(of: "vpn.blocked"), "This iPhone's IPv6 goes around it, so no device gets through. Turn on IPv6 in your VPN, or turn off Only share through a VPN in Settings.")
