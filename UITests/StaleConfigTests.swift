@@ -17,7 +17,7 @@ final class StaleConfigTests: TetherUITestCase {
             launch(.staleConfig)
             openAddDevice()
             XCTAssertEqual(reveal(element("add.stale")).label,
-                           "A device is trying to connect with a config that no longer works. If it's this one, delete its tunnel in WireGuard and give it the config again.")
+                           "A device is trying to connect with a config that no longer works. If it's this one, delete its tunnel in WireGuard and scan the code or get the file again.")
             assertNowhere(text(containing: "This ticks off by itself"))
             // Back to the top: scrolled down to the warning, the first line sits under the sheet header.
             reveal(element("add.install"))
