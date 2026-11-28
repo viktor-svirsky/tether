@@ -84,9 +84,12 @@ final class InterfacesTests: XCTestCase {
         XCTAssertEqual(Interfaces.internetVPN(nat64: { nil }, addresses: tunnelOnly, route: v4Fails), "utun5",
                        "IPv4 only on the tunnel and the hotspot: the carrier gives none")
 
-        let ipv6OnlyWithVoLTE = ["pdp_ip0: 2607:fb90:1234::5", "pdp_ip1: 10.170.0.9", "utun5: fd00::2"]
-        XCTAssertEqual(Interfaces.internetVPN(nat64: { nil }, addresses: ipv6OnlyWithVoLTE, route: v4Fails), "utun5",
-                       "VoLTE has IPv4 on pdp_ip1, but that isn't the internet's")
+        // IPv4 on another pdp_ip counts too, and fails closed: on dual SIM the data line isn't always
+        // pdp_ip0. On an IPv6-only carrier whose VoLTE has IPv4 on pdp_ip1 that keeps the devices out
+        // while a route can't be read, a pause that's wrong, never a family around the tunnel.
+        let dataOnPdpIP1 = ["pdp_ip0: 2607:fb90:1234::5", "pdp_ip1: 10.170.0.9", "utun5: fd00::2"]
+        XCTAssertNil(Interfaces.internetVPN(nat64: { nil }, addresses: dataOnPdpIP1, route: v4Fails),
+                     "IPv4 on pdp_ip1 failed for a moment")
     }
 
     func testWhatTheScreensSay() {
