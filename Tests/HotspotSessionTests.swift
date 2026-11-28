@@ -2031,6 +2031,61 @@ final class HotspotSessionTests: XCTestCase {
         session.watch()
         XCTAssertNil(devices.setup.proxy?.paused, "the time is up")
         XCTAssertTrue(session.sharing)
+        now = minutes(40)
+        session.watch()
+        XCTAssertFalse(session.sharing, "and then nothing holds it off")
+    }
+
+    /// A proxy turned off keeps its pause, but nobody waits for it: the idle stop goes on.
+    func testAProxyTurnedOffHoldsNothingOff() throws {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        XCTAssertTrue(session.setProxy(on: true))
+        let proxy = try XCTUnwrap(devices.setup.proxy?.id)
+        session.pauseWireGuardDevice(proxy, for: .untilTomorrow)
+        XCTAssertTrue(session.setProxy(on: false))
+        XCTAssertNotNil(devices.setup.proxy?.paused?.until, "the pause is kept")
+        now = minutes(5)
+        session.watch()
+        now = minutes(15)
+        session.watch()
+        XCTAssertFalse(session.sharing)
+    }
+
+    /// A timed pause past its end that couldn't be saved as ended holds nothing off, so it can't keep
+    /// sharing on for ever. The device's and the proxy's.
+    func testATimedPausePastItsEndHoldsNothingOff() throws {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        let ipad = try XCTUnwrap(devices.connectReady())
+        server.connected = [ipad.address]
+        XCTAssertTrue(session.setProxy(on: true))
+        let proxy = try XCTUnwrap(devices.setup.proxy?.id)
+        session.pauseWireGuardDevice(ipad.id, for: .halfHour)
+        session.pauseWireGuardDevice(proxy, for: .halfHour)
+        session.watch()
+        secrets.savesFail = true
+        for m in [30.0, 35, 45] {
+            now = minutes(m)
+            session.watch()
+        }
+        XCTAssertNotNil(devices.setup.peers.first { $0.id == ipad.id }?.paused?.until, "still saved as paused")
+        XCTAssertFalse(session.sharing, "past its end it holds nothing off")
+    }
+
+    /// Sharing stopped because the hotspot went: nobody is connected, also once a resume publishes the list.
+    func testAResumeAfterTheHotspotGoesConnectsNobody() throws {
+        shareInTheBackground()
+        let ipad = try XCTUnwrap(devices.connectReady())
+        server.connected = [ipad.address]
+        session.pauseWireGuardDevice(ipad.id)
+        session.watch()
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertFalse(session.running)
+        session.resumeWireGuardDevice(ipad.id)
+        XCTAssertEqual(session.connectedNow, [])
+        XCTAssertEqual(session.wireGuardConnected, [])
     }
 
     /// After a stop nobody is connected, also once a pause or a resume publishes the list again.
