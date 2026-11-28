@@ -57,15 +57,21 @@ struct HotspotNeighbors {
     /// knock finds 172.20.10.x addresses, and nothing says which of them that device is.
     func notUsingTether(wireGuard: [String: PeerStats], proxyClients: [String: Date], now: Date) -> [String] {
         func recent(_ at: Date?) -> Bool { at.map { now.timeIntervalSince($0) < Self.usingWithin } ?? false }
-        var using = Set(proxyClients.filter { recent($0.value) }.keys)
+        var using = Set(proxyClients.filter { recent($0.value) }.keys.map(Self.unmapped))
         for stats in wireGuard.values where recent(stats.lastHandshake) {
-            if let address = PeerStats.address(stats.endpoint) { using.insert(address) }
+            if let address = PeerStats.address(stats.endpoint) { using.insert(Self.unmapped(address)) }
         }
         if using.contains(where: { IPv6Address($0) != nil }) { return [] }
         return lastAnswer
             .filter { now.timeIntervalSince($0.value) < Self.holdFor && !using.contains($0.key) }
             .keys
             .sorted { Self.order($0).lexicographicallyPrecedes(Self.order($1)) }
+    }
+
+    /// An IPv4-mapped IPv6 address (::ffff:172.20.10.2) as the IPv4 one, so it matches the knock.
+    private static func unmapped(_ address: String) -> String {
+        guard let v6 = IPv6Address(address), v6.isIPv4Mapped, let v4 = v6.asIPv4 else { return address }
+        return v4.rawValue.map(String.init).joined(separator: ".")
     }
 
     /// An IPv4 address's four numbers, to sort .10 after .9.

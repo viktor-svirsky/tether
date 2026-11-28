@@ -121,6 +121,27 @@ final class HotspotNeighborsTests: XCTestCase {
         XCTAssertEqual(listed(n, at: 180, wireGuard: peers), ["172.20.10.2"])
     }
 
+    /// An IPv4 device written as an IPv4-mapped IPv6 address is the same device. Go unmaps them before
+    /// Swift sees them (bind.go, proxy.go), so this pins the Swift side in case that ever changes: the
+    /// device still matches, and the list isn't emptied as if a device used Tether over IPv6.
+    func testAnIPv4MappedEndpointCountsAsItsIPv4Address() {
+        var n = HotspotNeighbors()
+        n.record(knock(["172.20.10.2": .open, "172.20.10.3": .refused]), at: seconds(0))
+        let peers = ["10.7.0.2": peer(from: "[::ffff:172.20.10.2]:51820", handshakeAt: 0)]
+        XCTAssertEqual(listed(n, at: 0, wireGuard: peers), ["172.20.10.3"])
+        XCTAssertEqual(listed(n, at: 0, proxy: ["::ffff:172.20.10.3": seconds(0)]), ["172.20.10.2"])
+    }
+
+    /// A mix: an IPv4 device on WireGuard, one on IPv6, and an address not on Tether. The IPv6 one could
+    /// be the unmatched address, so the list says nothing rather than list it.
+    func testAnIPv6DeviceAmongIPv4OnesStillEmptiesTheList() {
+        var n = HotspotNeighbors()
+        n.record(knock(["172.20.10.2": .open, "172.20.10.3": .refused]), at: seconds(0))
+        let peers = ["10.7.0.2": peer(from: "172.20.10.2:51820", handshakeAt: 0),
+                     "10.7.0.3": peer(from: "[2607:fb91:88a2:e822::5]:51820", handshakeAt: 0)]
+        XCTAssertEqual(listed(n, at: 0, wireGuard: peers), [])
+    }
+
     /// Sorted by the address as a number, so .10 comes after .9.
     func testTheListIsInAddressOrder() {
         var n = HotspotNeighbors()
