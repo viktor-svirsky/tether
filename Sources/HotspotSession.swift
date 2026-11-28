@@ -122,6 +122,9 @@ final class HotspotSession {
     /// Only the on-screen sampler publishes connections and speeds, so it runs only while the app is on screen.
     /// False in a launch from a Shortcuts action, which happens in the background.
     var sceneActive: Bool
+    /// In the background, not only off screen: Control Center or an alert makes Tether inactive
+    /// while it's still visible. The low battery stop waits for this (#311).
+    private(set) var inBackground: Bool
     /// CallKit has a call on. The keep-alive sound plays again right after a call starts, so it can't
     /// say so itself (#191).
     var callOn: () -> Bool = { false }
@@ -230,7 +233,7 @@ final class HotspotSession {
     private let onlyThroughVPN: () -> Bool
 
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
-         sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
+         sceneActive: Bool, inBackground: Bool? = nil, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
          idleStopAfter: @escaping () -> IdleStop.After = { .never },
          lowBatteryStop: @escaping () -> LowBatteryStop.Level = { .never },
          battery: @escaping (_ monitor: Bool) -> LowBatteryStop.Battery = { _ in .unknown },
@@ -246,6 +249,7 @@ final class HotspotSession {
         self.keepAlive = keepAlive
         self.page = page
         self.sceneActive = sceneActive
+        self.inBackground = inBackground ?? !sceneActive
         self.hotspotAddress = hotspotAddress
         self.carrierIPv6Only = carrierIPv6Only
         self.blockLocal = blockLocal
@@ -394,7 +398,7 @@ final class HotspotSession {
     private func stopAtLowBattery() {
         let below = readBelowBatteryStop()
         if below != belowBatteryStop { belowBatteryStop = below }
-        guard let below, sharing, !sceneActive, idleStopped == nil else { return }
+        guard let below, sharing, inBackground, idleStopped == nil else { return }
         log("battery at \(below.percent)%, at or below \(below.level.rawValue)%, stopping until Tether is opened")
         stop(IdleStopped(at: now(), after: idleStopAfter(), lowBattery: below.level))
     }
@@ -409,7 +413,7 @@ final class HotspotSession {
 
     /// Start Tether below the battery level, not charging: it would share, and the next round stop
     /// again, so the action says why instead (#311). Read now: a launch for the action has had no round.
-    var startRefusedAtLowBattery: Bool { readBelowBatteryStop() != nil }
+    var startRefusedAtLowBattery: Bool { !sceneActive && readBelowBatteryStop() != nil }
 
     /// Plays the silent sound while the hotspot is on, and for a while after it goes, see
     /// `KeepAlivePolicy`. Once it stops, iOS suspends Tether, and it starts again when opened.
@@ -518,11 +522,18 @@ final class HotspotSession {
     /// Opening Tether starts the wait again, so there's time to turn on Personal Hotspot in Settings.
     func cameOnScreen() {
         sceneActive = true
+        inBackground = false
         log("Tether on screen") // so a shared log shows whether a recovery waited for this (#231)
         // The background's last read, not the list from before the app left, until the sampler reads.
         if wireGuardConnected != watchedConnected { wireGuardConnected = watchedConnected }
         wake()
     }
+
+    /// iOS moved Tether to the background, see `inBackground`.
+    func enteredBackground() { inBackground = true }
+
+    /// Tether is coming back, before it's active again.
+    func enteringForeground() { inBackground = false }
 
     func leftScreen() {
         sceneActive = false

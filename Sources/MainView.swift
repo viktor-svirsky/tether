@@ -77,7 +77,7 @@ struct MainView: View {
                     }
                 }
 
-                if let below = model.belowBatteryStop {
+                if model.sharing, let below = model.belowBatteryStop {
                     Section {
                         Label {
                             Text(below.text)

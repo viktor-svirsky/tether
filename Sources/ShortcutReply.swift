@@ -40,7 +40,7 @@ enum ShortcutReply {
         if state.running, let problem = state.problem { return "Personal Hotspot is on, but WireGuard isn't running. \(problem)" }
         if state.running, !state.keptAlive { return "Tether couldn't keep running in the background. Open it once." }
         if state.stoppedByYou { return "Tether is stopped. Open it, or run Start Tether, to share again." }
-        if state.lowBattery { return "Tether stopped sharing at low battery. Charge the iPhone, or open Tether, to share again." }
+        if state.lowBattery { return "Tether stopped sharing at low battery. Open Tether to share again." }
         if state.idleStopped { return "Tether stopped sharing while idle. Open it, or run Start Tether, to share again." }
         // iOS makes the hotspot's network only while a device is on it, so no device and the hotspot off look the same.
         guard state.running else { return "Tether is waiting for a device to join Personal Hotspot." }

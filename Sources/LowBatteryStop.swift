@@ -52,6 +52,6 @@ struct BelowBatteryStop: Equatable {
 
     /// The main screen's line while Tether is open.
     var text: String {
-        "Battery is at \(percent)%, below your \(level.rawValue)% stop level. Sharing stops when you leave Tether."
+        "Battery is at \(percent)%, at or below your \(level.rawValue)% stop level. Sharing stops when you leave Tether."
     }
 }

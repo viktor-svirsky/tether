@@ -44,7 +44,7 @@ final class ShortcutReplyTests: XCTestCase {
     /// Stopped at the battery level (#311): Start Tether won't share until it's charging, opening it will.
     func testStatusSaysSharingStoppedAtLowBattery() {
         XCTAssertEqual(ShortcutReply.status(State(running: false, connected: 0, idleStopped: true, lowBattery: true)),
-                       "Tether stopped sharing at low battery. Charge the iPhone, or open Tether, to share again.")
+                       "Tether stopped sharing at low battery. Open Tether to share again.")
     }
 
     func testStartAtLowBatteryRefuses() {

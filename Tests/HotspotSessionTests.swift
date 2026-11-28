@@ -1911,8 +1911,27 @@ final class HotspotSessionTests: XCTestCase {
         battery.charging = false
         session.watch()
         session.leftScreen()
+        session.enteredBackground()
         session.watch()
-        XCTAssertFalse(session.sharing, "the first round after leaving the screen stops it")
+        XCTAssertFalse(session.sharing, "the first round in the background stops it")
+    }
+
+    /// Control Center or an alert over Tether makes it inactive, not backgrounded: it stays on
+    /// screen, so nothing stops.
+    func testInactiveButNotInTheBackgroundDoesNotStop() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 15, charging: false)
+        makeSession()
+        address = hotspot
+        session.watch()
+        session.leftScreen()
+        now = minutes(1)
+        session.watch()
+        XCTAssertTrue(session.sharing, "still visible behind Control Center")
+        XCTAssertNil(session.idleStopped)
+        session.cameOnScreen()
+        session.watch()
+        XCTAssertTrue(session.sharing)
     }
 
     func testNoStopWhileChargingOrUnknown() {
@@ -1946,6 +1965,14 @@ final class HotspotSessionTests: XCTestCase {
         session.cameOnScreen()
         XCTAssertNil(session.idleStopped)
         XCTAssertTrue(session.sharing, "opening it shares, even below the level")
+    }
+
+    /// With Tether on screen nothing stops, so Start Tether isn't refused there.
+    func testStartTetherIsNotRefusedOnScreen() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 10, charging: false)
+        makeSession(sceneActive: true)
+        XCTAssertFalse(session.startRefusedAtLowBattery)
     }
 
     /// Start Tether would share and the next round stop again, so it doesn't start (#311).
