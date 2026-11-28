@@ -58,7 +58,8 @@ final class StatusCardTests: TetherUITestCase {
 
     func testSharingSaysHowToStop() {
         launch(.sharing)
-        XCTAssertEqual(label(of: "status.stopHint"), "To stop, turn off Personal Hotspot.")
+        // At the foot of the screen, below the devices.
+        XCTAssertEqual(reveal(element("status.stopHint")).label, "To stop, turn off Personal Hotspot.")
         assertNowhere(element("status.hotspotHint"), element("status.hotspotPath"))
         assertNowhere(element("sharing.switch"), message: "no switch: the hotspot is the switch")
     }

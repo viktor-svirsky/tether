@@ -13,9 +13,10 @@ final class RegionAndOrientationTests: TetherUITestCase {
         launch(.sharing, locale: "de_DE")
         let screen = app.windows.firstMatch.frame
         // Each where it was revealed: revealing the row can scroll the speeds off a short screen.
-        let speeds = reveal(element("traffic.speeds"))
-        XCTAssertEqual(speeds.label, "Download 3,2 Mbit/s, upload 400 kbit/s")
-        XCTAssertTrue(screen.contains(speeds.frame), "the speeds fit the width: \(speeds.frame)")
+        let down = reveal(element("traffic.download")), up = element("traffic.upload")
+        XCTAssertEqual(down.label, "Download 3,2 Mbit/s")
+        XCTAssertEqual(up.label, "Upload 400 kbit/s")
+        XCTAssertTrue(screen.contains(down.frame) && screen.contains(up.frame), "the speeds fit the width: \(down.frame), \(up.frame)")
         let ipad = reveal(element("device.iPad"))
         XCTAssertTrue(ipad.label.contains("3,12 GB this month"), ipad.label)
         XCTAssertTrue(screen.contains(ipad.frame), "the row fits the width: \(ipad.frame)")
@@ -40,7 +41,7 @@ final class RegionAndOrientationTests: TetherUITestCase {
         let turned = expectation(for: NSPredicate { _, _ in window.frame.width > window.frame.height }, evaluatedWith: window)
         XCTAssertEqual(XCTWaiter().wait(for: [turned], timeout: 5), .completed, "still portrait: \(window.frame)")
         XCTAssertEqual(label(of: "status.title"), "Sharing")
-        XCTAssertTrue(element("traffic.speeds").exists)
+        XCTAssertTrue(element("traffic.download").exists)
         // `reveal` drags by the list's portrait frame, so plain swipes here.
         let ipad = element("device.iPad")
         for _ in 0..<6 where !ipad.isHittable { app.swipeUp() }

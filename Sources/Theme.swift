@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /// The paper and ink look (#349) as SwiftUI colours and modifiers. The values are in `Palette`.
-/// Nothing uses these yet: each screen moves over in its own change.
+/// Each screen moves over in its own change.
 enum Theme {
     static let paper = color(.paper)
     static let dot = color(.dot)
@@ -136,11 +136,15 @@ private struct LiveCard: ViewModifier {
         content
             .padding(.vertical, 18)
             .padding(.horizontal, 20)
-            .background(Theme.card, in: .rect(cornerRadius: 16))
+            .background {
+                // The shadow on the shape alone: on the whole card every line and letter gets a grey halo.
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Theme.card)
+                    .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.08), radius: 15, y: 10)
+            }
             .overlay {
                 if scheme == .dark { RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.cardEdge, lineWidth: 1) }
             }
-            .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.08), radius: 15, y: 10)
     }
 }
 
