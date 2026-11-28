@@ -344,11 +344,13 @@ final class HotspotSession {
         server.stop()
         page.stop()
         pageHandler.forget()
+        // No tunnel is up on a stopped server. Before the count below, whose limits can end a timed pause
+        // and publish who is connected, and before a pause or resume ahead of the next read does.
+        tunnelsUp = []
         // What the devices used since the last read: a stopped server still reports what it carried.
         countUsage(server.snapshot())
         saveUsage()
         running = false
-        tunnelsUp = [] // or a pause or resume before the next read publishes them again
         startProblem = nil // the next hotspot gets a new try
         showProblem()
         followHostName() // now, not next round: after an idle stop iOS may suspend Tether first
