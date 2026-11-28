@@ -1144,10 +1144,11 @@ final class HotspotSession {
         readServer(onScreen: false)
     }
 
-    /// The one read of a running server, on screen (the sampler, every second) or off (the watcher):
+    /// The sampler's read of a running server (on screen, every second) and the watcher's (off screen):
     /// who is connected, the proxy's stats (for the idle stop too), what `absorb` does and this
     /// month's counts. On screen it also publishes what the screen shows, off screen only who is
-    /// connected, for the notifications.
+    /// connected, for the notifications. The add window, Shortcuts and the config page read the
+    /// server for their own needs.
     @discardableResult
     private func readServer(onScreen: Bool) -> ServerSnapshot {
         let snap = server.snapshot()
