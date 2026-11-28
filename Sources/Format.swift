@@ -69,6 +69,16 @@ enum Format {
         date.formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).month(.abbreviated).day())
     }
 
+    /// When a timed pause ends (#312): "3:45 PM" today, "tomorrow, 6:00 AM", or "Nov 15, 6:00 AM".
+    static func until(_ date: Date, now: Date, calendar: Calendar, locale: Locale = .current) -> String {
+        let time = date.formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).hour().minute())
+        if calendar.isDate(date, inSameDayAs: now) { return time }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(date, inSameDayAs: tomorrow) {
+            return "tomorrow, \(time)"
+        }
+        return "\(short(date, calendar: calendar, locale: locale)), \(time)"
+    }
+
     /// When a device last connected (#73): "Today at 4:00 PM", "Yesterday at ...", "October 3 at
     /// ...", with the year only for another year. A time, not "2 hours ago", so the screen doesn't
     /// have to tick to stay right.

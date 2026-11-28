@@ -1986,6 +1986,179 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertNil(session.idleStopped)
     }
 
+    /// A device paused for a set time with its tunnel up comes back when the time is up (#312), so the
+    /// idle stop waits for it as for a connected one. Paused until resumed, it doesn't.
+    func testADevicePausedForATimeHoldsOffTheIdleStop() throws {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        let ipad = try XCTUnwrap(devices.connectReady())
+        server.connected = [ipad.address]
+        session.watch()
+        session.pauseWireGuardDevice(ipad.id, for: .halfHour)
+        for m in [5.0, 15, 29] {
+            now = minutes(m)
+            session.watch()
+            XCTAssertTrue(session.sharing, "at \(m) minutes")
+        }
+        now = minutes(30)
+        session.watch()
+        XCTAssertNil(devices.setup.peers.first { $0.id == ipad.id }?.paused, "the time is up")
+        XCTAssertTrue(session.sharing)
+        XCTAssertTrue(server.running)
+
+        session.pauseWireGuardDevice(ipad.id)
+        now = minutes(40)
+        session.watch()
+        now = minutes(50)
+        session.watch()
+        XCTAssertFalse(session.sharing, "paused until resumed, it isn't coming back by itself")
+    }
+
+    /// The proxy paused for a set time comes back when the time is up too, so it holds off the idle
+    /// stop until then, with only devices on the proxy and no tunnel up.
+    func testTheProxyPausedForATimeHoldsOffTheIdleStop() throws {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        XCTAssertTrue(session.setProxy(on: true))
+        let proxy = try XCTUnwrap(devices.setup.proxy?.id)
+        session.pauseWireGuardDevice(proxy, for: .halfHour)
+        for m in [5.0, 15, 29] {
+            now = minutes(m)
+            session.watch()
+            XCTAssertTrue(session.sharing, "at \(m) minutes")
+        }
+        now = minutes(30)
+        session.watch()
+        XCTAssertNil(devices.setup.proxy?.paused, "the time is up")
+        XCTAssertTrue(session.sharing)
+        now = minutes(40)
+        session.watch()
+        XCTAssertFalse(session.sharing, "and then nothing holds it off")
+    }
+
+    /// A proxy turned off keeps its pause, but nobody waits for it: the idle stop goes on.
+    func testAProxyTurnedOffHoldsNothingOff() throws {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        XCTAssertTrue(session.setProxy(on: true))
+        let proxy = try XCTUnwrap(devices.setup.proxy?.id)
+        session.pauseWireGuardDevice(proxy, for: .untilTomorrow)
+        XCTAssertTrue(session.setProxy(on: false))
+        XCTAssertNotNil(devices.setup.proxy?.paused?.until, "the pause is kept")
+        now = minutes(5)
+        session.watch()
+        now = minutes(15)
+        session.watch()
+        XCTAssertFalse(session.sharing)
+    }
+
+    /// A timed pause past its end that couldn't be saved as ended holds nothing off, so it can't keep
+    /// sharing on for ever. The device's and the proxy's.
+    func testATimedPausePastItsEndHoldsNothingOff() throws {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        let ipad = try XCTUnwrap(devices.connectReady())
+        server.connected = [ipad.address]
+        XCTAssertTrue(session.setProxy(on: true))
+        let proxy = try XCTUnwrap(devices.setup.proxy?.id)
+        session.pauseWireGuardDevice(ipad.id, for: .halfHour)
+        session.pauseWireGuardDevice(proxy, for: .halfHour)
+        session.watch()
+        secrets.savesFail = true
+        for m in [30.0, 35, 45] {
+            now = minutes(m)
+            session.watch()
+        }
+        XCTAssertNotNil(devices.setup.peers.first { $0.id == ipad.id }?.paused?.until, "still saved as paused")
+        XCTAssertFalse(session.sharing, "past its end it holds nothing off")
+    }
+
+    /// The hotspot goes in the round a timed pause ends: the stop's last count ends the pause, and the
+    /// device it lets back in is on no server. Nobody is connected, after a round and after a Shortcut's
+    /// look at the hotspot alone.
+    func testATimedPauseEndingAsTheHotspotGoesConnectsNobody() throws {
+        for shortcut in [false, true] {
+            now = start
+            shareInTheBackground()
+            let ipad = try XCTUnwrap(devices.connectReady())
+            server.connected = [ipad.address]
+            session.pauseWireGuardDevice(ipad.id, for: .halfHour)
+            session.watch()
+            now = minutes(30)
+            address = nil
+            if shortcut { session.syncWithHotspot() } else { session.watch() }
+            XCTAssertFalse(session.running)
+            XCTAssertNil(devices.setup.peers.first { $0.id == ipad.id }?.paused, "the pause ended")
+            XCTAssertEqual(session.connectedNow, [], shortcut ? "the Shortcut's look" : "a round")
+            XCTAssertEqual(session.wireGuardConnected, [], shortcut ? "the Shortcut's look" : "a round")
+        }
+    }
+
+    /// Sharing stopped because the hotspot went: nobody is connected, also once a resume publishes the list.
+    func testAResumeAfterTheHotspotGoesConnectsNobody() throws {
+        shareInTheBackground()
+        let ipad = try XCTUnwrap(devices.connectReady())
+        server.connected = [ipad.address]
+        session.pauseWireGuardDevice(ipad.id)
+        session.watch()
+        address = nil
+        session.syncWithHotspot()
+        XCTAssertFalse(session.running)
+        session.resumeWireGuardDevice(ipad.id)
+        XCTAssertEqual(session.connectedNow, [])
+        XCTAssertEqual(session.wireGuardConnected, [])
+    }
+
+    /// After a stop nobody is connected, also once a pause or a resume publishes the list again.
+    func testAResumeAfterAStopConnectsNobody() throws {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        let ipad = try XCTUnwrap(devices.connectReady())
+        server.connected = [ipad.address]
+        session.pauseWireGuardDevice(ipad.id)
+        session.watch()
+        now = minutes(10)
+        session.watch()
+        XCTAssertFalse(session.sharing, "a device paused by you holds nothing off")
+        session.resumeWireGuardDevice(ipad.id)
+        XCTAssertEqual(session.connectedNow, [])
+        XCTAssertEqual(session.wireGuardConnected, [])
+    }
+
+    /// A timed pause that ends in the round the idle time runs out: the device is back in that round,
+    /// so nothing stops.
+    func testATimedPauseEndingAtTheIdleDeadlineCountsInThatRound() throws {
+        idleAfter = .thirtyMinutes
+        shareInTheBackground()
+        let ipad = try XCTUnwrap(devices.connectReady())
+        session.pauseWireGuardDevice(ipad.id, for: .halfHour)
+        now = minutes(1)
+        session.watch() // no tunnel up, so the idle time starts
+        now = minutes(31)
+        server.connected = [ipad.address]
+        session.watch()
+        XCTAssertNil(devices.setup.peers.first { $0.id == ipad.id }?.paused)
+        XCTAssertTrue(session.sharing)
+        XCTAssertNil(session.idleStopped)
+    }
+
+    /// Over its limit when its time is up, a timed pause becomes paused at the limit in one save, not a
+    /// resume and then a pause, where a second save that failed let the device through.
+    func testATimedPauseOverItsLimitIsPausedAtTheLimitInOneSave() throws {
+        shareInTheBackground()
+        let ipad = try XCTUnwrap(devices.connectReady())
+        server.connected = [ipad.address]
+        XCTAssertTrue(session.setLimit(ipad.id, 1_000))
+        session.pauseWireGuardDevice(ipad.id, for: .halfHour)
+        server.peerTraffic = [ipad.address: TrafficTotals(bytesUp: 0, bytesDown: 2_000)]
+        session.watch()
+        now = minutes(30)
+        secrets.savesLeft = 1 // one save works, as the resume alone did, and the next fails
+        session.watch()
+        XCTAssertEqual(devices.setup.peers.first { $0.id == ipad.id }?.paused, .atLimit, "one save, straight to the limit")
+        XCTAssertNotNil(server.lastSetup?.serverPeers.first { $0.id == ipad.id }?.paused, "Go keeps it out")
+    }
+
     /// A tunnel for one family while the other goes around it: the devices stay out, and the session
     /// says which family the tunnel carries, for the screen (#334).
     func testAVPNForOneFamilyKeepsTheDevicesOutAndSaysWhich() {
