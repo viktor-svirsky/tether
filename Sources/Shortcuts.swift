@@ -91,7 +91,7 @@ struct TetherDeviceQuery: EntityStringQuery {
     private func devices() -> [TetherDeviceEntity] {
         let model = Model.shared
         model.syncWithHotspot()
-        return model.shortcutDevices().map(TetherDeviceEntity.init)
+        return (model.shortcutDevices() ?? []).map(TetherDeviceEntity.init)
     }
 }
 
@@ -127,7 +127,7 @@ struct ListTetherDevicesIntent: AppIntent {
         let model = Model.shared
         model.syncWithHotspot() // a cold launch for this action hasn't read the saved list yet
         let devices = model.shortcutDevices()
-        return .result(value: devices.map(TetherDeviceEntity.init), dialog: "\(ShortcutReply.devices(devices))")
+        return .result(value: (devices ?? []).map(TetherDeviceEntity.init), dialog: "\(ShortcutReply.devices(devices))")
     }
 }
 
