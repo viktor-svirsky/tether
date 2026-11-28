@@ -25,8 +25,13 @@ enum AppExpiry {
     /// What to tell the user, nil while more than `warnBefore` is left. Counted in calendar days,
     /// so 9 am the day after tomorrow is "in 2 days" at any hour today.
     static func warning(expires: Date, now: Date, calendar: Calendar = .current) -> String? {
-        when(expires: expires, now: now, calendar: calendar).map { "Tether stops opening \($0). Refresh or reinstall it before then." }
+        when(expires: expires, now: now, calendar: calendar).map { "Tether stops opening \($0). \(refresh)" }
     }
+
+    /// What to do before it stops opening, the same on Home, in the notification and in Settings (L8).
+    static let refresh = "Refresh it in SideStore or AltStore, or reinstall it, before then."
+    /// Settings > About, under when it stops opening.
+    static let about = "With a free Apple ID, Tether stops opening after 7 days. \(refresh)"
 
     /// "today", "tomorrow" or "in 2 days", for the warning and the notification. Nil while more
     /// than `warnBefore` is left.

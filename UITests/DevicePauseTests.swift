@@ -51,7 +51,7 @@ final class DevicePauseTests: TetherUITestCase {
         let row = reveal(element("device.iPad"))
         XCTAssertTrue(row.label.contains("Paused"), row.label)
         XCTAssertFalse(row.label.contains("Connected"), row.label)
-        XCTAssertEqual(label(of: "status.headline"), Copy.noDeviceYet, "a paused device doesn't count as connected")
+        XCTAssertEqual(label(of: "status.headline"), "1 device paused", "a paused device doesn't count as connected")
     }
 
     // MARK: For a set time (#312)
@@ -77,7 +77,7 @@ final class DevicePauseTests: TetherUITestCase {
         goBack(to: "Tether")
         let row = reveal(element("device.iPad"))
         XCTAssertTrue(row.label.contains("Paused until "), row.label)
-        XCTAssertEqual(label(of: "status.headline"), Copy.noDeviceYet)
+        XCTAssertEqual(label(of: "status.headline"), "1 device paused")
     }
 
     func testResumeConnectsItAgain() {
@@ -101,7 +101,7 @@ final class DevicePauseTests: TetherUITestCase {
         XCTAssertTrue(ipad.label.contains("iPad") && ipad.label.contains("Paused"), ipad.label)
         XCTAssertFalse(ipad.label.contains("Connected"), ipad.label)
         XCTAssertTrue(element("device.Windows PC").label.contains(Copy.notConnected), "only the iPad")
-        XCTAssertEqual(label(of: "status.headline"), Copy.noDeviceYet)
+        XCTAssertEqual(label(of: "status.headline"), "1 device paused")
         openDevice("Windows PC")
         XCTAssertTrue(reveal(element("device.pause")).exists)
     }

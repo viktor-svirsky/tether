@@ -136,7 +136,7 @@ struct TetherLiveActivity: Widget {
                     }
                 }
                 Spacer()
-                if !context.isStale { Text(context.state.vpn ? "VPN" : "No VPN").font(.caption.bold()) }
+                if !context.isStale, context.state.vpn { Text("VPN").font(.caption.bold()) }
             }
             .padding()
         } dynamicIsland: { context in
@@ -145,7 +145,7 @@ struct TetherLiveActivity: Widget {
                     Label("Tether", systemImage: "link.circle.fill").foregroundStyle(.green)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    if !context.isStale { Text(context.state.vpn ? "VPN" : "No VPN").font(.caption.bold()) }
+                    if !context.isStale, context.state.vpn { Text("VPN").font(.caption.bold()) }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     Text(context.isStale ? "Open Tether to check" : "\(headline(context.state)) · \(names(context.state))")

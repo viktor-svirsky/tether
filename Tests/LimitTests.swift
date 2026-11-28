@@ -81,8 +81,8 @@ final class LimitTests: XCTestCase {
     func testWhatADevicePausedAtItsLimitSays() {
         var peer = WireGuardSetup.Peer(name: "iPad", publicKey: Data(), address: "10.7.0.2")
         peer.paused = .atLimit
-        let status = DeviceStatus(peer, connected: ["10.7.0.2"])
-        XCTAssertEqual(status.label, "Paused")
+        let status = DeviceStatus(peer, connected: ["10.7.0.2"], keptOut: false)
+        XCTAssertEqual(status.label, "Paused at its limit", "the row says why too (M2)")
         XCTAssertEqual(status.title, "Paused at its limit")
         XCTAssertEqual(status.detail(resets: "December 1", period: "this month"), "It used its data this month. It connects again on December 1, or when you resume it.")
         XCTAssertEqual(status.detail(resets: "December 15", period: "since Nov 15"), "It used its data since Nov 15. It connects again on December 15, or when you resume it.")

@@ -102,15 +102,15 @@ final class TimedPauseTests: XCTestCase {
     func testItsRowAndScreenSayUntilWhen() throws {
         var peer = WireGuardSetup.Peer(name: "iPad", publicKey: Data(), address: "10.7.0.2")
         peer.paused = .until(at(15, 45))
-        let status = DeviceStatus(peer, connected: [])
+        let status = DeviceStatus(peer, connected: [], keptOut: false)
         XCTAssertEqual(plain(status.label(now: at(15, 15), calendar: calendar, locale: locale)), "Paused until 3:45 PM")
         XCTAssertEqual(plain(status.title(now: at(15, 15), calendar: calendar, locale: locale)), "Paused until 3:45 PM")
         XCTAssertEqual(status.detail(resets: "December 1", period: "this month"), "It connects again then, or when you resume it.")
         peer.paused = .until(at(6, 0, day: 11))
-        XCTAssertEqual(plain(DeviceStatus(peer, connected: []).label(now: at(15, 15), calendar: calendar, locale: locale)),
+        XCTAssertEqual(plain(DeviceStatus(peer, connected: [], keptOut: false).label(now: at(15, 15), calendar: calendar, locale: locale)),
                        "Paused until tomorrow, 6:00 AM")
         peer.paused = .byYou
-        XCTAssertEqual(plain(DeviceStatus(peer, connected: []).label(now: at(15, 15), calendar: calendar, locale: locale)), "Paused",
+        XCTAssertEqual(plain(DeviceStatus(peer, connected: [], keptOut: false).label(now: at(15, 15), calendar: calendar, locale: locale)), "Paused",
                        "a pause until resumed says what it always did")
     }
 
@@ -179,7 +179,7 @@ final class TimedPauseTests: XCTestCase {
         let id = try XCTUnwrap(devices.setup.proxy?.id)
         session.pauseWireGuardDevice(id, for: .hour)
         XCTAssertEqual(devices.setup.proxy?.paused, .until(at(16, 15)))
-        let status = ProxyStatus(try XCTUnwrap(devices.setup.proxy), stats: ProxyStats(), hotspotOn: true)
+        let status = ProxyStatus(try XCTUnwrap(devices.setup.proxy), stats: ProxyStats(), hotspotOn: true, keptOut: false)
         XCTAssertEqual(plain(status.label(now: at(15, 15), calendar: calendar, locale: locale)), "Paused until 4:15 PM")
         XCTAssertEqual(plain(status.title(now: at(15, 15), calendar: calendar, locale: locale)), "Paused until 4:15 PM")
         now = at(16, 15)

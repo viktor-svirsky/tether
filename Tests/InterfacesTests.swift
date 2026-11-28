@@ -93,13 +93,27 @@ final class InterfacesTests: XCTestCase {
     }
 
     func testWhatTheScreensSay() {
-        XCTAssertEqual(VPNText.now(vpn: true, onlyFamily: nil), "Through a VPN")
-        XCTAssertEqual(VPNText.now(vpn: false, onlyFamily: nil), "No VPN")
-        XCTAssertEqual(VPNText.now(vpn: false, onlyFamily: .ipv4), "VPN for IPv4 only")
-        XCTAssertEqual(VPNText.now(vpn: false, onlyFamily: .ipv6), "VPN for IPv6 only")
+        XCTAssertEqual(VPNText.now(vpn: true, onlyFamily: nil, onlyThroughVPN: false), "Through a VPN")
+        XCTAssertEqual(VPNText.now(vpn: false, onlyFamily: nil, onlyThroughVPN: false), "No VPN")
+        XCTAssertEqual(VPNText.now(vpn: false, onlyFamily: .ipv4, onlyThroughVPN: false), "VPN for IPv4 only")
+        XCTAssertEqual(VPNText.now(vpn: false, onlyFamily: .ipv6, onlyThroughVPN: false), "VPN for IPv6 only")
         XCTAssertEqual(VPNText.blocked(onlyFamily: nil),
-                       "No VPN is on, so no device gets through until one is. Turn your VPN on, or turn off Only share through a VPN in Settings.")
+                       "No device gets through until a VPN is on. Turn your VPN on, or turn off Only share through a VPN in Settings.")
         XCTAssertEqual(VPNText.blocked(onlyFamily: .ipv4),
-                       "Your VPN carries only IPv4, and this iPhone's IPv6 goes around it, so no device gets through. Turn on IPv6 in your VPN, or turn off Only share through a VPN in Settings.")
+                       "This iPhone's IPv6 goes around it, so no device gets through. Turn on IPv6 in your VPN, or turn off Only share through a VPN in Settings.")
+    }
+
+    /// Settings > VPN > Now says the effect where the switch is turned on (M8), in the Live Activity's words.
+    func testNowSaysTheDevicesAreKeptOutWhileTheSwitchIsOn() {
+        XCTAssertEqual(VPNText.now(vpn: false, onlyFamily: nil, onlyThroughVPN: true), "No VPN, devices kept out")
+        XCTAssertEqual(VPNText.now(vpn: false, onlyFamily: .ipv4, onlyThroughVPN: true), "VPN for IPv4 only, devices kept out")
+        XCTAssertEqual(VPNText.now(vpn: true, onlyFamily: nil, onlyThroughVPN: true), "Through a VPN", "a VPN lets them through")
+    }
+
+    /// The status card's line under "Devices kept out" (H1).
+    func testTheKeptOutLineSaysWhichVPNIsMissing() {
+        XCTAssertEqual(VPNText.keptOutLine(onlyFamily: nil), "No VPN is on")
+        XCTAssertEqual(VPNText.keptOutLine(onlyFamily: .ipv4), "Your VPN carries only IPv4")
+        XCTAssertEqual(VPNText.keptOutLine(onlyFamily: .ipv6), "Your VPN carries only IPv6")
     }
 }

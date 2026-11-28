@@ -20,7 +20,7 @@ struct DeviceView: View {
 
     /// The saved device, so a new name shows at once.
     private var current: WireGuardSetup.Peer { model.wireGuardPeers.first { $0.id == peer.id } ?? peer }
-    private var status: DeviceStatus { DeviceStatus(current, connected: model.wireGuardConnected) }
+    private var status: DeviceStatus { DeviceStatus(current, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN) }
     /// A change to this device that couldn't be saved.
     private var problem: String? { model.wireGuardDeviceProblem.flatMap { $0.device == peer.id ? $0.text : nil } }
 
@@ -363,6 +363,7 @@ struct DeviceStatusLabel: View {
                 case .connected: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                 case .notConnected: Image(systemName: "circle.dashed").foregroundStyle(.secondary)
                 case .paused: Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
+                case .keptOut: Image(systemName: "lock.shield").foregroundStyle(.orange)
                 }
             }
             .accessibilityHidden(true)

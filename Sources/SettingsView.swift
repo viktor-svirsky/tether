@@ -206,7 +206,7 @@ struct SettingsView: View {
                 .toggleStyle(.ink)
                 .onChange(of: onlyThroughVPN) { model.checkVPN() }
                 .accessibilityIdentifier("vpn.only")
-            row("Now", value: VPNText.now(vpn: model.vpnInterface != nil, onlyFamily: model.vpnOnlyFamily))
+            row("Now", value: VPNText.now(vpn: model.vpnInterface != nil, onlyFamily: model.vpnOnlyFamily, onlyThroughVPN: onlyThroughVPN))
                 .accessibilityIdentifier("vpn.now")
         } header: {
             header("VPN", help: "vpn.footer", info: "vpn")

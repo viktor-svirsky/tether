@@ -68,7 +68,7 @@ final class DemoScenarioTests: XCTestCase {
         for scenario in DemoScenario.allCases {
             let session = DemoState(scenario).makeSession()
             let hasProblem = [.wireGuardLocked, .wireGuardLockedWaiting, .wireGuardNeedsReset, .wireGuardUnsaved].contains(scenario)
-            XCTAssertEqual(session.wireGuardProblem != nil, hasProblem, "\(scenario): \(session.wireGuardProblem ?? "no problem")")
+            XCTAssertEqual(session.wireGuardProblem != nil, hasProblem, "\(scenario): \(session.wireGuardProblem.map { "\($0)" } ?? "no problem")")
             XCTAssertEqual(session.wireGuardNeedsReset, scenario == .wireGuardNeedsReset, "\(scenario)")
             XCTAssertEqual(session.wireGuardReady == nil, hasProblem || [.qrCodeUnsaved, .addDeviceDoneUnsaved].contains(scenario), "\(scenario): the QR code")
         }

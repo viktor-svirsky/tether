@@ -59,7 +59,7 @@ struct WireGuardProblemSection: View {
     var body: some View {
         if let problem = model.wireGuardProblem {
             Section {
-                WarningLabel(problem)
+                WarningLabel(problem.text)
                     .accessibilityIdentifier("wireguard.problem")
                 if model.wireGuardNeedsReset {
                     // Every device has to be added again, and an update may have read the keys (#174).

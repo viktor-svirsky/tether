@@ -6,7 +6,7 @@ enum ShortcutReply {
     struct State: Equatable {
         var running: Bool
         var connected: Int
-        var problem: String?
+        var problem: WireGuardProblem?
         /// A connection is open on the proxy. Its devices can't be told apart, so they aren't in `connected`.
         var proxyInUse = false
         /// Sharing stopped after a time with no device connected, see `IdleStop`.
@@ -37,16 +37,17 @@ enum ShortcutReply {
     static let lowBatteryStart = "Tether stopped sharing at low battery. Charge the iPhone first, or open Tether to share again."
 
     static func status(_ state: State) -> String {
-        if state.running, let problem = state.problem { return "Personal Hotspot is on, but WireGuard isn't running. \(problem)" }
+        // The status card's words (M9). The saved keys' problems show with the hotspot off too.
+        if let problem = state.problem { return problem.text }
         if state.running, !state.keptAlive { return "Tether couldn't keep running in the background. Open it once." }
         if state.stoppedByYou { return "Tether is stopped. Open it, or run Start Tether, to share again." }
         if state.lowBattery { return "Tether stopped sharing at low battery. Open Tether to share again." }
         if state.idleStopped { return "Tether stopped sharing while idle. Open it, or run Start Tether, to share again." }
         // iOS makes the hotspot's network only while a device is on it, so no device and the hotspot off look the same.
-        guard state.running else { return "Tether is waiting for a device to join Personal Hotspot." }
-        if state.blockedWithoutVPN { return "Tether is sharing, but no VPN is on, so no device gets through until one is." }
+        guard state.running else { return "Tether is waiting for a device on the hotspot." }
+        if state.blockedWithoutVPN { return "No VPN is on, so Tether keeps every device out until one is." }
         switch (state.connected, state.proxyInUse) {
-        case (0, false): return "Tether is sharing. No device is using it yet."
+        case (0, false): return "Tether is sharing. No device is connected."
         case (0, true): return "Tether is sharing. The proxy is in use."
         case (1, false): return "Tether is sharing with 1 device."
         case (1, true): return "Tether is sharing with 1 device and the proxy."

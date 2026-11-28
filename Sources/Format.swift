@@ -2,11 +2,14 @@ import Foundation
 
 /// Byte counts, speeds and times as text.
 enum Format {
-    /// The Devices section's line for the devices on the hotspot not using Tether (#109): their
-    /// addresses, or how many once there are more than two, so it stays short.
+    /// The Devices section's line for the devices on the hotspot not using Tether (#109), with what to
+    /// do (L2): their addresses in brackets, or only how many once there are more than two, so it stays short.
     static func notUsingTether(_ addresses: [String]) -> String {
-        let who = addresses.count > 2 ? "\(addresses.count) devices" : addresses.joined(separator: ", ")
-        return "On your hotspot, not using Tether: \(who)"
+        switch addresses.count {
+        case 1: "1 device on the hotspot isn't using Tether (\(addresses[0])). Set it up."
+        case 2: "2 devices on the hotspot aren't using Tether (\(addresses.joined(separator: ", "))). Set them up."
+        case let n: "\(n) devices on the hotspot aren't using Tether. Set them up."
+        }
     }
 
     /// "0 bytes" for nothing, not "Zero KB", so a column of numbers stays numbers.
@@ -50,8 +53,9 @@ enum Format {
 
     /// A device's row and its screen (#73): "3.12 GB this month", or "Not used this month" rather
     /// than "0 bytes this month", and "Nothing used since Nov 15". `period` is from `period(_:calendar:locale:)`.
-    static func used(_ used: UInt64, _ period: String) -> String {
-        if used > 0 { return "\(bytes(used)) \(period)" }
+    /// With a limit, the row says it too (M2): "3.12 GB of 10 GB this month".
+    static func used(_ used: UInt64, _ period: String, limit: UInt64? = nil) -> String {
+        if used > 0 { return "\(bytes(used))\(limit.map { " of \(bytes($0))" } ?? "") \(period)" }
         return period == thisMonth ? "Not used this month" : "Nothing used \(period)"
     }
 

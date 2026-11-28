@@ -16,7 +16,7 @@ struct ProxyView: View {
 
     /// Off once turned off from here, until the screen goes.
     private var proxy: WireGuardSetup.Proxy { model.proxy ?? WireGuardSetup.Proxy(on: false) }
-    private var status: ProxyStatus { ProxyStatus(proxy, stats: model.proxyStats, hotspotOn: model.running) }
+    private var status: ProxyStatus { ProxyStatus(proxy, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN) }
     /// A pause, limit or turn off that couldn't be saved.
     private var problem: String? {
         model.wireGuardDeviceProblem.flatMap { $0.device == proxy.id ? $0.text : nil } ?? model.proxyProblem

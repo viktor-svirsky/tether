@@ -216,19 +216,36 @@ struct WireGuardSetup: Codable, Equatable {
     /// The ready device connected for the first time from `address`, or its config was downloaded
     /// from the page, pointing at `host`: it's listed from now on, without its private key, and a new
     /// one is ready for the next device. False when `address` isn't the ready device's.
-    mutating func claimReady(address: String, host: String) -> Bool {
+    ///
+    /// With `replacing`, a listed device gets a new config (M1): the code's key and address take that
+    /// device's place in the list, and it keeps its id, name, limit and pause, so its data count and
+    /// history stay. Its old key is gone in the same change, so the old config never connects again. A
+    /// device removed meanwhile is no longer there to replace, and the code is a new device.
+    mutating func claimReady(address: String, host: String, replacing: Peer.ID? = nil) -> Bool {
         guard var peer = ready?.peer, peer.address == address else { return false }
-        peer.name = freeName("Device")
         peer.host = host
-        peers.append(peer)
-        ready = nil
-        prepareReady()
+        var freed: String?
+        if let i = peers.firstIndex(where: { $0.id == replacing }) {
+            let old = peers[i]
+            freed = old.address
+            peer.id = old.id
+            peer.name = old.name
+            peer.limit = old.limit
+            peer.paused = old.paused
+            peers[i] = peer
+        } else {
+            peer.name = freeName("Device")
+            peers.append(peer)
+        }
+        // Not at the address the old config had: the server still carries what it counted there
+        // until that address leaves its list, and a new device would start with those bytes.
+        ready = newReady(skipping: freed)
         return true
     }
 
-    /// A new key at the lowest address nobody has, the ready device included. Unnamed.
-    private func newReady() -> Ready? {
-        let used = Set(serverPeers.map(\.address))
+    /// A new key at the lowest address nobody has, the ready device included, nor `skipping`. Unnamed.
+    private func newReady(skipping: String? = nil) -> Ready? {
+        let used = Set(serverPeers.map(\.address) + [skipping].compactMap { $0 })
         guard let host = (2...254).first(where: { !used.contains(Self.subnet + String($0)) }) else { return nil }
         let key = Curve25519.KeyAgreement.PrivateKey()
         return Ready(peer: Peer(name: "", publicKey: key.publicKey.rawRepresentation, address: Self.subnet + String(host)),
@@ -501,10 +518,10 @@ final class WireGuardDevices {
 
     /// See `WireGuardSetup.claimReady`. False too when it couldn't be saved, and then nothing changes,
     /// so the next sample tries again.
-    func claimReady(address: String, host: String) -> Bool {
+    func claimReady(address: String, host: String, replacing: WireGuardSetup.Peer.ID? = nil) -> Bool {
         guard loaded else { return false }
         let before = setup
-        guard setup.claimReady(address: address, host: host) else { return false }
+        guard setup.claimReady(address: address, host: host, replacing: replacing) else { return false }
         do {
             try save()
             return true

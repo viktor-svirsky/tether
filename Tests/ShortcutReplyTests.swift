@@ -5,8 +5,8 @@ final class ShortcutReplyTests: XCTestCase {
     private typealias State = ShortcutReply.State
 
     func testStatusCountsTheConnectedDevices() {
-        XCTAssertEqual(ShortcutReply.status(State(running: false, connected: 0)), "Tether is waiting for a device to join Personal Hotspot.")
-        XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 0)), "Tether is sharing. No device is using it yet.")
+        XCTAssertEqual(ShortcutReply.status(State(running: false, connected: 0)), "Tether is waiting for a device on the hotspot.")
+        XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 0)), "Tether is sharing. No device is connected.")
         XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 1)), "Tether is sharing with 1 device.")
         XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 3)), "Tether is sharing with 3 devices.")
     }
@@ -21,7 +21,7 @@ final class ShortcutReplyTests: XCTestCase {
     /// Only share through a VPN is on and no VPN is: sharing, but nothing gets through (#277).
     func testStatusSaysWhenNoVPNKeepsTheDevicesOut() {
         XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 0, blockedWithoutVPN: true)),
-                       "Tether is sharing, but no VPN is on, so no device gets through until one is.")
+                       "No VPN is on, so Tether keeps every device out until one is.")
     }
 
     func testStatusSaysAWidgetStoppedIt() {
@@ -29,10 +29,16 @@ final class ShortcutReplyTests: XCTestCase {
                        "Tether is stopped. Open it, or run Start Tether, to share again.")
     }
 
+    /// In the status card's words (M9): the reason, then what to do.
     func testStatusPassesOnWhyWireGuardIsNotRunning() {
-        let state = State(running: true, connected: 0, problem: "Its keys can't be read yet. Unlock this iPhone once.")
-        XCTAssertEqual(ShortcutReply.status(state),
-                       "Personal Hotspot is on, but WireGuard isn't running. Its keys can't be read yet. Unlock this iPhone once.")
+        XCTAssertEqual(ShortcutReply.status(State(running: true, connected: 0, problem: .portTaken)),
+                       "Port 51820 is taken. Something else on this iPhone uses it. Turn off other VPN or WireGuard tunnels here, or restart the iPhone. Tether tries again by itself.")
+    }
+
+    /// The saved keys' problems hold with the hotspot off too, as on Home: nothing can start until they're solved.
+    func testStatusPassesOnAKeyProblemWithTheHotspotOff() {
+        XCTAssertEqual(ShortcutReply.status(State(running: false, connected: 0, problem: .keysLocked)),
+                       "Tether can't read its keys yet. iOS opens them after the first unlock since a restart. Tether tries again by itself. If this stays for a minute, restart the iPhone.")
     }
 
     /// Stopped while idle, a device may be on the hotspot, but Tether waits to be opened (#76).
@@ -62,7 +68,7 @@ final class ShortcutReplyTests: XCTestCase {
 
     func testSharingNeedsWireGuardRunning() {
         XCTAssertTrue(State(running: true, connected: 0).sharing)
-        XCTAssertFalse(State(running: true, connected: 0, problem: "Its keys can't be read yet.").sharing)
+        XCTAssertFalse(State(running: true, connected: 0, problem: .keysLocked).sharing)
         XCTAssertFalse(State(running: false, connected: 0).sharing)
     }
 

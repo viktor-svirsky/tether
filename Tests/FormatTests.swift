@@ -2,13 +2,14 @@ import XCTest
 @testable import TetherCore
 
 final class FormatTests: XCTestCase {
-    /// The Devices section's line (#109): the addresses while they fit, else how many.
+    /// The Devices section's line (#109): a device first, not an address, and what to do (L2). The
+    /// addresses stay in brackets while they fit, else how many.
     func testNotUsingTetherNamesUpToTwoAddresses() {
-        XCTAssertEqual(Format.notUsingTether(["172.20.10.2"]), "On your hotspot, not using Tether: 172.20.10.2")
+        XCTAssertEqual(Format.notUsingTether(["172.20.10.2"]), "1 device on the hotspot isn't using Tether (172.20.10.2). Set it up.")
         XCTAssertEqual(Format.notUsingTether(["172.20.10.2", "172.20.10.14"]),
-                       "On your hotspot, not using Tether: 172.20.10.2, 172.20.10.14")
+                       "2 devices on the hotspot aren't using Tether (172.20.10.2, 172.20.10.14). Set them up.")
         XCTAssertEqual(Format.notUsingTether(["172.20.10.2", "172.20.10.3", "172.20.10.4"]),
-                       "On your hotspot, not using Tether: 3 devices")
+                       "3 devices on the hotspot aren't using Tether. Set them up.")
     }
 
     func testSpeedUsesTheUnitOfASpeedTest() {
@@ -38,6 +39,14 @@ final class FormatTests: XCTestCase {
         XCTAssertEqual(Format.used(3_120_000_000, "this month"), "3.12 GB this month")
         XCTAssertEqual(Format.used(0, "since Nov 15"), "Nothing used since Nov 15")
         XCTAssertEqual(Format.used(3_120_000_000, "since Nov 15"), "3.12 GB since Nov 15")
+    }
+
+    /// With a limit, a row says it too (M2), so "near its limit" has a number to go with it.
+    func testUsedSaysTheLimitWithIt() {
+        XCTAssertEqual(Format.used(3_120_000_000, "this month", limit: 10_000_000_000), "3.12 GB of 10 GB this month")
+        XCTAssertEqual(Format.used(3_120_000_000, "since Nov 15", limit: 10_000_000_000), "3.12 GB of 10 GB since Nov 15")
+        XCTAssertEqual(Format.used(0, "this month", limit: 10_000_000_000), "Not used this month")
+        XCTAssertEqual(Format.used(3_120_000_000, "this month", limit: nil), "3.12 GB this month")
     }
 
     /// How the screens and notices name the running count (#187): "this month" when it runs from

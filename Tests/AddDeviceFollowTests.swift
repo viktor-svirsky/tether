@@ -68,4 +68,22 @@ final class AddDeviceFollowTests: XCTestCase {
         XCTAssertFalse(AddDeviceFollow.keepsScreenAwake(on: .proxy, waiting), "the proxy")
         XCTAssertFalse(AddDeviceFollow.keepsScreenAwake(on: nil, waiting), "the first question")
     }
+
+    /// Giving a device a new config (M1): the sheet follows that device by its id, and it counts as
+    /// claimed once its key is the code's. A new code doesn't take its place.
+    func testANewConfigIsFollowedByTheDevicesKey() {
+        let oldKey = WireGuardSetup.Peer(name: "Windows PC", publicKey: Data([1]), address: "10.7.0.3")
+        var follow = AddDeviceFollow(follows: nil, ready: next.id, replacing: oldKey)
+        let waiting = follow.progress(peers: [ipad, oldKey], connected: ["10.7.0.3"], hotspotOn: true)
+        XCTAssertNil(waiting.device, "the old config connecting is not the new one")
+        XCTAssertEqual(waiting.config, .toDo)
+        follow.readyChanged(to: laptop.id, peers: [ipad, oldKey])
+        var claimed = oldKey
+        claimed.publicKey = Data([2])
+        claimed.address = "10.7.0.5"
+        let listed = follow.progress(peers: [ipad, claimed], connected: [], hotspotOn: true)
+        XCTAssertEqual(listed.device, claimed)
+        XCTAssertEqual(listed.tunnel, .waiting)
+        XCTAssertTrue(follow.progress(peers: [ipad, claimed], connected: ["10.7.0.5"], hotspotOn: true).finished)
+    }
 }

@@ -80,7 +80,7 @@ struct WidgetState: Codable, Equatable {
         guard sharing else { return Copy.waitingForDevice }
         if blockedWithoutVPN { return "No VPN, devices kept out" }
         switch count {
-        case 0: return "Sharing, no device yet"
+        case 0: return "Sharing, no device connected"
         case 1: return "Sharing with 1 device"
         case let n: return "Sharing with \(n) devices"
         }
@@ -116,14 +116,13 @@ struct WidgetState: Codable, Equatable {
         return awake ? "Waiting" : "Stopped"
     }
 
-    /// The line under the title: why it isn't running, that devices are kept out, or the VPN. The
-    /// VPN only while Tether is awake to have looked.
+    /// The line under the title: why it isn't running, that devices are kept out, or a VPN while one
+    /// carries the internet. Nothing without one (M10): most people run none, and Only share through a
+    /// VPN says "Devices kept out" when it matters. The VPN only while Tether is awake to have looked.
     var detail: String {
         if let problem, !sharing { return problem }
         if sharing, blockedWithoutVPN { return "Devices kept out" }
-        guard awake else { return "" }
-        if vpn { return "Through a VPN" }
-        return sharing ? "No VPN" : ""
+        return awake && vpn ? "Through a VPN" : ""
     }
 }
 
