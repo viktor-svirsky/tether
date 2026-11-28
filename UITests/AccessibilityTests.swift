@@ -87,12 +87,11 @@ final class AccessibilityTests: TetherUITestCase {
     func testTheSpeedsStackAtTheLargestTextSize() throws {
         launch(.sharing, arguments: largestText)
         let speeds = reveal(element("traffic.speeds"))
-        let line = UIFont.preferredFont(forTextStyle: .headline,
+        let line = UIFont.preferredFont(forTextStyle: .title1,
                                         compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge)).lineHeight
-        XCTAssertGreaterThan(speeds.frame.height, 1.5 * line, "two lines, one for each speed: \(speeds.frame), line \(line)")
-        // On a narrow iPhone like the SE, one speed may still wrap once at its space, before "Mbit/s".
-        let lines = app.windows.firstMatch.frame.width >= 390 ? 2.5 : 3.5
-        XCTAssertLessThan(speeds.frame.height, lines * line, "no speed breaks over lines: \(speeds.frame), line \(line)")
+        // A speed that doesn't fit shrinks, down to half, rather than break.
+        XCTAssertGreaterThan(speeds.frame.height, 0.75 * line, "stacked, one line for each speed: \(speeds.frame), line \(line)")
+        XCTAssertLessThan(speeds.frame.height, 2.5 * line, "no speed breaks over lines: \(speeds.frame), line \(line)")
         XCTAssertLessThanOrEqual(speeds.frame.maxX, app.windows.firstMatch.frame.maxX)
         try audit(types: [.textClipped], only: "traffic.")
     }

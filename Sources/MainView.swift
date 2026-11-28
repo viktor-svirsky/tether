@@ -1,126 +1,86 @@
 import SwiftUI
-import Charts
 
 struct MainView: View {
     @ObservedObject private var model = Model.shared
-    @Environment(\.dynamicTypeSize) private var textSize
-
-    /// A device's name and state side by side. At the accessibility text sizes they'd break words
-    /// ("Connect-ed"), so the state goes under the name.
-    private var deviceRow: AnyLayout {
-        textSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-            : AnyLayout(HStackLayout())
-    }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var showSettings = false
     @State private var addingDevice = false
-    /// The gear's circle grows with the text size, so the symbol stays inside it.
-    @ScaledMetric(relativeTo: .title3) private var gearSize: CGFloat = 44
+    /// The Settings button grows with the text size, so the dots stay inside its tap area.
+    @ScaledMetric(relativeTo: .title3) private var settingsSize: CGFloat = 44
+
+    /// A state change on this screen: the status, and a device that comes, goes, connects or pauses.
+    /// The list animates it, so rows and blocks fade in and out and the heights ease instead of jumping.
+    private var change: [Int] {
+        [StatusCard.Phase(model).hashValue] + model.wireGuardPeers.map {
+            var hasher = Hasher()
+            hasher.combine($0.id)
+            hasher.combine(DeviceStatus($0, connected: model.wireGuardConnected).hashKey)
+            return hasher.finalize()
+        }
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                // The big title and the gear, outside any card, like the system's own large titles.
+                // TETHER and the Settings button, outside any card.
                 Section {
                     HStack {
                         Text("Tether")
-                            .font(.system(.largeTitle, design: .rounded, weight: .heavy))
+                            .monoCaps()
+                            // As written, whatever the capitals on screen do to the label.
+                            .accessibilityLabel("Tether")
                             .accessibilityAddTraits(.isHeader)
                         Spacer()
                         Button { showSettings = true } label: {
-                            Image(systemName: "gearshape")
+                            Image(systemName: "ellipsis")
                                 .font(.title3.weight(.semibold))
-                                .foregroundStyle(Color.primary)
-                                .frame(width: gearSize, height: gearSize)
-                                .background(Color(.secondarySystemGroupedBackground), in: Circle())
+                                .foregroundStyle(Theme.ink)
+                                .frame(width: settingsSize, height: settingsSize)
+                                .contentShape(.rect)
                         }
-                        // Plain, or a tap anywhere in the row (the title too) opens Settings.
+                        // Plain, or a tap anywhere in the row opens Settings.
                         .buttonStyle(.plain)
                         .accessibilityLabel("Settings")
                         .accessibilityIdentifier("settings.open")
                     }
-                }
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets())
-
-                Section {
+                    // In the same section, so no section gap opens between TETHER and the title.
                     StatusCard(model: model)
                 }
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets())
+                .paperRow()
+                .listRowInsets(.vertical, 0)
 
                 if let warning = model.expiryWarning {
-                    Section {
-                        Label {
-                            Text(warning)
-                        } icon: {
-                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("app.expiry")
-                    }
+                    warningSection(warning, icon: "exclamationmark.triangle.fill", id: "app.expiry")
                 }
 
                 // Above Add a device, so a reason it doesn't work and the way out are both here.
                 WireGuardProblemSection(model: model)
+                    .paperRow()
 
                 if model.blockedWithoutVPN {
-                    Section {
-                        Label {
-                            Text(VPNText.blocked(onlyFamily: model.vpnOnlyFamily))
-                        } icon: {
-                            Image(systemName: "lock.shield").foregroundStyle(.orange)
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("vpn.blocked")
-                    }
+                    warningSection(VPNText.blocked(onlyFamily: model.vpnOnlyFamily), icon: "lock.shield", id: "vpn.blocked")
                 }
 
                 if model.sharing, let below = model.belowBatteryStop {
-                    Section {
-                        Label {
-                            Text(below.text)
-                        } icon: {
-                            Image(systemName: "battery.25percent").foregroundStyle(.orange)
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("battery.low")
-                    }
+                    warningSection(below.text, icon: "battery.25percent", id: "battery.low")
                 }
 
                 if model.staleConfigShown {
-                    Section {
-                        Label {
-                            Text("A device is trying to connect with a config that no longer works. Delete its tunnel in WireGuard and add it again.")
-                        } icon: {
-                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("stale.warning")
-                    }
+                    warningSection("A device is trying to connect with a config that no longer works. Delete its tunnel in WireGuard and add it again.",
+                                   icon: "exclamationmark.triangle.fill", id: "stale.warning")
                 }
 
                 if !model.wireGuardPeers.isEmpty || model.proxyOn || !model.notUsingTether.isEmpty {
-                    Section("Devices") {
+                    Section {
                         ForEach(model.wireGuardPeers) { peer in
+                            let status = DeviceStatus(peer, connected: model.wireGuardConnected)
                             NavigationLink { DeviceView(model: model, peer: peer) } label: {
-                                // A plain row: LabeledContent with a Label on its right grows several
-                                // rows tall inside a NavigationLink on iOS 27.
-                                VStack(alignment: .leading, spacing: 4) {
-                                    deviceRow {
-                                        Text(peer.name)
-                                        if !textSize.isAccessibilitySize { Spacer() }
-                                        DeviceStatusLabel(status: DeviceStatus(peer, connected: model.wireGuardConnected),
-                                                          text: DeviceStatus(peer, connected: model.wireGuardConnected).label(now: model.clockNow))
-                                            .font(.subheadline)
-                                    }
-                                    // The label colour: grey text on the card fails the contrast audit.
-                                    Text(Format.used(model.usage(of: peer.id).thisMonth.total, model.usagePeriod))
-                                        .font(.subheadline)
-                                    if let reason = model.newConfig(peer) { OldAddressLabel(reason: reason).font(.footnote) }
-                                }
+                                HomeDeviceRow(name: peer.name, status: status, state: status.label(now: model.clockNow),
+                                              used: Format.used(model.usage(of: peer.id).thisMonth.total, model.usagePeriod),
+                                              newConfig: model.newConfig(peer))
                             }
+                            .navigationLinkIndicatorVisibility(.hidden)
                             .accessibilityIdentifier("device.\(peer.name)")
                         }
                         if model.proxyOn, let proxy = model.proxy {
@@ -131,16 +91,39 @@ struct MainView: View {
                             Button { addingDevice = true } label: {
                                 Text(Format.notUsingTether(model.notUsingTether))
                                     .font(.subheadline)
+                                    .foregroundStyle(Theme.ink)
                             }
                             .accessibilityHint("Opens Add a device")
                             .accessibilityIdentifier("devices.notUsingTether")
                         }
+                    } header: {
+                        Text("Devices")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(Theme.ink)
+                            .textCase(nil)
                     }
+                    .paperRow()
                 }
 
                 AddDeviceSection(model: model, first: model.wireGuardPeers.isEmpty && !model.proxyOn) { addingDevice = true }
+                    .paperRow()
+
+                // At the foot of the screen, like the board: turning the hotspot off is the switch.
+                if StatusCard.Phase(model) == .sharing {
+                    Section {
+                        Text("To stop, turn off Personal Hotspot.")
+                            .monoCaps()
+                            .accessibilityLabel("To stop, turn off Personal Hotspot.")
+                            .accessibilityIdentifier("status.stopHint")
+                    }
+                    .paperRow()
+                }
             }
-            // The title above draws it big, so the bar stays hidden. It's still set, because the
+            .paperList()
+            // TETHER near the top, like the board, not a grouped list's gap down.
+            .contentMargins(.top, 4, for: .scrollContent)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: change)
+            // TETHER above is the screen's name, so the bar stays hidden. It's still set, because the
             // screens pushed from here use it for their back button.
             .navigationTitle("Tether")
             .toolbar(.hidden, for: .navigationBar)
@@ -155,6 +138,20 @@ struct MainView: View {
             }
         }
     }
+
+    /// A problem on its own row, in ink, with the warning mark in the danger colour.
+    private func warningSection(_ text: String, icon: String, id: String) -> some View {
+        Section {
+            Label {
+                Text(text).foregroundStyle(Theme.ink)
+            } icon: {
+                Image(systemName: icon).foregroundStyle(Theme.danger)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier(id)
+        }
+        .paperRow()
+    }
 }
 
 extension MainView {
@@ -163,18 +160,67 @@ extension MainView {
     private func proxyRow(_ proxy: WireGuardSetup.Proxy) -> some View {
         let status = ProxyStatus(proxy, stats: model.proxyStats, hotspotOn: model.running)
         return NavigationLink { ProxyView(model: model) } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                deviceRow {
-                    Text(ProxyStatus.name)
-                    if !textSize.isAccessibilitySize { Spacer() }
-                    DeviceStatusLabel(status: status.look, text: status.label(now: model.clockNow))
-                        .font(.subheadline)
-                }
-                Text(Format.used(model.usage(of: proxy.id).thisMonth.total, model.usagePeriod))
-                    .font(.subheadline)
-            }
+            HomeDeviceRow(name: ProxyStatus.name, status: status.look, state: status.label(now: model.clockNow),
+                          used: Format.used(model.usage(of: proxy.id).thisMonth.total, model.usagePeriod))
         }
+        .navigationLinkIndicatorVisibility(.hidden)
         .accessibilityIdentifier("proxy.row")
+    }
+}
+
+private extension DeviceStatus {
+    /// Which state, without a pause's end: a new end isn't a change the list animates.
+    var hashKey: Int {
+        switch self {
+        case .connected: 0
+        case .notConnected: 1
+        case .paused: 2
+        }
+    }
+}
+
+/// A device on Home, like the board: a dash and the name, what it used on the right, and its state
+/// in words under it, after the live dot when it's connected. One that isn't connected is drawn in
+/// the secondary colour. At the accessibility text sizes the use goes under the name, or the name
+/// would break inside words.
+struct HomeDeviceRow: View {
+    let name: String
+    let status: DeviceStatus
+    /// The state in words, like Connected or Paused until 18:00.
+    let state: String
+    let used: String
+    var newConfig: HotspotSession.NewConfig? = nil
+    @Environment(\.dynamicTypeSize) private var textSize
+
+    private var layout: AnyLayout {
+        textSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            layout {
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text("– ").foregroundStyle(Theme.secondary).accessibilityHidden(true)
+                    Text(name).foregroundStyle(status == .connected ? Theme.ink : Theme.secondary)
+                }
+                if !textSize.isAccessibilitySize { Spacer(minLength: 8) }
+                Text(used)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.secondary)
+            }
+            HStack(spacing: 6) {
+                if status == .connected {
+                    Circle().fill(Theme.live).frame(width: 6, height: 6).accessibilityHidden(true)
+                }
+                Text(state)
+            }
+            .font(.subheadline)
+            .foregroundStyle(Theme.secondary)
+            if let newConfig { OldAddressLabel(reason: newConfig).font(.footnote) }
+        }
+        .frame(minHeight: 44)
     }
 }
 
@@ -199,7 +245,7 @@ struct HotspotSettingsLink: View {
             Text(Copy.hotspotPath)
                 .underline()
                 .multilineTextAlignment(.leading)
-                .foregroundStyle(Color.primary)
+                .foregroundStyle(Theme.ink)
         }
         // Plain, or a tap anywhere in the card or the row opens Settings.
         .buttonStyle(.plain)
@@ -207,104 +253,180 @@ struct HotspotSettingsLink: View {
     }
 }
 
-/// Recent throughput, with the newest sample at the right edge and both directions on one scale.
-/// It moves without an animation: a one-second animation per sample would redraw it every frame.
+/// The last 30 seconds as one ink line for download, upload as faint dots every half second, and a red dot
+/// at now on the download line. No grid and no axis: PEAK under it says what the top means.
+///
+/// Motion: each new sample draws the lines once, at their new place (`SpeedLine.Step`). They start
+/// out shifted right by one second and scaled to the old peak, so they look as before, then ease
+/// into place in 0.3 s and hold still until the next sample. Only that offset and scale animate, so
+/// a frame of the move redraws no path. Under Reduce Motion or in Low Power Mode the line steps once
+/// a second instead.
 struct SpeedHistoryGraph: View {
     @ObservedObject var history: SpeedHistory
     private var samples: [SpeedSample] { history.samples }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var textSize
-    /// Grows with the text, so the speed labels at the side don't overlap at the larger sizes. Capped,
-    /// since at the accessibility sizes only one of them shows.
-    @ScaledMetric(relativeTo: .caption) private var scaledHeight: CGFloat = 120
-    private var height: CGFloat { min(scaledHeight, 200) }
+    /// Grows a little with the text, capped, so the line keeps its shape at the largest sizes.
+    @ScaledMetric(relativeTo: .caption) private var scaledHeight: CGFloat = 104
+    private var height: CGFloat { min(scaledHeight, 160) }
 
-    private var end: Date { samples.last?.at ?? Date() }
-    private var peak: Double { max(1_000, samples.map { max($0.up, $0.down) }.max() ?? 0) }
+    /// What's drawn: the samples and their scale.
+    @State private var frame = SpeedLine.Frame()
+    /// Where the current move starts, see `SpeedLine.Step`.
+    @State private var start = Move()
+    /// One more per move: each change plays the move once.
+    @State private var moves = 0
+
+    struct Move {
+        var slide: CGFloat = 0
+        var stretch: CGFloat = 1
+        var dotRise: CGFloat = 0
+    }
+
+    static let ease: TimeInterval = 0.3
+
+    private var footer: AnyLayout {
+        textSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+    }
+
+    private var moving: Bool { Self.motionAllowed(reduceMotion: reduceMotion) }
+
+    /// Whether the speeds move between samples: not under Reduce Motion, nor in Low Power Mode,
+    /// read at each sample, so turning it on stops the motion at the next second.
+    static func motionAllowed(reduceMotion: Bool) -> Bool {
+        !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+    }
 
     var body: some View {
-        VStack(spacing: 4) {
-            Chart {
-                ForEach(samples) { sample in
-                    LineMark(x: .value("Time", sample.at), y: .value("Download", sample.down),
-                             series: .value("Direction", "Download"))
-                        .foregroundStyle(Direction.download)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                    LineMark(x: .value("Time", sample.at), y: .value("Upload", sample.up),
-                             series: .value("Direction", "Upload"))
-                        .foregroundStyle(Direction.upload)
-                        .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
-                }
-                if let latest = samples.last {
-                    PointMark(x: .value("Time", latest.at), y: .value("Download", latest.down))
-                        .foregroundStyle(Direction.download)
-                        .symbolSize(16)
-                    PointMark(x: .value("Time", latest.at), y: .value("Upload", latest.up))
-                        .foregroundStyle(Direction.upload)
-                        .symbolSize(16)
-                }
+        VStack(spacing: 14) {
+            GeometryReader { geometry in
+                plot(geometry.size)
             }
-            .chartXScale(domain: end.addingTimeInterval(-SpeedSample.historyDuration)...end)
-            .chartYScale(domain: 0...(peak * 1.15))
-            .chartXAxis {
-                AxisMarks(preset: .aligned, values: [end]) { _ in
-                    AxisValueLabel(centered: false, anchor: .topTrailing) {
-                        Text("Now").font(.caption)
-                    }
-                }
-            }
-            .chartYAxis {
-                // At the accessibility sizes only the top line has a label, no bigger than at the largest
-                // size below them, so it can't take over the width. The speeds above say it in full.
-                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
-                    AxisGridLine()
-                    if !textSize.isAccessibilitySize || value.index == value.count - 1 {
-                        AxisValueLabel {
-                            if let speed = value.as(Double.self) {
-                                Text(Format.speed(speed)).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                            }
-                        }
-                    }
-                }
-            }
-            .chartPlotStyle { plot in plot.clipped() }
             .frame(height: height)
-            // Under the chart, not an axis label, so it can't run into "Now".
-            Text("Last 30 seconds")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            // Side by side, or one under the other at the accessibility sizes, where the peak would break.
+            footer {
+                Text("Peak \(Format.speed(SpeedLine.peak(samples)))")
+                    .contentTransition(.numericText())
+                    .animation(moving ? .easeOut(duration: Self.ease) : nil, value: SpeedLine.peak(samples))
+                if !textSize.isAccessibilitySize { Spacer(minLength: 8) }
+                Text("30 s")
+            }
+            .monoCaps()
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Speed history, last 30 seconds")
         .accessibilityValue(samples.isEmpty ? "Waiting for traffic samples" :
             "Peak download \(Format.speed(samples.map(\.down).max() ?? 0)), peak upload \(Format.speed(samples.map(\.up).max() ?? 0))")
         .accessibilityIdentifier("traffic.history")
+        .onAppear { frame = SpeedLine.Step(from: nil, to: samples).frame }
+        .onChange(of: samples) { _, new in advance(to: new) }
+    }
+
+    private func advance(to samples: [SpeedSample]) {
+        let step = SpeedLine.Step(from: frame, to: samples)
+        frame = step.frame
+        guard moving, step.slide > 0 || step.stretch != 1 || step.dotRise != 0 else { return }
+        start = Move(slide: step.slide, stretch: step.stretch, dotRise: step.dotRise)
+        moves &+= 1
+    }
+
+    private func plot(_ size: CGSize) -> some View {
+        let down = SpeedLine.points(frame.shown, \.down, top: frame.top, size: size)
+        let up = SpeedLine.dots(frame.shown, \.up, top: frame.top, size: size)
+        let start = start
+        return ZStack(alignment: .topLeading) {
+            ZStack {
+                Path { path in
+                    for dot in up { path.addEllipse(in: CGRect(x: dot.x - 0.8, y: dot.y - 0.8, width: 1.6, height: 1.6)) }
+                }
+                .fill(Theme.secondary)
+                Path(SpeedLine.path(through: down))
+                    .stroke(Theme.ink, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            }
+            .keyframeAnimator(initialValue: Move(), trigger: moves) { content, move in
+                content
+                    .scaleEffect(x: 1, y: move.stretch, anchor: .bottom)
+                    .offset(x: move.slide * size.width)
+            } keyframes: { _ in
+                KeyframeTrack(\.slide) {
+                    MoveKeyframe(start.slide)
+                    LinearKeyframe(0, duration: Self.ease, timingCurve: .easeOut)
+                }
+                KeyframeTrack(\.stretch) {
+                    MoveKeyframe(start.stretch)
+                    LinearKeyframe(1, duration: Self.ease, timingCurve: .easeOut)
+                }
+            }
+            .frame(width: size.width, height: size.height)
+            // Cut at the left and right edges, with room for the stroke at the bottom.
+            .mask(Rectangle().padding(.vertical, -2))
+            // Outside the cut and the scale, so it stays round at the right edge, easing up or down.
+            if let now = down.last {
+                LiveDot()
+                    .keyframeAnimator(initialValue: CGFloat(0), trigger: moves) { content, rise in
+                        content.offset(y: -rise * size.height)
+                    } keyframes: { _ in
+                        MoveKeyframe(start.dotRise)
+                        LinearKeyframe(0, duration: Self.ease, timingCurve: .easeOut)
+                    }
+                    .position(now)
+            }
+        }
     }
 }
 
-/// How fast data moves right now, down and up. At the accessibility text sizes the two don't fit
-/// side by side, and each would break over three lines, so they stack (#176).
+/// The red dot at now: a solid dot in a faint ring.
+private struct LiveDot: View {
+    var body: some View {
+        ZStack {
+            Circle().fill(Theme.live.opacity(0.16)).frame(width: 18, height: 18)
+            Circle().fill(Theme.live).frame(width: 8, height: 8)
+        }
+    }
+}
+
+/// How fast data moves right now, down in ink and up in the secondary colour, the numbers rolling
+/// to each new value. At the accessibility text sizes the two don't fit side by side, and each
+/// would break over three lines, so they stack (#176).
 struct SpeedRow: View {
     let down: Double
     let up: Double
     @Environment(\.dynamicTypeSize) private var textSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var layout: AnyLayout {
         textSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-            : AnyLayout(HStackLayout(spacing: 16))
+            : AnyLayout(HStackLayout(spacing: 12))
     }
 
     var body: some View {
         layout {
-            Text("\(Image(systemName: "arrow.down")) \(Format.speed(down))")
-                .foregroundStyle(Direction.download)
-            Text("\(Image(systemName: "arrow.up")) \(Format.speed(up))")
-                .foregroundStyle(Direction.upload)
+            speed("arrow.down", down)
+                .foregroundStyle(Theme.ink)
+            speed("arrow.up", up)
+                .foregroundStyle(Theme.secondary)
         }
-        .font(.headline.monospacedDigit())
+        .animation(SpeedHistoryGraph.motionAllowed(reduceMotion: reduceMotion) ? .snappy(duration: 0.3) : nil, value: [down, up])
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Download \(Format.speed(down)), upload \(Format.speed(up))")
         .accessibilityIdentifier("traffic.speeds")
+    }
+
+    /// "↓ 3.2" big, with "Mbit/s" small and secondary after it.
+    private func speed(_ symbol: String, _ bps: Double) -> some View {
+        let text = Format.speed(bps)
+        let space = text.lastIndex(of: " ") ?? text.endIndex
+        let number = String(text[..<space]), unit = String(text[space...])
+        return Text("\(Text(Image(systemName: symbol)).font(.title2)) \(number)\(Text(unit).font(.subheadline.weight(.regular)).foregroundStyle(Theme.secondary))")
+            .font(.title.weight(.medium).monospacedDigit())
+            .contentTransition(.numericText(value: bps))
+            // One line each, the unit too: at the largest text sizes "400 kbit/s" would break.
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+            .frame(maxWidth: textSize.isAccessibilitySize ? nil : .infinity, alignment: .leading)
     }
 }
 
@@ -318,34 +440,33 @@ extension Color {
     })
 }
 
-/// Download and upload colours, the same in every speed and card. Orange and red stay for warnings.
-enum Direction {
-    static let download = Color.accentColor
-    /// Darker than the system teal in light mode and lighter in dark mode, so the upload speed
-    /// keeps a 4.5:1 contrast on the card in both.
-    static let upload = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.35, green: 0.85, blue: 0.80, alpha: 1)
-            : UIColor(red: 0.0, green: 0.47, blue: 0.48, alpha: 1)
-    })
-}
-
-/// The one-second answer: is this phone sharing right now, and is anyone using it. Turning off
-/// Personal Hotspot is how sharing stops, so it says that instead of having a switch. The orb is
-/// the screen's one bold thing: the app icon's colours while sharing, grey while waiting, orange
-/// when the hotspot is on but WireGuard isn't.
+/// The one-second answer at the top of Home: a big light title saying whether this phone shares,
+/// with the live dot while it does, who uses it, and under that the speeds while sharing, or what to
+/// do. Turning off Personal Hotspot is how sharing stops, so there's no switch.
 struct StatusCard: View {
     @ObservedObject var model: Model
-    @Environment(\.dynamicTypeSize) private var textSize
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The board's 52 points, growing with the text and capped so a long title still fits a few lines.
+    @ScaledMetric(relativeTo: .largeTitle) private var titleSize: CGFloat = 52
 
-    private var sharing: Bool { model.sharing && !blocked }
-    /// Local Network is off for Tether, so its replies never reach the devices and none can connect.
-    /// That comes first, hotspot or not: nothing works until it's on.
-    private var blocked: Bool { model.localNetworkDenied }
-    private var look: StatusOrb.Look { sharing ? .sharing : blocked || model.running ? .problem : .waiting }
+    /// What the card shows. Local Network off comes first, hotspot or not: nothing works until it's on.
+    enum Phase: Hashable {
+        case blocked, sharing, cantShare, waiting
+
+        @MainActor init(_ model: Model) {
+            self = model.localNetworkDenied ? .blocked : model.sharing ? .sharing : model.running ? .cantShare : .waiting
+        }
+    }
+
+    private var phase: Phase { Phase(model) }
+
     private var title: String {
-        blocked ? "Devices can't connect" : sharing ? "Sharing" : model.running ? "Tether can't share yet" : Copy.waitingForDevice
+        switch phase {
+        case .blocked: "Devices can't connect"
+        case .sharing: "Sharing"
+        case .cantShare: "Tether can't share yet"
+        case .waiting: Copy.waitingForDevice
+        }
     }
 
     /// Opens Settings at its main screen, where Personal Hotspot is near the top. Nothing goes
@@ -355,81 +476,78 @@ struct StatusCard: View {
         UIApplication.shared.open(URL(string: "App-prefs:")!)
     }
 
-    private var headline: String {
-        let proxy = model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running).inUse } ?? false
-        return UsingTether.headline(devices: model.wireGuardConnected.count, proxy: proxy)
-    }
-
-    /// The orb sits left of the text. At the accessibility text sizes a row would squeeze the text
-    /// into a narrow column, so the orb goes above it.
-    private var layout: AnyLayout {
-        textSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-            : AnyLayout(HStackLayout(alignment: .center, spacing: 18))
+    private var headline: String? {
+        switch phase {
+        case .blocked: return "Local Network is off for Tether"
+        case .sharing:
+            let proxy = model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running).inUse } ?? false
+            return UsingTether.headline(devices: model.wireGuardConnected.count, proxy: proxy)
+        // The WireGuard section under it says why, and what to do.
+        case .cantShare: return "Personal Hotspot is on, but WireGuard isn't running."
+        case .waiting: return nil
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            layout {
-                StatusOrb(look: look)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.system(.title, design: .rounded, weight: .bold))
-                        .accessibilityIdentifier("status.title")
-                    if blocked {
-                        Text("Local Network is off for Tether")
-                            .font(.headline)
-                            .accessibilityIdentifier("status.headline")
-                    } else if sharing {
-                        Text(headline)
-                            .font(.headline)
-                            .accessibilityIdentifier("status.headline")
-                    } else if model.running {
-                        // The WireGuard section under the card says why, and what to do.
-                        Text("Personal Hotspot is on, but WireGuard isn't running.")
-                            .font(.headline)
-                            .accessibilityIdentifier("status.headline")
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(title)
+                    .font(.system(size: min(titleSize, 80), weight: .light))
+                    .tracking(-1)
+                    .foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .contentTransition(.opacity)
+                    .accessibilityIdentifier("status.title")
+                if phase == .sharing {
+                    Circle()
+                        .fill(Theme.live)
+                        .frame(width: 10, height: 10)
+                        .transition(.opacity)
+                        .accessibilityHidden(true)
+                }
+            }
+            if let headline {
+                Text(headline)
+                    .font(.callout)
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .contentTransition(.opacity)
+                    .padding(.top, 10)
+                    .accessibilityIdentifier("status.headline")
+                    .transition(.opacity)
+            }
+            Group {
+                switch phase {
+                case .blocked:
+                    VStack(alignment: .leading, spacing: 12) {
+                        LocalNetworkWarning(id: "localNetwork")
                     }
-                }
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            if blocked {
-                Divider()
-                LocalNetworkWarning(id: "localNetwork")
-            } else if sharing {
-                Divider()
-                SpeedRow(down: model.downSpeed, up: model.upSpeed)
-                SpeedHistoryGraph(history: model.speedHistory)
-                hint {
-                    Text("To stop, turn off Personal Hotspot.")
-                        .accessibilityIdentifier("status.stopHint")
-                }
-            } else if !model.running {
-                Divider()
-                hint {
+                case .sharing:
+                    VStack(alignment: .leading, spacing: 14) {
+                        SpeedRow(down: model.downSpeed, up: model.upSpeed)
+                        SpeedHistoryGraph(history: model.speedHistory)
+                    }
+                    .liveCard()
+                case .waiting:
                     HotspotWaitingHint(id: "status")
+                        .font(.callout)
+                        .foregroundStyle(Theme.ink)
+                case .cantShare:
+                    EmptyView()
                 }
             }
+            .padding(.top, phase == .cantShare ? 0 : 28)
+            .transition(.opacity)
         }
+        .padding(.top, 36)
+        .padding(.bottom, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .background {
-            // The only shadow on the screen, so this card reads first. Dark mode has none, like the system's
-            // cards. On the shape alone: on the whole card every letter gets a grey halo, which fails contrast.
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color(.secondarySystemGroupedBackground))
-                .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.07), radius: 14, y: 6)
-        }
-    }
-
-    /// One line under the divider, after a grey info symbol. The text keeps the label colour.
-    private func hint(@ViewBuilder _ content: () -> some View) -> some View {
-        Label { content() } icon: { Image(systemName: "info.circle").foregroundStyle(.secondary) }
-            .font(.subheadline)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: headline)
     }
 }
 
-/// The large round sign of the state. Each look is its own layer, so a change cross-fades.
+/// The large round sign of the state, in the app icon's colours. Home doesn't show it any more
+/// (#349): Add a device and the Local Network intro still do, until their screens move over.
 struct StatusOrb: View {
     enum Look { case sharing, waiting, problem }
     let look: Look
