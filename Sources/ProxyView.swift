@@ -108,6 +108,8 @@ struct ProxyView: View {
         }
         .paperList()
         .tint(Theme.ink)
+        // Closer than a grouped list's gaps, like the board's rows.
+        .listSectionSpacing(12)
         .animation(DeviceScreenMotion.rows(reduceMotion: reduceMotion), value: rows(servers: servers.count))
         .navigationTitle(ProxyStatus.name)
         .navigationBarTitleDisplayMode(.inline)
