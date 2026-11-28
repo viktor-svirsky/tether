@@ -54,6 +54,7 @@ struct SettingsView: View {
                 about
             }
             .listStyle(.grouped)
+            .listSectionSpacing(.compact)
             .paperList()
             .tint(Theme.ink)
             // The DNS field and its problem line come and go with the choice and what's typed.
@@ -65,6 +66,8 @@ struct SettingsView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Text("Tether")
                         .monoCaps()
+                        // Its own width: the bar gives a leading item less and cut it to "TET...".
+                        .fixedSize()
                         .accessibilityHidden(true)
                 }
                 .sharedBackgroundVisibility(.hidden)

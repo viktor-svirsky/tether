@@ -43,6 +43,7 @@ struct DiagnosticsView: View {
                 }
             }
             .listStyle(.grouped)
+            .listSectionSpacing(.compact)
             .paperList()
         }
         .overlay(alignment: .bottom) {
