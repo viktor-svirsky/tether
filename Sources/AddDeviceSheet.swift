@@ -2,7 +2,7 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 /// Adding one device. First it asks whether the device has the WireGuard app (#78): with it, three steps
-/// on a line that fills with the icon's colours as each one ticks off by itself: join the hotspot,
+/// on a line that fills in ink as each one ticks off by itself: join the hotspot,
 /// give it the config, turn its tunnel on. Without it, the proxy's three steps, see `proxySteps`.
 /// The WireGuard way follows the code that
 /// was ready when it opened, see `AddDeviceFollow` and `AddDeviceProgress`. The page and the
@@ -28,6 +28,8 @@ struct AddDeviceSheet: View {
     /// Selects the name when the field starts editing, once, see `SelectsAllOnEdit`.
     @State private var selectsName = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The way picked at the first question, empty while it shows.
     @State private var path: [AddDeviceWay]
     /// The proxy's last step, from when its screen opened.
@@ -60,6 +62,8 @@ struct AddDeviceSheet: View {
                     }
                 }
         }
+        // Links and the system buttons in ink, like the rest of the paper look (#349).
+        .tint(Theme.ink)
         .onChange(of: model.wireGuardReady?.id) { _, new in follow.readyChanged(to: new, peers: model.wireGuardPeers) }
         // The demos that open on the sheet open the window the same way.
         .onAppear {
@@ -110,53 +114,60 @@ struct AddDeviceSheet: View {
     /// The first question: the WireGuard app, or the proxy for a device without it (#78).
     private var choice: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 20) {
                 Text("Does the other device have the WireGuard app?")
-                    .font(.title3.weight(.semibold))
+                    .font(Self.titleFont)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("add.question")
-                wayButton(.wireGuard, title: "Yes, use WireGuard", detail: "Everything on it goes through Tether, games and calls too.",
-                          id: "add.way.wireGuard")
-                wayButton(.proxy, title: "No, use the proxy", detail: "No app needed. Most apps go through Tether, some don't.",
-                          id: "add.way.proxy")
+                VStack(spacing: 4) {
+                    wayButton(.wireGuard, title: "Yes, use WireGuard", detail: "Everything on it goes through Tether, games and calls too.",
+                              id: "add.way.wireGuard")
+                    wayButton(.proxy, title: "No, use the proxy", detail: "No app needed. Most apps go through Tether, some don't.",
+                              id: "add.way.proxy")
+                }
                 Text("Can't install apps? A TV, a console or a work laptop can use the proxy.")
                     .font(.subheadline)
+                    .foregroundStyle(Theme.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("add.wayHint")
             }
-            .padding(.horizontal, 16)
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, Self.margin)
             .padding(.top, 8)
             .padding(.bottom, 24)
         }
-        .background(Color(.systemGroupedBackground))
+        .paperBackground()
     }
 
-    /// One answer, as a card that opens its steps. The detail keeps the label colour: grey fails the
-    /// contrast audit on the card.
+    /// One answer, as a plain row on the paper that opens its steps: the title in ink, the detail in
+    /// the secondary colour, and an arrow instead of a chevron.
     private func wayButton(_ way: AddDeviceWay, title: String, detail: String, id: String) -> some View {
         NavigationLink(value: way) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.headline)
-                    Text(detail).font(.subheadline)
+                    Text(title).font(.title3)
+                    Text(detail).font(.subheadline).foregroundStyle(Theme.secondary)
                 }
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                Image(systemName: "arrow.right")
+                    .font(.body)
                     .accessibilityHidden(true)
             }
-            .foregroundStyle(Color.primary)
-            .padding(16)
-            .background(Self.card)
-            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .foregroundStyle(Theme.ink)
+            .padding(.vertical, 14)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(id)
     }
+
+    /// The light large title of the paper look, which scales with Dynamic Type.
+    private static let titleFont = Font.system(.largeTitle, weight: .light)
+    /// The space at the sides of each page.
+    private static let margin: CGFloat = 24
 
     /// The WireGuard way's three steps, as they were before the question.
     private var wireGuardSteps: some View {
@@ -164,12 +175,14 @@ struct AddDeviceSheet: View {
         let current = Self.current(progress)
         return ScrollViewReader { scroll in ScrollView {
             VStack(spacing: 24) {
+                stepCount(current <= 3 ? current : nil)
                 // Above the steps: a device scanned first would only learn after that it can't work.
                 if model.localNetworkDenied && !progress.finished {
                     localNetworkWarning
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)
-                        .background(Self.card)
+                        .background(Self.box)
+                        .transition(.opacity)
                 }
                 if progress.device == nil {
                     // Every step after this assumes WireGuard is on the other device (#169).
@@ -177,6 +190,7 @@ struct AddDeviceSheet: View {
                         .font(.subheadline)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("add.install")
+                        .transition(.opacity)
                 }
                 VStack(spacing: 0) {
                     StepRow(number: 1, mark: mark(progress.joined, step: 1, current: current), lineDone: progress.joined == .done,
@@ -208,17 +222,24 @@ struct AddDeviceSheet: View {
                         }
                     }
                 }
-                .padding(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 18))
-                .background(Self.card)
 
                 if naming.device != nil {
                     connected
+                        .transition(.opacity)
                 }
             }
-            .padding(.horizontal, 16)
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, Self.margin)
             .padding(.bottom, 24)
+            // Each step ticking off, the code giving way to Connected, and the kind of device
+            // changing cross-fade, and the page's height follows, instead of a cut (#349).
+            .animation(motion, value: progress)
+            .animation(motion, value: naming.device)
+            .animation(motion, value: kind)
+            .animation(motion, value: model.localNetworkDenied)
+            .animation(motion, value: model.staleConfigShown)
         }
-        .background(Color(.systemGroupedBackground))
+        .paperBackground()
         // Lowering the keyboard needs a way other than its Done, which saves and closes.
         .scrollDismissesKeyboard(.immediately)
         // iOS scrolls only the text of a focused field above the keyboard, not the box around
@@ -226,21 +247,21 @@ struct AddDeviceSheet: View {
         // room under the scrolling content (#173).
         .safeAreaPadding(.bottom, Self.nameBoxRoom)
         .safeAreaInset(edge: .bottom) {
-            if naming.device != nil {
+            // Its own animation: the inset is outside the page's VStack, so Done fades in with Connected.
+            VStack { if naming.device != nil {
                 Button(action: finish) {
-                    Text("Done").font(.headline).frame(maxWidth: .infinity)
+                    Text("Done").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.filledButton)
-                .buttonBorderShape(.capsule)
-                .controlSize(.large)
-                .padding(.horizontal, 16)
+                .buttonStyle(InkCapsuleButtonStyle())
+                .padding(.horizontal, Self.margin)
                 .padding(.vertical, 8)
                 // Large text scrolls the connected message under it.
-                .background(.bar)
+                .background(Theme.paper)
+                .transition(.opacity)
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY.rounded() } action: { doneTop = $0 }
                 .accessibilityIdentifier("add.done")
-            }
+            } }
+            .animation(motion, value: naming.device)
         }
         .navigationTitle("Use WireGuard")
         .navigationBarTitleDisplayMode(.inline)
@@ -260,19 +281,19 @@ struct AddDeviceSheet: View {
     /// Once it connects: that it did, and its name to type.
     private var connected: some View {
         VStack(spacing: 14) {
-            StatusOrb(look: .sharing)
-            // The tick is the step marks' own, and VoiceOver reads the word.
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(LinearGradient(colors: StepMark.doneColors, startPoint: .topLeading, endPoint: .bottomTrailing))
+            // The live dot says it in colour, and the word says it to everyone.
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(Theme.live)
+                    .frame(width: 12, height: 12)
                     .accessibilityHidden(true)
                 Text("Connected")
                     .accessibilityIdentifier("add.result")
             }
-            .font(.system(.title, design: .rounded, weight: .heavy))
+            .font(Self.titleFont)
             Text("It uses this iPhone's data now.")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.secondary)
                 .multilineTextAlignment(.center)
             // Above the field, so the keyboard doesn't cover it. The draft stays to try again.
             if let problem = nameProblem {
@@ -297,7 +318,7 @@ struct AddDeviceSheet: View {
                     .accessibilityIdentifier("add.name")
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(Self.box)
                     // The box, for the tests: the text field's own frame is only the text.
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("add.nameBox")
@@ -332,8 +353,29 @@ struct AddDeviceSheet: View {
         model.wireGuardDeviceProblem.flatMap { $0.device == naming.device ? $0.text : nil }
     }
 
-    private static var card: some View {
-        RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color(.secondarySystemGroupedBackground))
+    /// A box on the paper for what's typed or copied, and for a warning: the card's colour with a
+    /// thin edge in the secondary colour, 3:1 or more like a control's edge, since white on paper
+    /// alone doesn't show. No shadow: that's the live card's, for what moves.
+    private static var box: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(Theme.card)
+            .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.secondary, lineWidth: 1) }
+    }
+
+    /// A short ease when a step's state changes. Nothing moves with Reduce Motion: it changes at once.
+    private var motion: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.3) }
+
+    /// STEP 2 OF 3 above the steps, the digit rolling to the next one. VoiceOver reads the step with
+    /// each title instead, see `StepRow`. Gone once every step is done.
+    @ViewBuilder private func stepCount(_ step: Int?) -> some View {
+        if let step {
+            Text("Step \(step) of 3")
+                .monoCaps()
+                .contentTransition(.numericText(value: Double(step)))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityHidden(true)
+                .transition(.opacity)
+        }
     }
 
     /// The first step that isn't done, the one the person is on.
@@ -362,7 +404,8 @@ struct AddDeviceSheet: View {
     private func note(_ text: String) -> some View {
         Text(text)
             .font(.subheadline)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Theme.secondary)
+            .transition(.opacity)
     }
 
     /// The device picks how it gets the config. The browser needs the hotspot, and on a carrier
@@ -387,10 +430,16 @@ struct AddDeviceSheet: View {
                     .accessibilityIdentifier("add.kind")
                 }
                 switch kind {
-                case .phone: scan(code.qr)
-                case .computer: download(hosts: model.pageHosts, file: code.file)
+                case .phone:
+                    VStack(alignment: .leading, spacing: 14) { scan(code.qr) }
+                        .transition(.opacity)
+                case .computer:
+                    VStack(alignment: .leading, spacing: 14) { download(hosts: model.pageHosts, file: code.file) }
+                        .transition(.opacity)
                 }
             }
+            // The code fades out as the device's name fades in, see `wireGuardSteps`.
+            .transition(.opacity)
         } else if model.wireGuardReady != nil {
             note("It shows up here once the device is on the hotspot.")
                 .accessibilityIdentifier("add.joinFirst")
@@ -417,9 +466,16 @@ struct AddDeviceSheet: View {
                 .resizable()
                 .scaledToFit()
                 .frame(maxWidth: 200)
-                // The QR standard's quiet zone, four modules or more, which a dark card doesn't give (#178).
-                .padding(16)
-                .background(.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                // The QR standard's quiet zone, four modules or more, which dark paper doesn't give
+                // (#178). White in dark mode too, with the card's edge there instead of a shadow.
+                .padding(22)
+                .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay {
+                    if scheme == .dark {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.cardEdge, lineWidth: 1)
+                    }
+                }
+                .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.08), radius: 15, y: 10)
                 .frame(maxWidth: .infinity)
                 .accessibilityLabel("QR code for the next device")
                 .accessibilityIdentifier("add.qr")
@@ -452,9 +508,9 @@ struct AddDeviceSheet: View {
         }
         if let file {
             HStack(spacing: 10) {
-                Rectangle().fill(Color(.separator)).frame(height: 1)
-                Text("or").font(.footnote).foregroundStyle(.secondary)
-                Rectangle().fill(Color(.separator)).frame(height: 1)
+                Rectangle().fill(Theme.secondary.opacity(0.35)).frame(height: 1)
+                Text("or").font(.footnote).foregroundStyle(Theme.secondary)
+                Rectangle().fill(Theme.secondary.opacity(0.35)).frame(height: 1)
             }
             .accessibilityHidden(true)
             ShareLink(item: file) {
@@ -475,15 +531,16 @@ struct AddDeviceSheet: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
+            .buttonBorderShape(.capsule)
             .accessibilityIdentifier("add.share")
             Text("AirDrop it to a Mac, then open it in WireGuard.")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.secondary)
                 .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("add.airdrop")
             Text("On a travel router, import the file in its VPN settings, under WireGuard.")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("add.router")
@@ -517,7 +574,7 @@ struct AddDeviceSheet: View {
                 .accessibilityIdentifier(copyID)
         }
         .padding(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 6))
-        .background(Color(.systemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Self.box)
     }
 
     // MARK: The proxy (#78)
@@ -531,19 +588,22 @@ struct AddDeviceSheet: View {
         let blocked = ProxyStatus.blocked(model.proxy)
         return ScrollView {
             VStack(spacing: 24) {
+                stepCount(working ? nil : hotspot ? 2 : 1)
                 if model.localNetworkDenied && !working {
                     localNetworkWarning
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)
-                        .background(Self.card)
+                        .background(Self.box)
+                        .transition(.opacity)
                 }
                 if let problem = model.proxyProblem {
                     WarningLabel(problem)
                         .font(.subheadline)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)
-                        .background(Self.card)
+                        .background(Self.box)
                         .accessibilityIdentifier("add.proxy.problem")
+                        .transition(.opacity)
                 }
                 VStack(spacing: 0) {
                     StepRow(number: 1, mark: hotspot ? .done : .current, lineDone: hotspot,
@@ -573,13 +633,17 @@ struct AddDeviceSheet: View {
                         .accessibilityIdentifier("add.proxy.result")
                     }
                 }
-                .padding(EdgeInsets(top: 20, leading: 14, bottom: 20, trailing: 18))
-                .background(Self.card)
             }
-            .padding(.horizontal, 16)
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, Self.margin)
             .padding(.bottom, 24)
+            .animation(motion, value: working)
+            .animation(motion, value: hotspot)
+            .animation(motion, value: blocked)
+            .animation(motion, value: model.localNetworkDenied)
+            .animation(motion, value: model.proxyProblem)
         }
-        .background(Color(.systemGroupedBackground))
+        .paperBackground()
         .navigationTitle("Use the proxy")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { closeButton }
@@ -630,8 +694,9 @@ struct AddDeviceSheet: View {
     /// page's address: a download from the page is listed at once, so it works on after that.
     private func windowNote(id: String) -> some View {
         Text("Works while this screen is open, and for \(Int(AddWindow.afterClose / 60)) minutes after you close it or leave Tether.")
-            // In the label colour, like the line above it: grey fails the contrast audit on this card.
+            // Secondary on paper passes the contrast audit, where grey on the old card didn't.
             .font(.subheadline)
+            .foregroundStyle(Theme.secondary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
             .accessibilityIdentifier(id)
@@ -660,10 +725,11 @@ struct CopyButton: View {
     let text: String
     /// What VoiceOver calls it, "Copy the address".
     let label: String
-    /// Behind the icon: the card's colour on the sheet's grey, a fill on a list row.
-    var fill = Color(.secondarySystemGroupedBackground)
+    /// Behind the icon: the card's colour on the sheet's paper, a fill on a list row.
+    var fill = Theme.card
     @State private var copied = false
     @State private var reset: Task<Void, Never>?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button {
@@ -678,11 +744,13 @@ struct CopyButton: View {
         } label: {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
                 .font(.body.weight(.semibold))
+                .contentTransition(.symbolEffect(.replace))
                 .frame(width: 44, height: 44)
                 .background(fill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: copied)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Color.accentColor)
+        .foregroundStyle(Theme.ink)
         .accessibilityLabel(label)
         .accessibilityValue(copied ? "Copied" : "")
     }
@@ -721,7 +789,7 @@ struct ProxyPlaces: View {
     }
 }
 
-/// A kind of device at accessibility sizes: filled like Done when chosen, plain otherwise.
+/// A kind of device at accessibility sizes: filled in ink like Done when chosen, an outline otherwise.
 private struct KindButtonStyle: ButtonStyle {
     let selected: Bool
 
@@ -729,17 +797,36 @@ private struct KindButtonStyle: ButtonStyle {
         configuration.label
             .font(.headline)
             .multilineTextAlignment(.center)
-            .foregroundStyle(selected ? Color.white : Color.accentColor)
+            .foregroundStyle(selected ? Theme.paper : Theme.ink)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .padding(.horizontal, 16)
-            .background(selected ? Color.filledButton : Color(.tertiarySystemFill), in: Capsule())
+            .background(selected ? Theme.ink : Color.clear, in: Capsule())
+            .overlay { Capsule().strokeBorder(selected ? Theme.ink : Theme.secondary, lineWidth: 1.5) }
+            .contentShape(Capsule())
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
+/// The one filled button of a page, Done or Continue: paper text on an ink capsule, so it keeps
+/// its contrast in both modes (ink is light in dark mode). It grows with the text.
+struct InkCapsuleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .multilineTextAlignment(.center)
+            .foregroundStyle(Theme.paper)
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .padding(.vertical, 4)
+            .padding(.horizontal, 20)
+            .background(Theme.ink, in: Capsule())
+            .contentShape(Capsule())
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
 
 /// One step on the line: its mark, the title and what to do, and the line down to the next step,
-/// in the icon's colours once this step is done. The last step has no line.
+/// in ink once this step is done. The last step has no line.
 private struct StepRow<Content: View>: View {
     let number: Int
     let mark: StepMark.Look
@@ -774,7 +861,9 @@ private struct StepRow<Content: View>: View {
     private var text: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.headline)
+                .font(.title3)
+                // A step not reached yet is in the secondary colour.
+                .foregroundStyle(mark == .later ? Theme.secondary : Theme.ink)
                 // The step's number and state are read with its title, as one stop (#175).
                 .accessibilityLabel("Step \(number) of 3, \(title)")
                 .accessibilityValue(mark.spoken)
@@ -790,9 +879,8 @@ private struct StepRow<Content: View>: View {
                 stepMark
                 if let lineDone {
                     Capsule()
-                        .fill(lineDone ? AnyShapeStyle(LinearGradient(colors: StatusOrb.iconColors, startPoint: .top, endPoint: .bottom))
-                                       : AnyShapeStyle(Color(.systemGray5)))
-                        .frame(width: 3)
+                        .fill(lineDone ? Theme.ink : Theme.secondary.opacity(0.3))
+                        .frame(width: 2)
                         .frame(maxHeight: .infinity)
                         .accessibilityHidden(true)
                 }
@@ -826,30 +914,41 @@ struct SelectsAllOnEdit: ViewModifier {
     }
 }
 
-/// A step's mark: a tick in the icon's colours when done, the number in a ring for the current step
-/// (with a spinner while it waits for the device), and a grey ring for the steps after it.
+/// A step's mark: a paper tick on ink when done, the number in an ink ring for the current step
+/// (three dots while it waits for the device), and a secondary ring for the steps after it. Still
+/// marks: a spinner would turn for as long as the device takes, and the waiting is said in words.
 private struct StepMark: View {
     enum Look { case done, current, waiting, later }
     let number: Int
     let state: Look
-    /// The icon's blue to a darker teal than its own, so the white tick keeps a 4.5:1 contrast.
-    static let doneColors = [StatusOrb.iconColors[0], Color(red: 0.04, green: 0.48, blue: 0.49)]
 
     var body: some View {
         ZStack {
             switch state {
             case .done:
-                Circle().fill(LinearGradient(colors: Self.doneColors, startPoint: .topLeading, endPoint: .bottomTrailing))
-                Image(systemName: "checkmark").font(.subheadline.weight(.bold)).foregroundStyle(.white)
+                ZStack {
+                    Circle().fill(Theme.ink)
+                    Image(systemName: "checkmark").font(.subheadline.weight(.bold)).foregroundStyle(Theme.paper)
+                }
+                .transition(.opacity)
             case .current:
-                Circle().strokeBorder(Color.accentColor, lineWidth: 2.5)
-                Text("\(number)").font(.subheadline.weight(.bold)).foregroundStyle(Color.accentColor)
+                ZStack {
+                    Circle().strokeBorder(Theme.ink, lineWidth: 1.5)
+                    Text("\(number)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                }
+                .transition(.opacity)
             case .waiting:
-                Circle().strokeBorder(Color.accentColor, lineWidth: 2.5)
-                ProgressView().controlSize(.small)
+                ZStack {
+                    Circle().strokeBorder(Theme.ink, lineWidth: 1.5)
+                    Image(systemName: "ellipsis").font(.subheadline.weight(.bold)).foregroundStyle(Theme.ink)
+                }
+                .transition(.opacity)
             case .later:
-                Circle().strokeBorder(Color(.systemGray3), lineWidth: 2)
-                Text("\(number)").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                ZStack {
+                    Circle().strokeBorder(Theme.secondary, lineWidth: 1.5)
+                    Text("\(number)").font(.subheadline).foregroundStyle(Theme.secondary)
+                }
+                .transition(.opacity)
             }
         }
         // Read with the step's title instead, see `StepRow`.
