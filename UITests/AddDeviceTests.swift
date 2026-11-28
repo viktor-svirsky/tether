@@ -31,7 +31,7 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertEqual(value(of: element("add.step2")), "")
         XCTAssertEqual(label(of: "add.step3"), "Step 3 of 3, Turn its tunnel on")
         XCTAssertEqual(value(of: element("add.step3")), "")
-        XCTAssertEqual(label(of: "add.hotspotPath"), "Settings > Personal Hotspot > Allow Others to Join")
+        XCTAssertEqual(label(of: "add.hotspotPath"), Copy.hotspotPath)
         XCTAssertTrue(app.segmentedControls.buttons["Phone or tablet"].isSelected, "a phone or tablet first")
         XCTAssertTrue(app.segmentedControls.buttons["Computer or router"].exists)
         XCTAssertEqual(element("add.qr").label, "QR code for the next device")
