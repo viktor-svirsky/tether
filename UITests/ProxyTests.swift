@@ -184,11 +184,17 @@ final class ProxyTests: TetherUITestCase {
         XCTAssertEqual(ipv6.value as? String, "2001:db8:9e74:4eaa:459:5cd0:7ec7:f792")
     }
 
+    /// Taps the switch itself, at the row's right end: the paper look's ink switch (#349) takes taps
+    /// only there, not on its label.
+    private func tapSwitch(_ row: XCUIElement) {
+        row.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: -25, dy: 0)).tap()
+    }
+
     func testPauseStopsItAndTheRowSaysSo() {
         launch(.proxy)
         openProxy()
         let pause = reveal(app.switches["proxy.pause"].firstMatch)
-        pause.switches.firstMatch.exists ? pause.switches.firstMatch.tap() : pause.tap()
+        tapSwitch(pause)
         XCTAssertTrue(app.buttons[Copy.untilResumed].waitForExistence(timeout: 5), "how long, as for a device")
         app.buttons[Copy.untilResumed].tap()
         waitUntilGone(app.buttons[Copy.untilResumed])
@@ -203,7 +209,7 @@ final class ProxyTests: TetherUITestCase {
         launch(.proxy)
         openProxy()
         let pause = reveal(app.switches["proxy.pause"].firstMatch)
-        pause.switches.firstMatch.exists ? pause.switches.firstMatch.tap() : pause.tap()
+        tapSwitch(pause)
         XCTAssertTrue(app.buttons["For 1 hour"].waitForExistence(timeout: 5))
         app.buttons["For 1 hour"].tap()
         waitUntilGone(app.buttons["For 1 hour"])
