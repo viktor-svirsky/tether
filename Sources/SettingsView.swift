@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 import UserNotifications
 
 /// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle or at low battery, the
@@ -340,14 +339,6 @@ struct SettingsView: View {
     }
 }
 
-
-/// The log as a file to share, see `DebugLog`. It's written when the share sheet asks for it, so it
-/// has the lines up to then.
-private struct LogFile: Transferable {
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(exportedContentType: .plainText) { _ in SentTransferredFile(try Model.writeLog()) }
-    }
-}
 
 /// One kind's switch, saved where `Notifier` reads it.
 private struct NoticeSwitch: View {

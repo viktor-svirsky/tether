@@ -8,7 +8,8 @@
 //   Traffic.swift       the server's byte counters, Foundation only
 //   Format.swift        bytes and speeds as text
 //   MainView.swift      MainView (the main screen), StatusCard, and the speeds
-//   DevicesView.swift   Add a device on the main screen, and a device's own screen
+//   DevicesView.swift   a device's own screen
+//   HomeSections.swift  Add a device and why WireGuard isn't running, on the main screen
 //   ProxyView.swift     the HTTP proxy's own screen (#78)
 //   AddDeviceSheet.swift the steps to add a device, with the QR code for it
 //   AddDeviceProgress.swift  how far adding a device has got, for the sheet, Foundation only
@@ -23,6 +24,7 @@
 //     LocalNetworkIntroView.swift is that screen
 //   Notices.swift       what to tell in a notification and when, and asking for permission, Foundation only
 //   SettingsView.swift  the Settings sheet behind the gear, and the system's notification center
+//   LogFile.swift       the log Settings shares, as a file
 //   DebugLog.swift      the log Settings shares, kept in a file, Foundation only
 //   LogRedaction.swift  what each line of that log leaves out, Foundation only
 //   DemoMode.swift      fake app state for the UI tests, Debug builds only
