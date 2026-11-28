@@ -2246,6 +2246,27 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertFalse(session.sharing, "past its end it holds nothing off")
     }
 
+    /// The hotspot goes in the round a timed pause ends: the stop's last count ends the pause, and the
+    /// device it lets back in is on no server. Nobody is connected, after a round and after a Shortcut's
+    /// look at the hotspot alone.
+    func testATimedPauseEndingAsTheHotspotGoesConnectsNobody() throws {
+        for shortcut in [false, true] {
+            now = start
+            shareInTheBackground()
+            let ipad = try XCTUnwrap(devices.connectReady())
+            server.connected = [ipad.address]
+            session.pauseWireGuardDevice(ipad.id, for: .halfHour)
+            session.watch()
+            now = minutes(30)
+            address = nil
+            if shortcut { session.syncWithHotspot() } else { session.watch() }
+            XCTAssertFalse(session.running)
+            XCTAssertNil(devices.setup.peers.first { $0.id == ipad.id }?.paused, "the pause ended")
+            XCTAssertEqual(session.connectedNow, [], shortcut ? "the Shortcut's look" : "a round")
+            XCTAssertEqual(session.wireGuardConnected, [], shortcut ? "the Shortcut's look" : "a round")
+        }
+    }
+
     /// Sharing stopped because the hotspot went: nobody is connected, also once a resume publishes the list.
     func testAResumeAfterTheHotspotGoesConnectsNobody() throws {
         shareInTheBackground()
