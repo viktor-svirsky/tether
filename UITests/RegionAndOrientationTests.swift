@@ -2,9 +2,9 @@ import XCTest
 
 /// Another region format, and landscape (#186). Tether is iPhone only (#182), so there's no iPad test.
 final class RegionAndOrientationTests: TetherUITestCase {
-    override func tearDown() {
+    override func tearDown() async throws {
         XCUIDevice.shared.orientation = .portrait
-        super.tearDown()
+        try await super.tearDown()
     }
 
     /// A German region writes decimals with a comma, with the words still in English: the speeds and the

@@ -1145,7 +1145,7 @@ final class HotspotSession {
         guard readyLetIn, let ready = wireGuardReady, let reached = peers[ready.address], reached.connected,
               // Handshake times come in whole seconds, so one in the window's last second can't be told
               // from one just after it: only an earlier second counts.
-              end == nil || reached.lastHandshake.map { $0 < end!.wholeSecondsDown } ?? true,
+              end == nil || reached.lastHandshake.map({ $0 < end!.wholeSecondsDown }) ?? true,
               let host = host(reachedFrom: reached.endpoint),
               devices.claimReady(address: ready.address, host: host) else { return }
         log("WireGuard: a new device connected with the QR code")

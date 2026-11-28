@@ -6,8 +6,8 @@ import AppIntents
 // action, then runs Start Tether, which wakes Tether in the background without opening it.
 
 struct StartTetherIntent: AppIntent {
-    static var title: LocalizedStringResource = "Start Tether"
-    static var description = IntentDescription(
+    static let title: LocalizedStringResource = "Start Tether"
+    static let description = IntentDescription(
         "Wakes Tether in the background, the same as opening it. It shares as soon as a device joins Personal Hotspot in the next 10 minutes. Put it after Set Personal Hotspot.")
 
     @MainActor
@@ -20,8 +20,8 @@ struct StartTetherIntent: AppIntent {
 }
 
 struct TetherStatusIntent: AppIntent {
-    static var title: LocalizedStringResource = "Is Tether Sharing?"
-    static var description = IntentDescription(
+    static let title: LocalizedStringResource = "Is Tether Sharing?"
+    static let description = IntentDescription(
         "True while Tether is sharing Personal Hotspot, for an If in a shortcut. It also says how many devices are connected, and whether the proxy is in use.")
 
     @MainActor
