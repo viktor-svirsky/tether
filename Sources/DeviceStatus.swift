@@ -20,7 +20,7 @@ enum DeviceStatus: Equatable {
     func label(now: Date = Date(), calendar: Calendar = .autoupdatingCurrent, locale: Locale = .current) -> String {
         switch self {
         case .connected: "Connected"
-        case .notConnected: "Not connected"
+        case .notConnected: Copy.notConnected
         case let .paused(pause): pause.until.map { "Paused until \(Format.until($0, now: now, calendar: calendar, locale: locale))" } ?? "Paused"
         }
     }
@@ -180,7 +180,7 @@ enum ProxyAddress {
 enum UsingTether {
     static func headline(devices: Int, proxy: Bool) -> String {
         switch (devices, proxy) {
-        case (0, false): "No device is using Tether yet"
+        case (0, false): Copy.noDeviceYet
         case (0, true): "The proxy is in use"
         case (1, false): "1 device connected"
         case (1, true): "1 device connected and the proxy in use"

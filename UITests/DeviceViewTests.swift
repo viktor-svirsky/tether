@@ -69,7 +69,7 @@ final class DeviceViewTests: TetherUITestCase {
     func testAnUnconnectedDeviceSaysNotConnected() {
         launch(.sharing)
         openDevice("Windows PC")
-        XCTAssertEqual(staticText("device.status").label, "Not connected")
+        XCTAssertEqual(staticText("device.status").label, Copy.notConnected)
         let last = reveal(element("device.lastConnected")).label
         XCTAssertTrue(last.contains("Last connected") && last.contains("Today at 4:00"), last)
         assertNowhere(element("device.connectsFrom"), message: "only while connected")
@@ -278,7 +278,7 @@ final class DeviceViewTests: TetherUITestCase {
     /// Without the hotspot there's no QR code either, so a new user would have no way to add a device and no reason why.
     func testLockedKeysShowBeforeTheHotspotIsOn() {
         launch(.wireGuardLockedWaiting)
-        XCTAssertEqual(label(of: "status.title"), "Waiting for a device on the hotspot")
+        XCTAssertEqual(label(of: "status.title"), Copy.waitingForDevice)
         let banner = staticText("wireguard.problem")
         XCTAssertTrue(reveal(banner).exists)
         XCTAssertEqual(banner.label, lockedText)

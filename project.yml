@@ -84,6 +84,7 @@ targets:
       - Widgets
       - Sources/TetherShared.swift
       - Sources/WidgetState.swift
+      - Sources/Copy.swift
     entitlements:
       path: Widgets/TetherWidgets.entitlements
       properties:
@@ -108,7 +109,7 @@ targets:
   TetherUITests:
     type: bundle.ui-testing
     platform: iOS
-    sources: [UITests]
+    sources: [UITests, Sources/Copy.swift]
     dependencies:
       - target: Tether
     settings:

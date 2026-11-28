@@ -21,9 +21,9 @@ class TetherUITestCase: XCTestCase {
     /// Launches Tether in a demo scenario, in English with US formats so every text is stable.
     /// Pass `scenario: nil` for a normal launch. It waits for `screen` to show, the main screen's title by default.
     @discardableResult
-    func launch(_ scenario: Scenario?, arguments: [String] = [], screen: String = "status.title") -> XCUIApplication {
+    func launch(_ scenario: Scenario?, arguments: [String] = [], locale: String = "en_US", screen: String = "status.title") -> XCUIApplication {
         let app = XCUIApplication()
-        var args = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        var args = ["-AppleLanguages", "(en)", "-AppleLocale", locale]
         if let scenario {
             args += ["-TetherDemo", scenario.rawValue]
         } else if !arguments.contains("-localNetworkIntroduced") {

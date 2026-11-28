@@ -184,7 +184,7 @@ struct HotspotWaitingHint: View {
 struct HotspotSettingsLink: View {
     var body: some View {
         Button(action: StatusCard.openHotspotSettings) {
-            Text("Settings > Personal Hotspot > Allow Others to Join")
+            Text(Copy.hotspotPath)
                 .underline()
                 .multilineTextAlignment(.leading)
                 .foregroundStyle(Color.primary)
@@ -333,7 +333,7 @@ struct StatusCard: View {
     private var blocked: Bool { model.localNetworkDenied }
     private var look: StatusOrb.Look { sharing ? .sharing : blocked || model.running ? .problem : .waiting }
     private var title: String {
-        blocked ? "Devices can't connect" : sharing ? "Sharing" : model.running ? "Tether can't share yet" : "Waiting for a device on the hotspot"
+        blocked ? "Devices can't connect" : sharing ? "Sharing" : model.running ? "Tether can't share yet" : Copy.waitingForDevice
     }
 
     /// Opens Settings at its main screen, where Personal Hotspot is near the top. Nothing goes
