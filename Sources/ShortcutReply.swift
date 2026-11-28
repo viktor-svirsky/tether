@@ -13,6 +13,8 @@ enum ShortcutReply {
         var idleStopped = false
         /// Stop on a widget or in Control Center stopped it, see `HotspotSession.stopNow`.
         var stoppedByYou = false
+        /// The battery stopped it, see `LowBatteryStop` (#311).
+        var lowBattery = false
         /// The silent sound plays while the hotspot is on. Without it iOS suspends Tether as soon as
         /// the action ends, so it isn't sharing for long (#164).
         var keptAlive = true
@@ -31,10 +33,14 @@ enum ShortcutReply {
         return "Tether is ready. It starts sharing when a device joins Personal Hotspot in the next \(minutes) minutes."
     }
 
+    /// After Start Tether below the battery level, not charging, see `HotspotSession.startRefusedAtLowBattery`.
+    static let lowBatteryStart = "Tether stopped sharing at low battery. Charge the iPhone first, or open Tether to share again."
+
     static func status(_ state: State) -> String {
         if state.running, let problem = state.problem { return "Personal Hotspot is on, but WireGuard isn't running. \(problem)" }
         if state.running, !state.keptAlive { return "Tether couldn't keep running in the background. Open it once." }
         if state.stoppedByYou { return "Tether is stopped. Open it, or run Start Tether, to share again." }
+        if state.lowBattery { return "Tether stopped sharing at low battery. Open Tether to share again." }
         if state.idleStopped { return "Tether stopped sharing while idle. Open it, or run Start Tether, to share again." }
         // iOS makes the hotspot's network only while a device is on it, so no device and the hotspot off look the same.
         guard state.running else { return "Tether is waiting for a device to join Personal Hotspot." }

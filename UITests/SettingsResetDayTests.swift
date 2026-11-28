@@ -4,7 +4,7 @@ import XCTest
 /// name the count then. The periods themselves are covered by the unit tests (MonthlyUsageTests,
 /// LimitTests), and the words by FormatTests.
 final class SettingsResetDayTests: TetherUITestCase {
-    static let footer = "Idle means no device is connected and nothing goes through the proxy. Stopping saves battery. Open Tether to share again. Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier."
+    static let footer = "Idle means no device is connected and nothing goes through the proxy. Stopping saves battery, and at low battery only happens while the iPhone isn't charging. Open Tether to share again. Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier."
     /// Starts the demo on the 15th. Read through the launch arguments, so the menu can't change it.
     private let onThe15th = ["-usage.resetDay", "15"]
     private let accessibilityXL = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"]

@@ -18,6 +18,10 @@ final class HotspotSessionTests: XCTestCase {
     private var address: String?
     private var ipv6Only = false
     private var idleAfter = IdleStop.After.never
+    private var batteryLevel = LowBatteryStop.Level.never
+    private var battery = LowBatteryStop.Battery.unknown
+    /// Whether each battery read asked for monitoring, see `HotspotSession.battery`.
+    private var batteryMonitor: [Bool] = []
     private var dns = DNSChoice.Upstream.servers(["1.1.1.1", "1.0.0.1"])
     private var blockLocal = true
     private var vpn: String?
@@ -50,6 +54,8 @@ final class HotspotSessionTests: XCTestCase {
         session = HotspotSession(devices: devices, server: server, keepAlive: sound, page: page,
                                  sceneActive: sceneActive, hotspotAddress: { [unowned self] in address },
                                  carrierIPv6Only: { [unowned self] in ipv6Only }, idleStopAfter: { [unowned self] in idleAfter },
+                                 lowBatteryStop: { [unowned self] in batteryLevel },
+                                 battery: { [unowned self] monitor in batteryMonitor.append(monitor); return monitor ? battery : .unknown },
                                  dns: { [unowned self] in dns }, blockLocal: { [unowned self] in blockLocal }, usageDefaults: usageDefaults,
                                  now: { [unowned self] in now }, hostName: names, cellular: cellular, knocker: knocker,
                                  internetVPN: { [unowned self] in Interfaces.Reading(vpn: vpn, onlyFamily: onlyFamily) }, onlyThroughVPN: { [unowned self] in onlyThroughVPN }, log: log)
@@ -1867,6 +1873,173 @@ final class HotspotSessionTests: XCTestCase {
         session.watch()
         XCTAssertFalse(server.running)
         XCTAssertFalse(sound.playing)
+    }
+
+    // MARK: Stopping at low battery (#311)
+
+    func testSharingStopsAtLowBatteryInTheBackground() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 25, charging: false)
+        shareInTheBackground()
+        XCTAssertTrue(session.sharing)
+        battery.percent = 20
+        now = minutes(1)
+        session.watch()
+        XCTAssertFalse(session.sharing)
+        XCTAssertFalse(server.running)
+        XCTAssertFalse(sound.playing, "so iOS suspends Tether")
+        XCTAssertEqual(session.idleStopped, IdleStopped(at: minutes(1), after: .never, lowBattery: .twenty))
+        XCTAssertTrue(session.shortcutState().lowBattery, "Is Tether Sharing? says why")
+        now = minutes(2)
+        session.watch()
+        XCTAssertFalse(server.running, "it stays stopped")
+    }
+
+    /// On screen nothing stops, like the idle stop, but the main screen says it will.
+    func testOnScreenItDoesNotStopButSaysItWill() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 15, charging: false)
+        makeSession()
+        address = hotspot
+        session.watch()
+        XCTAssertTrue(session.sharing)
+        XCTAssertNil(session.idleStopped)
+        XCTAssertEqual(session.belowBatteryStop, BelowBatteryStop(percent: 15, level: .twenty))
+        battery.charging = true
+        session.watch()
+        XCTAssertNil(session.belowBatteryStop, "charging")
+        battery.charging = false
+        session.watch()
+        session.leftScreen()
+        session.enteredBackground()
+        session.watch()
+        XCTAssertFalse(session.sharing, "the first round in the background stops it")
+    }
+
+    /// Control Center or an alert over Tether makes it inactive, not backgrounded: it stays on
+    /// screen, so nothing stops.
+    func testInactiveButNotInTheBackgroundDoesNotStop() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 15, charging: false)
+        makeSession()
+        address = hotspot
+        session.watch()
+        session.leftScreen()
+        now = minutes(1)
+        session.watch()
+        XCTAssertTrue(session.sharing, "still visible behind Control Center")
+        XCTAssertNil(session.idleStopped)
+        session.cameOnScreen()
+        session.watch()
+        XCTAssertTrue(session.sharing)
+    }
+
+    func testNoStopWhileChargingOrUnknown() {
+        batteryLevel = .thirty
+        battery = LowBatteryStop.Battery(percent: 5, charging: true)
+        shareInTheBackground()
+        now = minutes(1)
+        session.watch()
+        XCTAssertTrue(session.sharing, "charging or full")
+        battery = .unknown
+        session.watch()
+        XCTAssertTrue(session.sharing, "iOS can't say")
+    }
+
+    /// Never, the default, doesn't turn battery monitoring on.
+    func testNeverLeavesTheBatteryAlone() {
+        battery = LowBatteryStop.Battery(percent: 1, charging: false)
+        shareInTheBackground()
+        now = minutes(1)
+        session.watch()
+        XCTAssertTrue(session.sharing)
+        XCTAssertFalse(batteryMonitor.contains(true), "\(batteryMonitor)")
+        XCTAssertFalse(session.startRefusedAtLowBattery)
+    }
+
+    func testOpeningTetherSharesAgainAfterALowBatteryStop() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 10, charging: false)
+        shareInTheBackground()
+        XCTAssertNotNil(session.idleStopped?.lowBattery)
+        session.cameOnScreen()
+        XCTAssertNil(session.idleStopped)
+        XCTAssertTrue(session.sharing, "opening it shares, even below the level")
+    }
+
+    /// With Tether on screen nothing stops, so Start Tether isn't refused there.
+    func testStartTetherIsNotRefusedOnScreen() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 10, charging: false)
+        makeSession(sceneActive: true)
+        XCTAssertFalse(session.startRefusedAtLowBattery)
+    }
+
+    /// Siri or Control Center over a visible, sharing Tether makes it inactive, not backgrounded:
+    /// Start Tether isn't refused, since nothing would stop it.
+    func testStartTetherIsNotRefusedWhileInactiveOnScreen() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 10, charging: false)
+        makeSession(sceneActive: true)
+        address = hotspot
+        session.watch()
+        session.leftScreen()
+        XCTAssertFalse(session.startRefusedAtLowBattery)
+        session.enteredBackground()
+        XCTAssertTrue(session.startRefusedAtLowBattery, "in the background it is")
+    }
+
+    /// A launch straight into the background, by a Shortcut or a widget, already counts as the
+    /// background: the first round below the level stops.
+    func testABackgroundLaunchStopsOnTheFirstRound() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 15, charging: false)
+        shareInTheBackground()
+        XCTAssertFalse(session.sharing)
+        XCTAssertEqual(session.idleStopped?.lowBattery, .twenty)
+    }
+
+    /// Coming back to the foreground ends the background before Tether is active again, so a round
+    /// then doesn't stop.
+    func testEnteringTheForegroundStopsNothing() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 25, charging: false)
+        shareInTheBackground()
+        battery.percent = 15
+        session.enteringForeground()
+        now = minutes(1)
+        session.watch()
+        XCTAssertTrue(session.sharing)
+        XCTAssertNil(session.idleStopped)
+    }
+
+    /// Already sharing in the background when the battery drops between rounds: the refusal stops it
+    /// now, not at the next round, so Start Tether's reply that sharing stopped is true.
+    func testARefusedStartStopsASessionStillSharing() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 25, charging: false)
+        shareInTheBackground()
+        XCTAssertTrue(session.sharing)
+        battery.percent = 15
+        XCTAssertTrue(session.refuseStartAtLowBattery())
+        XCTAssertFalse(session.sharing)
+        XCTAssertFalse(server.running)
+        XCTAssertFalse(sound.playing)
+        XCTAssertEqual(session.idleStopped?.lowBattery, .twenty)
+        battery.charging = true
+        XCTAssertFalse(session.refuseStartAtLowBattery(), "charging, it isn't refused")
+    }
+
+    /// Start Tether would share and the next round stop again, so it doesn't start (#311).
+    func testStartTetherIsRefusedBelowTheLevel() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 10, charging: false)
+        makeSession(sceneActive: false)
+        XCTAssertTrue(session.startRefusedAtLowBattery)
+        battery.charging = true
+        XCTAssertFalse(session.startRefusedAtLowBattery, "charging")
+        battery = LowBatteryStop.Battery(percent: 30, charging: false)
+        XCTAssertFalse(session.startRefusedAtLowBattery, "above the level")
     }
 
     func testOpeningTetherSharesAgain() {

@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
 
-/// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle, the
+/// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle or at low battery, the
 /// DNS server Tether asks for the devices, whether they reach the iPhone's local networks, a switch for each kind of notification, a button for the permission before Tether asked for it
 /// itself, the way to Settings when iOS has Tether's notifications off, the log to share for a bug
 /// report, the server's counters (`DiagnosticsView`), and what this build is.
@@ -11,6 +11,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     /// Read by `HotspotSession` each watcher round, see `IdleStop`.
     @AppStorage private var idleStopAfter: IdleStop.After
+    /// Read by `HotspotSession` each watcher round, see `LowBatteryStop`.
+    @AppStorage private var lowBatteryStop: LowBatteryStop.Level
     /// The day the counts and limits start over, 31 for the last day, see `ResetDay`.
     @AppStorage private var resetDay: Int
     /// Read by `HotspotSession` for each config it makes, see `DNSChoice`.
@@ -25,6 +27,7 @@ struct SettingsView: View {
     init(model: Model) {
         self.model = model
         _idleStopAfter = AppStorage(wrappedValue: .default, IdleStop.After.key, store: model.settingsDefaults)
+        _lowBatteryStop = AppStorage(wrappedValue: .default, LowBatteryStop.Level.key, store: model.settingsDefaults)
         _resetDay = AppStorage(wrappedValue: ResetDay.default.day, ResetDay.key, store: model.settingsDefaults)
         _dns = AppStorage(wrappedValue: .default, DNSChoice.key, store: model.settingsDefaults)
         _dnsOther = AppStorage(wrappedValue: "", DNSChoice.otherKey, store: model.settingsDefaults)
@@ -109,6 +112,11 @@ struct SettingsView: View {
             }
             .pickerStyle(.menu)
             .accessibilityIdentifier("sharing.idleStop")
+            Picker("Stop sharing at low battery", selection: $lowBatteryStop) {
+                ForEach(LowBatteryStop.Level.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("sharing.lowBattery")
             Picker("Data counts start on", selection: $resetDay) {
                 ForEach(ResetDay.choices, id: \.self) { Text($0.label).tag($0.day) }
             }
@@ -119,7 +127,7 @@ struct SettingsView: View {
         } header: {
             Text("Sharing")
         } footer: {
-            Text("Idle means no device is connected and nothing goes through the proxy. Stopping saves battery. Open Tether to share again. Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier.")
+            Text("Idle means no device is connected and nothing goes through the proxy. Stopping saves battery, and at low battery only happens while the iPhone isn't charging. Open Tether to share again. Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier.")
                 .accessibilityIdentifier("sharing.footer")
         }
     }

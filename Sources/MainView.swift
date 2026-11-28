@@ -77,6 +77,18 @@ struct MainView: View {
                     }
                 }
 
+                if model.sharing, let below = model.belowBatteryStop {
+                    Section {
+                        Label {
+                            Text(below.text)
+                        } icon: {
+                            Image(systemName: "battery.25percent").foregroundStyle(.orange)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("battery.low")
+                    }
+                }
+
                 if model.staleConfigShown {
                     Section {
                         Label {

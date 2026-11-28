@@ -41,6 +41,17 @@ final class ShortcutReplyTests: XCTestCase {
                        "Tether stopped sharing while idle. Open it, or run Start Tether, to share again.")
     }
 
+    /// Stopped at the battery level (#311): Start Tether won't share until it's charging, opening it will.
+    func testStatusSaysSharingStoppedAtLowBattery() {
+        XCTAssertEqual(ShortcutReply.status(State(running: false, connected: 0, idleStopped: true, lowBattery: true)),
+                       "Tether stopped sharing at low battery. Open Tether to share again.")
+    }
+
+    func testStartAtLowBatteryRefuses() {
+        XCTAssertEqual(ShortcutReply.lowBatteryStart,
+                       "Tether stopped sharing at low battery. Charge the iPhone first, or open Tether to share again.")
+    }
+
     /// The sound didn't start on a cold launch: iOS suspends Tether after the action, so a shortcut
     /// mustn't be told it's sharing (#164).
     func testStatusSaysWhenTetherCantKeepRunning() {

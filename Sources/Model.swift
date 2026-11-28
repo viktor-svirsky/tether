@@ -81,6 +81,8 @@ final class Model: ObservableObject {
     var vpnInterface: String? { session.vpnInterface }
     var vpnOnlyFamily: Interfaces.Family? { session.vpnOnlyFamily }
     var blockedWithoutVPN: Bool { session.blockedWithoutVPN }
+    /// At or below the low battery level and not charging, see `HotspotSession.belowBatteryStop`.
+    var belowBatteryStop: BelowBatteryStop? { session.belowBatteryStop }
 
     /// iOS blocks Tether's replies to the devices, see `LocalNetworkCheck`. Checked while on screen.
     @Published private(set) var localNetworkDenied = false
@@ -251,6 +253,21 @@ final class Model: ObservableObject {
                              savedSetup: { try secrets.load() })
     }
 
+    /// What iOS says about the battery, for the low battery stop (#311). iOS reads nothing until
+    /// monitoring is on, so it's on only while the setting isn't Never.
+    private static func readBattery(monitor: Bool) -> LowBatteryStop.Battery {
+        let device = UIDevice.current
+        if device.isBatteryMonitoringEnabled != monitor { device.isBatteryMonitoringEnabled = monitor }
+        guard monitor, device.batteryLevel >= 0 else { return .unknown }
+        let percent = Int((device.batteryLevel * 100).rounded())
+        switch device.batteryState {
+        case .unplugged: return LowBatteryStop.Battery(percent: percent, charging: false)
+        case .charging, .full: return LowBatteryStop.Battery(percent: percent, charging: true)
+        case .unknown: return .unknown
+        @unknown default: return .unknown
+        }
+    }
+
     /// The session with the real server, sound, page and hotspot.
     private static func session(secrets: SecretStore, settings: UserDefaults) -> HotspotSession {
         HotspotSession(devices: WireGuardDevices(secrets: secrets), server: WireGuardServer(log: Self.append),
@@ -259,6 +276,8 @@ final class Model: ObservableObject {
                        hotspotAddress: HotspotAddressKeeper(defaults: .standard).address,
                        carrierIPv6Only: Interfaces.carrierIPv6Only,
                        idleStopAfter: { IdleStop.After.saved(in: settings) },
+                       lowBatteryStop: { LowBatteryStop.Level.saved(in: settings) },
+                       battery: { readBattery(monitor: $0) },
                        dns: { DNSChoice.upstream(in: settings) },
                        blockLocal: {
                            settleLocalNetworks(settings, secrets: secrets) // once the Keychain can be read
@@ -396,6 +415,18 @@ final class Model: ObservableObject {
         if demo != nil { return true }
         #endif
         return session.wake()
+    }
+
+    /// See `HotspotSession.refuseStartAtLowBattery`. A stop it makes is told and shown now, as a
+    /// round's is: iOS can suspend Tether before the next round.
+    func refuseStartAtLowBattery() -> Bool {
+        #if DEBUG
+        if demo != nil { return false }
+        #endif
+        guard session.refuseStartAtLowBattery() else { return false }
+        publishWidgets()
+        _ = notify()
+        return true
     }
 
     func shortcutState() -> ShortcutReply.State {
@@ -676,6 +707,8 @@ final class Model: ObservableObject {
             model.sampler?.cancel()
             model.knocking?.cancel()
         }
+        observe(UIApplication.didEnterBackgroundNotification) { $0.session.enteredBackground() }
+        observe(UIApplication.willEnterForegroundNotification) { $0.session.enteringForeground() }
         observe(UIApplication.didReceiveMemoryWarningNotification) { $0.session.freeMemory() }
     }
 

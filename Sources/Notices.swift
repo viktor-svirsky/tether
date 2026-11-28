@@ -2,7 +2,7 @@ import Foundation
 
 /// What Tether can tell in a notification. Each has its own switch, all on until turned off.
 enum NoticeKind: String, CaseIterable {
-    case connected, disconnected, sharingStopped, idleStopped, limit, closed, expiring
+    case connected, disconnected, sharingStopped, idleStopped, lowBattery, limit, closed, expiring
 
     /// The switch's label in Settings.
     var label: String {
@@ -11,6 +11,7 @@ enum NoticeKind: String, CaseIterable {
         case .disconnected: "A device disconnects"
         case .sharingStopped: "Sharing stops with a problem"
         case .idleStopped: "Sharing stops while idle"
+        case .lowBattery: "Sharing stops at low battery"
         case .limit: "A device nears or reaches its limit"
         case .closed: "iOS stops Tether in the background"
         case .expiring: "Tether stops opening soon"
@@ -108,7 +109,7 @@ struct Notifier {
         /// The tunnel addresses with a recent handshake.
         var connected: Set<String>
         var expires: Date? = nil
-        /// Sharing stopped after a time with no device connected, see `IdleStop`.
+        /// Sharing stopped after a time with no device connected, see `IdleStop`, or at low battery.
         var idleStopped: IdleStopped? = nil
         /// Devices near or at their data limit this month, see `LimitAlert`.
         var limitAlerts: [LimitAlert] = []
@@ -153,8 +154,9 @@ struct Notifier {
             // Kept out for want of a VPN, a device that connects isn't using this iPhone's data, so
             // it's told once it gets through. Nothing is told as gone for the VPN going either.
             if round.keptOut { followKeptOut(round) } else { notices += checkDevices(round) }
-        } else if round.idleStopped?.byYou == true {
-            // Stop on a widget: the devices are gone because the person said so, nothing to tell.
+        } else if round.idleStopped?.byYou == true || round.idleStopped?.lowBattery != nil {
+            // Stop on a widget: the devices are gone because the person said so, nothing to tell. At
+            // low battery its own notice says why, see `checkIdleStop`.
             stoppedSince = nil
             for id in devices.keys {
                 devices[id]?.told = false
@@ -270,10 +272,15 @@ struct Notifier {
                        body: "WireGuard stopped while \(who) connected. Open Tether to see why.")]
     }
 
-    /// Each idle stop once. It happens only in the background, since on screen nothing stops.
+    /// Each idle or low battery stop once. It happens only in the background, since on screen nothing stops.
     private mutating func checkIdleStop(_ round: Round) -> [Notice] {
         guard let stopped = round.idleStopped, !stopped.byYou, stopped != toldIdleStop else { return [] }
         toldIdleStop = stopped
+        if let level = stopped.lowBattery {
+            guard !round.onScreen, NoticeKind.lowBattery.isOn(in: defaults) else { return [] }
+            return [Notice(kind: .lowBattery, id: "idleStop", title: "Sharing stopped at low battery",
+                           body: "The battery reached \(level.rawValue)%. Open Tether to share again.")]
+        }
         guard !round.onScreen, NoticeKind.idleStopped.isOn(in: defaults) else { return [] }
         return [Notice(kind: .idleStopped, id: "idleStop", title: "Sharing stopped while idle",
                        body: "No device was connected for \(stopped.after.spelledOut). Open Tether to share again.")]
