@@ -7,11 +7,13 @@ enum Scenario: String {
 }
 
 /// Base class for the screen tests: launching, finding things by identifier, scrolling a List.
+/// On the main actor, as XCUIApplication and XCUIElement are. Subclasses inherit it.
+@MainActor
 class TetherUITestCase: XCTestCase {
     var app: XCUIApplication!
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         continueAfterFailure = false
         // Every test starts light, whatever ran before it on this simulator: a test that ends in dark
         // would leave the next ones auditing dark only (#180).
