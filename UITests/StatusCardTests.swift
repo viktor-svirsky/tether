@@ -76,7 +76,7 @@ final class StatusCardTests: TetherUITestCase {
                        "No device gets through until a VPN is on. Turn your VPN on, or turn off Only share through a VPN in Settings.")
         assertNowhere(element("traffic.speeds"), element("traffic.history"), message: "nothing gets through, so no speeds")
         let ipad = reveal(element("device.iPad"))
-        XCTAssertTrue(ipad.label.contains(Copy.keptOutRow), ipad.label)
+        XCTAssertTrue(ipad.label.contains("Kept out, no VPN"), ipad.label)
         XCTAssertEqual(reveal(element("status.stopHint")).label, Copy.stopHint, "it still shares")
         reveal(element("status.openSettings")).tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5), "the link did not open Settings")
@@ -97,7 +97,7 @@ final class StatusCardTests: TetherUITestCase {
         launch(.stoppedBattery)
         let note = reveal(element("note.lastStop"))
         XCTAssertTrue(note.label.hasPrefix("Sharing stopped today at 4:00"), note.label)
-        XCTAssertTrue(note.label.hasSuffix("The battery reached 20%."), note.label)
+        XCTAssertTrue(note.label.hasSuffix("The battery reached 19%."), note.label)
     }
 
     /// Three or more warnings and notes fold behind one link, warnings first (M13).

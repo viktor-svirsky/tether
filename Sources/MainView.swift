@@ -27,11 +27,11 @@ struct MainView: View {
                devices: model.wireGuardPeers.map {
                    var hasher = Hasher()
                    hasher.combine($0.id)
-                   hasher.combine(DeviceStatus($0, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN).hashKey)
+                   hasher.combine(DeviceStatus($0, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily).hashKey)
                    hasher.combine(model.limitStanding(of: $0.id).hashValue)
                    return hasher.finalize()
                },
-               proxy: model.proxyOn ? model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN).look.hashKey } : nil)
+               proxy: model.proxyOn ? model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily).look.hashKey } : nil)
     }
 
     /// Sharing, devices kept out or not: turning off the hotspot stops it either way.
@@ -81,7 +81,7 @@ struct MainView: View {
                 if !model.wireGuardPeers.isEmpty || model.proxyOn || !model.notUsingTether.isEmpty {
                     Section {
                         ForEach(model.wireGuardPeers) { peer in
-                            let status = DeviceStatus(peer, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN)
+                            let status = DeviceStatus(peer, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily)
                             NavigationLink { DeviceView(model: model, peer: peer) } label: {
                                 HomeDeviceRow(name: peer.name, status: status,
                                               state: status.label(now: model.clockNow, standing: model.limitStanding(of: peer.id)),
@@ -158,7 +158,7 @@ extension MainView {
     /// The proxy's row under the devices (#78), once it's on: like a device's, with how many
     /// connections are open in place of Connected.
     private func proxyRow(_ proxy: WireGuardSetup.Proxy) -> some View {
-        let status = ProxyStatus(proxy, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN)
+        let status = ProxyStatus(proxy, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily)
         return NavigationLink { ProxyView(model: model) } label: {
             HomeDeviceRow(name: ProxyStatus.name, status: status.look, state: status.label(now: model.clockNow),
                           used: Format.used(model.usage(of: proxy.id).thisMonth.total, model.usagePeriod, limit: proxy.limit))
@@ -495,7 +495,7 @@ struct StatusCard: View {
     /// The line under the title: who uses Tether while sharing, the state's own line otherwise.
     private var headline: String? {
         guard status == .sharing else { return status.line }
-        let proxy = model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN).inUse } ?? false
+        let proxy = model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily).inUse } ?? false
         return UsingTether.headline(devices: model.wireGuardConnected.count, proxy: proxy,
                                     paused: model.wireGuardPeers.filter { $0.paused != nil }.count,
                                     added: !model.wireGuardPeers.isEmpty || model.proxyOn)
