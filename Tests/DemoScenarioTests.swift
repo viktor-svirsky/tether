@@ -115,7 +115,7 @@ final class DemoScenarioTests: XCTestCase {
         for scenario in DemoScenario.allCases {
             let expected: LastStop? = switch scenario {
             case .stoppedIdle, .manyWarnings: LastStop(at: at, reason: .idle(.thirtyMinutes))
-            case .stoppedBattery: LastStop(at: at, reason: .lowBattery(.twenty))
+            case .stoppedBattery: LastStop(at: at, reason: .lowBattery(percent: 19))
             default: nil
             }
             let session = DemoState(scenario).makeSession()

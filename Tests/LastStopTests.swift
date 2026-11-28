@@ -24,8 +24,8 @@ final class LastStopTests: XCTestCase {
         let at = date(2026, 10, 17, 14, 5)
         XCTAssertEqual(said(LastStop(at: at, reason: .idle(.thirtyMinutes)), now: now),
                        "Sharing stopped today at 2:05 PM. No device was connected for 30 minutes.")
-        XCTAssertEqual(said(LastStop(at: at, reason: .lowBattery(.twenty)), now: now),
-                       "Sharing stopped today at 2:05 PM. The battery reached 20%.")
+        XCTAssertEqual(said(LastStop(at: at, reason: .lowBattery(percent: 18)), now: now),
+                       "Sharing stopped today at 2:05 PM. The battery reached 18%.")
         XCTAssertEqual(said(LastStop(at: at, reason: .byYou), now: now),
                        "You stopped sharing today at 2:05 PM, from a widget or Control Center.")
     }
@@ -46,7 +46,10 @@ final class LastStopTests: XCTestCase {
     func testItTakesTheReasonTheSessionStoppedFor() {
         let at = date(2026, 10, 17, 14)
         XCTAssertEqual(LastStop(IdleStopped(at: at, after: .tenMinutes)).reason, .idle(.tenMinutes))
-        XCTAssertEqual(LastStop(IdleStopped(at: at, after: .tenMinutes, lowBattery: .ten)).reason, .lowBattery(.ten))
+        XCTAssertEqual(LastStop(IdleStopped(at: at, after: .tenMinutes, lowBattery: .ten, batteryPercent: 9)).reason, .lowBattery(percent: 9),
+                       "what the battery read")
+        XCTAssertEqual(LastStop(IdleStopped(at: at, after: .tenMinutes, lowBattery: .ten)).reason, .lowBattery(percent: 10),
+                       "the level when the read isn't known")
         XCTAssertEqual(LastStop(IdleStopped(at: at, after: .never, byYou: true)).reason, .byYou)
         XCTAssertEqual(LastStop(IdleStopped(at: at, after: .never)).at, at)
     }
@@ -59,7 +62,7 @@ final class LastStopTests: XCTestCase {
         let first = LastStop(at: date(2026, 10, 17, 14), reason: .idle(.tenMinutes))
         first.save(to: defaults)
         XCTAssertEqual(LastStop.load(from: defaults), first)
-        let second = LastStop(at: date(2026, 10, 17, 15), reason: .lowBattery(.twenty))
+        let second = LastStop(at: date(2026, 10, 17, 15), reason: .lowBattery(percent: 20))
         second.save(to: defaults)
         XCTAssertEqual(LastStop.load(from: defaults), second)
         LastStop.clear(in: defaults)
