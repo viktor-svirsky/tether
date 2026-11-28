@@ -2,8 +2,11 @@ package main
 
 import (
 	"io"
+	"maps"
 	"net"
 	"net/netip"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -137,4 +140,78 @@ func (s *Server) closeBlocked() {
 	for _, c := range closing {
 		c.Close()
 	}
+}
+
+// forwardable says whether a device may reach dst through the iPhone, by the address alone. The
+// iPhone's own loopback, the tunnel's addresses, multicast and broadcast stay inside: an mDNS query
+// from the iPad would otherwise become a flow spraying multicast from the iPhone. The iPhone's other
+// own addresses change, so the server checks them too, see leaves.
+func forwardable(dst netip.Addr) bool {
+	return dst.IsValid() && !dst.IsLoopback() && !dst.IsMulticast() && !dst.IsUnspecified() &&
+		!dst.IsLinkLocalUnicast() && dst != netip.AddrFrom4([4]byte{255, 255, 255, 255}) &&
+		!tunnelNet.Contains(dst)
+}
+
+// leaves says whether a device's packet for dst may go out through the iPhone: forwardable, and
+// not to one of the iPhone's own addresses. Those reach whatever listens on the iPhone itself,
+// other apps' local servers included, and no device needs them (#27). A TCP connection opened to a
+// new own address before the next read, at most localEvery later, stays open after it, which is
+// accepted: a device would need the iPhone's new address within seconds.
+func (s *Server) leaves(dst netip.Addr) bool {
+	_, own := (*s.local.Load())[dst]
+	return forwardable(dst) && !own && !s.blocks(dst)
+}
+
+// SetPage opens exactly these own addresses to the devices, over TCP: where Tether's config page
+// listens now. Swift says so as each of its listeners gets ready, and gives none once the page fails
+// or stops. Opening them from WireGuard's addresses alone would let the devices reach another app
+// that holds the page's port where Tether's page failed (#27). A new server opens none.
+func (s *Server) SetPage(page []netip.AddrPort) {
+	page = slices.Clone(page)
+	s.page.Store(&page)
+}
+
+// refreshLocal reads the iPhone's own addresses: the hotspot's, cellular, Wi-Fi and a VPN's tunnel
+// address. Exact addresses only, never their networks: a cellular address in 100.64.0.0/10 shares
+// that range with the other nodes of a Tailscale network, which the devices still reach. On an
+// error the last ones are kept, and it's returned. A change goes into the log.
+func (s *Server) refreshLocal() error {
+	s.listing.Lock()
+	defer s.listing.Unlock()
+	s.mu.Lock()
+	listAddrs := s.listAddrs
+	s.mu.Unlock()
+	addrs, err := listAddrs()
+	if err != nil {
+		serverLog.add(time.Now(), "can't read the iPhone's own addresses: "+err.Error())
+		return err
+	}
+	own := map[netip.Addr]struct{}{}
+	for _, a := range addrs {
+		n, ok := a.(*net.IPNet) // all InterfaceAddrs gives
+		if !ok {
+			continue
+		}
+		// Loopback and link-local stay inside anyway, see forwardable.
+		if addr, ok := netip.AddrFromSlice(n.IP); ok && forwardable(addr.Unmap()) {
+			own[addr.Unmap()] = struct{}{}
+		}
+	}
+	onLink := onLinkOf(addrs)
+	s.onLink.Store(&onLink)
+	s.closeBlocked() // a new network can make an open connection's destination local
+	if maps.Equal(*s.local.Load(), own) {
+		return nil
+	}
+	s.local.Store(&own)
+	shown := "none"
+	if len(own) > 0 {
+		var each []string
+		for _, a := range slices.SortedFunc(maps.Keys(own), netip.Addr.Compare) {
+			each = append(each, a.String())
+		}
+		shown = strings.Join(each, ", ")
+	}
+	serverLog.add(time.Now(), "the iPhone's own addresses, which devices can't reach: "+shown)
+	return nil
 }
