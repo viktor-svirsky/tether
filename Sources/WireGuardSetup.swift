@@ -115,7 +115,7 @@ struct WireGuardSetup: Codable, Equatable {
             case .halfHour: "For 30 minutes"
             case .hour: "For 1 hour"
             case .untilTomorrow: "Until tomorrow"
-            case .untilResumed: "Until I resume it"
+            case .untilResumed: Copy.untilResumed
             }
         }
 

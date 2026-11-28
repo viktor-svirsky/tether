@@ -161,7 +161,7 @@ final class AccessibilityTests: TetherUITestCase {
             XCUIDevice.shared.appearance = appearance
             launch(.sharing)
             openDevice("Windows PC")
-            XCTAssertEqual(staticText("device.status").label, "Not connected")
+            XCTAssertEqual(staticText("device.status").label, Copy.notConnected)
             try audit()
             app.terminate()
         }
@@ -259,6 +259,6 @@ final class AccessibilityTests: TetherUITestCase {
     func testDarkModeWaitingScreen() {
         XCUIDevice.shared.appearance = .dark
         launch(.waiting)
-        XCTAssertEqual(label(of: "status.title"), "Waiting for a device on the hotspot")
+        XCTAssertEqual(label(of: "status.title"), Copy.waitingForDevice)
     }
 }

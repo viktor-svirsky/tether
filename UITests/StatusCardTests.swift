@@ -4,9 +4,9 @@ import XCTest
 final class StatusCardTests: TetherUITestCase {
     func testWaitingExplainsTheHotspotMayBeOffOrEmpty() {
         launch(.waiting)
-        XCTAssertEqual(label(of: "status.title"), "Waiting for a device on the hotspot")
+        XCTAssertEqual(label(of: "status.title"), Copy.waitingForDevice)
         XCTAssertEqual(label(of: "status.hotspotHint"), "Turn on Personal Hotspot, then join it from the other device. Tether starts when the first device joins.")
-        XCTAssertEqual(label(of: "status.hotspotPath"), "Settings > Personal Hotspot > Allow Others to Join")
+        XCTAssertEqual(label(of: "status.hotspotPath"), Copy.hotspotPath)
         assertNowhere(element("status.headline"))
     }
 
@@ -27,7 +27,7 @@ final class StatusCardTests: TetherUITestCase {
     func testNoDevicesSaysNobodyUsesTetherYet() {
         launch(.noDevices)
         XCTAssertEqual(label(of: "status.title"), "Sharing")
-        XCTAssertEqual(label(of: "status.headline"), "No device is using Tether yet")
+        XCTAssertEqual(label(of: "status.headline"), Copy.noDeviceYet)
     }
 
     /// The hotspot is on but WireGuard can't start (keys locked after a restart), so nothing is shared.

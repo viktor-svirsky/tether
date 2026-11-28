@@ -8,8 +8,8 @@ final class DevicesTests: TetherUITestCase {
         let pc = element("device.Windows PC")
         XCTAssertTrue(pc.exists)
         XCTAssertTrue(ipad.label.contains("iPad") && ipad.label.contains("Connected"), ipad.label)
-        XCTAssertFalse(ipad.label.contains("Not connected"), ipad.label)
-        XCTAssertTrue(pc.label.contains("Windows PC") && pc.label.contains("Not connected"), pc.label)
+        XCTAssertFalse(ipad.label.contains(Copy.notConnected), ipad.label)
+        XCTAssertTrue(pc.label.contains("Windows PC") && pc.label.contains(Copy.notConnected), pc.label)
         XCTAssertTrue(sectionHeader("DEVICES").exists)
     }
 
