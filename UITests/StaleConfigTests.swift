@@ -6,7 +6,7 @@ final class StaleConfigTests: TetherUITestCase {
     func testTheMainScreenSaysADeviceHasAConfigThatNoLongerWorks() throws {
         launch(.staleConfig)
         XCTAssertEqual(reveal(element("stale.warning")).label,
-                       "A device is trying to connect with a config that no longer works. Delete its tunnel in WireGuard and add it again.")
+                       "A device is trying to connect with a config that no longer works. Delete its tunnel in WireGuard, then add the device again.")
         XCTAssertEqual(label(of: "status.title"), "Sharing", "the devices that work still do")
         try audit()
     }

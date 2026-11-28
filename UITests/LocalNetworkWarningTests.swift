@@ -8,7 +8,7 @@ final class LocalNetworkWarningTests: TetherUITestCase {
         XCTAssertEqual(label(of: "status.title"), "Devices can't connect", "not Sharing: nothing reaches the devices")
         XCTAssertEqual(label(of: "status.headline"), "Local Network is off for Tether")
         XCTAssertEqual(label(of: "localNetwork.problem"), "iOS blocks Tether's answers to your devices until it's on.")
-        XCTAssertEqual(element("localNetwork.open").label, "Turn on in Settings")
+        XCTAssertEqual(element("localNetwork.open").label, "Turn on in iOS Settings")
         assertNowhere(element("traffic.speeds"), element("status.stopHint"))
         try audit()
     }
@@ -22,7 +22,7 @@ final class LocalNetworkWarningTests: TetherUITestCase {
             XCTAssertEqual(reveal(element("add.localNetwork.title")).label, "Local Network is off for Tether")
             XCTAssertLessThan(element("add.localNetwork.title").frame.maxY, element("add.step1").frame.minY, "above the steps")
             XCTAssertEqual(label(of: "add.localNetwork.problem"), "iOS blocks Tether's answers to your devices until it's on.")
-            XCTAssertEqual(reveal(element("add.localNetwork.open")).label, "Turn on in Settings")
+            XCTAssertEqual(reveal(element("add.localNetwork.open")).label, "Turn on in iOS Settings")
             assertNowhere(text(containing: "This ticks off by itself"), message: "it won't, until Local Network is on")
             try audit()
             app.terminate()
