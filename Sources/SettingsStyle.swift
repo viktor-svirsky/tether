@@ -17,7 +17,9 @@ struct PaperTitle: View {
             .font(.system(size: size, weight: .light))
             .tracking(-1.2)
             .foregroundStyle(Theme.ink)
-            .minimumScaleFactor(0.5)
+            // One word: at the largest text sizes it shrinks to fit, rather than break inside the word.
+            .lineLimit(1)
+            .minimumScaleFactor(0.4)
             .accessibilityAddTraits(.isHeader)
             .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 8, trailing: 20))
             .paperRow()

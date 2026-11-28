@@ -13,7 +13,9 @@ extension TetherUITestCase {
 
     /// Flips one of Settings' ink switches (InkToggleStyle). Only the switch itself takes taps, at the
     /// row's right end, so a tap on the element's centre, which is the space after the label, does nothing.
+    /// Scrolled into view first: a tap on a coordinate doesn't scroll, and help opened above can push
+    /// the row down.
     func flip(_ toggle: XCUIElement) {
-        toggle.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: -25, dy: 0)).tap()
+        reveal(toggle).coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: -25, dy: 0)).tap()
     }
 }
