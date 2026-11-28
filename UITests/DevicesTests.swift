@@ -13,13 +13,29 @@ final class DevicesTests: TetherUITestCase {
         XCTAssertTrue(sectionHeader("DEVICES").exists)
     }
 
-    /// Each row says what it used this month (#73), or Not used this month rather than 0 bytes.
+    /// Each row says what it used this month (#73), of how much where it has a limit (M2), or Not
+    /// used this month rather than 0 bytes.
     func testEachRowSaysWhatItUsedThisMonth() {
         launch(.sharing)
         let ipad = reveal(element("device.iPad"))
-        XCTAssertTrue(ipad.label.contains("3.12 GB this month"), ipad.label)
+        XCTAssertTrue(ipad.label.contains("3.12 GB of 10 GB this month"), ipad.label)
         let pc = reveal(element("device.Windows PC"))
         XCTAssertTrue(pc.label.contains("Not used this month"), pc.label)
+    }
+
+    /// A row says where it stands against its limit (M2, H3): near, over, or paused at it, and what
+    /// it used of how much.
+    func testRowsSayWhereTheyStandAgainstTheirLimits() {
+        launch(.limits)
+        let ipad = reveal(element("device.iPad"))
+        XCTAssertTrue(ipad.label.contains("Connected, near its limit"), ipad.label)
+        XCTAssertTrue(ipad.label.contains("of 10 GB this month"), ipad.label)
+        let pc = reveal(element("device.Windows PC"))
+        XCTAssertTrue(pc.label.contains("Paused at its limit"), pc.label)
+        XCTAssertTrue(pc.label.contains("of 5 GB this month"), pc.label)
+        let pixel = reveal(element("device.Pixel"))
+        XCTAssertTrue(pixel.label.contains("Connected, over its limit"), pixel.label)
+        XCTAssertTrue(pixel.label.contains("of 1 GB this month"), pixel.label)
     }
 
     func testDeviceRowsHaveNoAddresses() {

@@ -25,7 +25,8 @@ struct LocalNetworkWarning: View {
         Button {
             UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
         } label: {
-            Text("Turn on in Settings")
+            // iOS Settings, not Tether's own Settings, which has a switch for local networks (M3).
+            Text("Turn on in iOS Settings")
                 .font(.headline)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .foregroundStyle(Self.text)

@@ -12,25 +12,34 @@ struct MainView: View {
     /// A state change on this screen: the status, a warning that comes or goes, and a device or the
     /// proxy that comes, goes, connects or pauses. The list animates it, so rows and blocks fade in
     /// and out and the heights ease instead of jumping.
-    private struct Change: Hashable {
-        let phase: StatusCard.Phase
-        let warnings: [Bool]
+    private struct Change: Equatable {
+        let status: HomeStatus
+        let notes: [String]
+        let others: [Bool]
         let devices: [Int]
         let proxy: Int?
     }
 
     private var change: Change {
-        Change(phase: StatusCard.Phase(model),
-               warnings: [model.expiryWarning != nil, model.wireGuardProblem != nil, model.blockedWithoutVPN,
-                          model.sharing && model.belowBatteryStop != nil, model.staleConfigShown,
-                          model.notUsingTether.isEmpty, model.wireGuardReady != nil],
+        Change(status: model.homeStatus,
+               notes: model.homeNotes.map(\.id),
+               others: [model.notUsingTether.isEmpty, model.wireGuardReady != nil],
                devices: model.wireGuardPeers.map {
                    var hasher = Hasher()
                    hasher.combine($0.id)
-                   hasher.combine(DeviceStatus($0, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN).hashKey)
+                   hasher.combine(DeviceStatus($0, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily).hashKey)
+                   hasher.combine(model.limitStanding(of: $0.id).hashValue)
                    return hasher.finalize()
                },
-               proxy: model.proxyOn ? model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN).look.hashKey } : nil)
+               proxy: model.proxyOn ? model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily).look.hashKey } : nil)
+    }
+
+    /// Sharing, devices kept out or not: turning off the hotspot stops it either way.
+    private var sharing: Bool {
+        switch model.homeStatus {
+        case .sharing, .keptOut: true
+        default: false
+        }
     }
 
     /// A sheet or the intro covers Home, so its chart needn't move.
@@ -61,39 +70,22 @@ struct MainView: View {
                         .accessibilityIdentifier("settings.open")
                     }
                     // In the same section, so no section gap opens between TETHER and the title.
-                    StatusCard(model: model, covered: covered)
+                    StatusCard(model: model, covered: covered) { showSettings = true }
                 }
                 .paperRow()
                 .listRowInsets(.vertical, 0)
 
-                if let warning = model.expiryWarning {
-                    warningSection(warning, icon: "exclamationmark.triangle.fill", id: "app.expiry")
-                }
-
-                // Above Add a device, so a reason it doesn't work and the way out are both here.
-                WireGuardProblemSection(model: model)
-                    .paperRow()
-
-                if model.blockedWithoutVPN {
-                    warningSection(VPNText.blocked(onlyFamily: model.vpnOnlyFamily), icon: "lock.shield", id: "vpn.blocked")
-                }
-
-                if model.sharing, let below = model.belowBatteryStop {
-                    warningSection(below.text, icon: "battery.25percent", id: "battery.low")
-                }
-
-                if model.staleConfigShown {
-                    warningSection("A device is trying to connect with a config that no longer works. Delete its tunnel in WireGuard and add it again.",
-                                   icon: "exclamationmark.triangle.fill", id: "stale.warning")
-                }
+                // The status card says what keeps the devices out. The rest is here, in one order.
+                HomeNotesSection(model: model)
 
                 if !model.wireGuardPeers.isEmpty || model.proxyOn || !model.notUsingTether.isEmpty {
                     Section {
                         ForEach(model.wireGuardPeers) { peer in
-                            let status = DeviceStatus(peer, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN)
+                            let status = DeviceStatus(peer, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily)
                             NavigationLink { DeviceView(model: model, peer: peer) } label: {
-                                HomeDeviceRow(name: peer.name, status: status, state: status.label(now: model.clockNow),
-                                              used: Format.used(model.usage(of: peer.id).thisMonth.total, model.usagePeriod),
+                                HomeDeviceRow(name: peer.name, status: status,
+                                              state: status.label(now: model.clockNow, standing: model.limitStanding(of: peer.id)),
+                                              used: Format.used(model.usage(of: peer.id).thisMonth.total, model.usagePeriod, limit: peer.limit),
                                               newConfig: model.newConfig(peer))
                             }
                             .navigationLinkIndicatorVisibility(.hidden)
@@ -127,12 +119,14 @@ struct MainView: View {
                 AddDeviceSection(model: model, first: model.wireGuardPeers.isEmpty && !model.proxyOn) { addingDevice = true }
                     .paperRow()
 
-                // At the foot of the screen, like the board: turning the hotspot off is the switch.
-                if StatusCard.Phase(model) == .sharing {
+                // At the foot of the screen, like the board: turning the hotspot off is the switch. Kept
+                // out is sharing too. A sentence, not the board's mono capitals: it's an instruction (M11).
+                if sharing {
                     Section {
-                        Text("To stop, turn off Personal Hotspot.")
-                            .monoCaps()
-                            .accessibilityLabel("To stop, turn off Personal Hotspot.")
+                        Text(Copy.stopHint)
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("status.stopHint")
                     }
                     .paperRow()
@@ -158,29 +152,16 @@ struct MainView: View {
         }
     }
 
-    /// A problem on its own row, in ink, with the warning mark in the danger colour.
-    private func warningSection(_ text: String, icon: String, id: String) -> some View {
-        Section {
-            Label {
-                Text(text).foregroundStyle(Theme.ink)
-            } icon: {
-                Image(systemName: icon).foregroundStyle(Theme.danger)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier(id)
-        }
-        .paperRow()
-    }
 }
 
 extension MainView {
     /// The proxy's row under the devices (#78), once it's on: like a device's, with how many
     /// connections are open in place of Connected.
     private func proxyRow(_ proxy: WireGuardSetup.Proxy) -> some View {
-        let status = ProxyStatus(proxy, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN)
+        let status = ProxyStatus(proxy, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily)
         return NavigationLink { ProxyView(model: model) } label: {
             HomeDeviceRow(name: ProxyStatus.name, status: status.look, state: status.label(now: model.clockNow),
-                          used: Format.used(model.usage(of: proxy.id).thisMonth.total, model.usagePeriod))
+                          used: Format.used(model.usage(of: proxy.id).thisMonth.total, model.usagePeriod, limit: proxy.limit))
         }
         .navigationLinkIndicatorVisibility(.hidden)
         .accessibilityIdentifier("proxy.row")
@@ -201,7 +182,8 @@ private extension DeviceStatus {
 
 /// A device on Home, like the board: a dash and the name, what it used on the right, and its state
 /// in words under it, after the live dot when it's connected. One that isn't connected is drawn in
-/// the secondary colour. At the accessibility text sizes the use goes under the name, or the name
+/// the secondary colour. Where the two don't fit on one line, as "3.12 GB of 10 GB this month" with a
+/// long name, and always at the accessibility text sizes, the use goes under the name, or the name
 /// would break inside words.
 struct HomeDeviceRow: View {
     let name: String
@@ -212,23 +194,19 @@ struct HomeDeviceRow: View {
     var newConfig: HotspotSession.NewConfig? = nil
     @Environment(\.dynamicTypeSize) private var textSize
 
-    private var layout: AnyLayout {
-        textSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            layout {
-                HStack(alignment: .firstTextBaseline, spacing: 0) {
-                    Text("– ").foregroundStyle(Theme.secondary).accessibilityHidden(true)
-                    Text(name).foregroundStyle(status == .connected ? Theme.ink : Theme.secondary)
+            if textSize.isAccessibilitySize {
+                stacked
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline) {
+                        nameText.lineLimit(1)
+                        Spacer(minLength: 8)
+                        usedText.lineLimit(1)
+                    }
+                    stacked
                 }
-                if !textSize.isAccessibilitySize { Spacer(minLength: 8) }
-                Text(used)
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.secondary)
             }
             HStack(spacing: 6) {
                 if status == .connected {
@@ -242,11 +220,34 @@ struct HomeDeviceRow: View {
         }
         .frame(minHeight: 44)
     }
+
+    private var stacked: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            nameText
+            usedText
+        }
+    }
+
+    private var nameText: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            Text("– ").foregroundStyle(Theme.secondary).accessibilityHidden(true)
+            Text(name).foregroundStyle(status == .connected ? Theme.ink : Theme.secondary)
+        }
+    }
+
+    private var usedText: some View {
+        Text(used)
+            .font(.subheadline)
+            .foregroundStyle(Theme.secondary)
+    }
 }
 
 /// Waiting for the hotspot's network doesn't distinguish off from on with no device joined.
+/// On Home it also says Tether sleeps once it's left waiting (H2): Add a device is open while the
+/// person is in Tether, so it doesn't.
 struct HotspotWaitingHint: View {
     let id: String
+    var sleeps = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -254,6 +255,12 @@ struct HotspotWaitingHint: View {
                 .accessibilityIdentifier("\(id).hotspotHint")
             HotspotSettingsLink()
                 .accessibilityIdentifier("\(id).hotspotPath")
+            // After the path, so the link stays under the sentence it's for.
+            if sleeps {
+                Text(HomeStatus.sleepHint)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("\(id).sleepHint")
+            }
         }
     }
 }
@@ -463,35 +470,20 @@ struct SpeedRow: View {
 }
 
 /// The one-second answer at the top of Home: a big light title saying whether this phone shares,
-/// with the live dot while it does, who uses it, and under that the speeds while sharing, or what to
-/// do. Turning off Personal Hotspot is how sharing stops, so there's no switch.
+/// with the live dot while it does, who uses it, and under that the speeds while sharing, or what's
+/// wrong and what to do (`HomeStatus`). Turning off Personal Hotspot is how sharing stops, so
+/// there's no switch.
 struct StatusCard: View {
     @ObservedObject var model: Model
     /// A sheet covers Home, see `SpeedHistoryGraph.covered`.
     var covered = false
+    /// Opens Tether's Settings sheet, the way to Only share through a VPN while it keeps the devices out.
+    var openSettings: () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The board's 52 points, growing with the text and capped so a long title still fits a few lines.
     @ScaledMetric(relativeTo: .largeTitle) private var titleSize: CGFloat = 52
 
-    /// What the card shows. Local Network off comes first, hotspot or not: nothing works until it's on.
-    enum Phase: Hashable {
-        case blocked, sharing, cantShare, waiting
-
-        @MainActor init(_ model: Model) {
-            self = model.localNetworkDenied ? .blocked : model.sharing ? .sharing : model.running ? .cantShare : .waiting
-        }
-    }
-
-    private var phase: Phase { Phase(model) }
-
-    private var title: String {
-        switch phase {
-        case .blocked: "Devices can't connect"
-        case .sharing: "Sharing"
-        case .cantShare: "Tether can't share yet"
-        case .waiting: Copy.waitingForDevice
-        }
-    }
+    private var status: HomeStatus { model.homeStatus }
 
     /// Opens Settings at its main screen, where Personal Hotspot is near the top. Nothing goes
     /// straight to the Personal Hotspot page any more: on iOS 27, App-prefs:INTERNET_TETHERING and
@@ -500,31 +492,38 @@ struct StatusCard: View {
         UIApplication.shared.open(URL(string: "App-prefs:")!)
     }
 
+    /// The line under the title: who uses Tether while sharing, the state's own line otherwise.
     private var headline: String? {
-        switch phase {
-        case .blocked: return "Local Network is off for Tether"
-        case .sharing:
-            let proxy = model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN).inUse } ?? false
-            return UsingTether.headline(devices: model.wireGuardConnected.count, proxy: proxy,
-                                        paused: model.wireGuardPeers.filter { $0.paused != nil }.count,
-                                        added: !model.wireGuardPeers.isEmpty || model.proxyOn)
-        // The WireGuard section under it says why, and what to do.
-        case .cantShare: return "Personal Hotspot is on, but WireGuard isn't running."
-        case .waiting: return nil
-        }
+        guard status == .sharing else { return status.line }
+        let proxy = model.proxy.map { ProxyStatus($0, stats: model.proxyStats, hotspotOn: model.running, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily).inUse } ?? false
+        return UsingTether.headline(devices: model.wireGuardConnected.count, proxy: proxy,
+                                    paused: model.wireGuardPeers.filter { $0.paused != nil }.count,
+                                    added: !model.wireGuardPeers.isEmpty || model.proxyOn)
+    }
+
+    /// A WireGuard problem's line keeps the identifier its text had under the card before (M9).
+    private var headlineID: String {
+        if case .problem = status { return "wireguard.problem" }
+        return "status.headline"
+    }
+
+    /// Whether anything shows under the line: a problem without a button has only its two lines.
+    private var hasBody: Bool {
+        if case let .problem(problem) = status { return problem.action != nil }
+        return true
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(title)
+                Text(status.title)
                     .font(.system(size: min(titleSize, 80), weight: .light))
                     .tracking(-1)
                     .foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .contentTransition(.opacity)
                     .accessibilityIdentifier("status.title")
-                if phase == .sharing {
+                if status.live {
                     Circle()
                         .fill(Theme.live)
                         .frame(width: 10, height: 10)
@@ -539,12 +538,12 @@ struct StatusCard: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .contentTransition(.opacity)
                     .padding(.top, 10)
-                    .accessibilityIdentifier("status.headline")
+                    .accessibilityIdentifier(headlineID)
                     .transition(.opacity)
             }
             Group {
-                switch phase {
-                case .blocked:
+                switch status {
+                case .localNetworkOff:
                     VStack(alignment: .leading, spacing: 12) {
                         // Its text and its button: two views, so this stack spaces them.
                         LocalNetworkWarning(id: "localNetwork")
@@ -555,21 +554,48 @@ struct StatusCard: View {
                         SpeedHistoryGraph(history: model.speedHistory, covered: covered)
                     }
                     .liveCard()
+                case .keptOut:
+                    keptOut
                 case .waiting:
-                    HotspotWaitingHint(id: "status")
+                    HotspotWaitingHint(id: "status", sleeps: true)
                         .font(.callout)
                         .foregroundStyle(Theme.ink)
-                case .cantShare:
-                    EmptyView()
+                case let .problem(problem):
+                    if let action = problem.action {
+                        WireGuardProblemAction(model: model, action: action)
+                    }
                 }
             }
-            .padding(.top, phase == .cantShare ? 0 : 28)
+            .padding(.top, hasBody ? 28 : 0)
             .transition(.opacity)
         }
         .padding(.top, 36)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: headline)
+    }
+
+    /// Only share through a VPN keeps every device out (H1): what to do, and the way to the switch.
+    /// No button that turns the rule off here: one wrong tap would send traffic outside the VPN.
+    private var keptOut: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(status.body ?? "")
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("vpn.blocked")
+            Button(action: openSettings) {
+                Text(Copy.openTetherSettings)
+                    .underline()
+                    .multilineTextAlignment(.leading)
+                    .frame(minHeight: 44, alignment: .leading)
+                    .contentShape(.rect)
+            }
+            // Plain, or a tap anywhere in the card opens Settings.
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens Tether's Settings")
+            .accessibilityIdentifier("status.openSettings")
+        }
+        .font(.callout)
+        .foregroundStyle(Theme.ink)
     }
 }
 

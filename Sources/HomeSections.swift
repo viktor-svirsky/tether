@@ -51,28 +51,42 @@ struct AddDeviceSection: View {
     }
 }
 
-/// Why WireGuard isn't running, with the way out when the saved keys can't be read.
-struct WireGuardProblemSection: View {
+/// The way out of a WireGuard problem, under its title and line on the status card (M9): start over
+/// with new keys, after the same question as before, or share the log for a GitHub issue.
+struct WireGuardProblemAction: View {
     @ObservedObject var model: Model
+    let action: WireGuardProblem.Action
     @State private var confirmReset = false
 
     var body: some View {
-        if let problem = model.wireGuardProblem {
-            Section {
-                WarningLabel(problem.text)
-                    .accessibilityIdentifier("wireguard.problem")
-                if model.wireGuardNeedsReset {
-                    // Every device has to be added again, and an update may have read the keys (#174).
-                    Button("Start over with new keys", role: .destructive) { confirmReset = true }
-                        .accessibilityIdentifier("wireguard.reset")
-                        .confirmationDialog("Start over with new keys?", isPresented: $confirmReset, titleVisibility: .visible) {
-                            Button("Start Over", role: .destructive) { model.resetWireGuard() }
-                        } message: {
-                            Text("Every device has to be added again. If you went back to an older Tether, update it instead.")
-                        }
+        switch action {
+        case .startOver:
+            // Every device has to be added again, and an update may have read the keys (#174).
+            Button(action.title) { confirmReset = true }
+                .buttonStyle(InkCapsuleButtonStyle())
+                .accessibilityIdentifier("wireguard.reset")
+                .confirmationDialog("Start over with new keys?", isPresented: $confirmReset, titleVisibility: .visible) {
+                    Button("Start Over", role: .destructive) { model.resetWireGuard() }
+                } message: {
+                    Text("Every device has to be added again. If you went back to an older Tether, update it instead.")
                 }
-            } header: {
-                Text("WireGuard isn't running")
+        case .shareLog:
+            VStack(alignment: .leading, spacing: 12) {
+                ShareLink(item: LogFile(), preview: SharePreview("Tether log")) {
+                    Text(action.title)
+                }
+                .buttonStyle(InkCapsuleButtonStyle())
+                .accessibilityIdentifier("wireguard.shareLog")
+                Link(destination: URL(string: "https://\(Copy.issuesLink)")!) {
+                    Text(Copy.issuesLink)
+                        .font(.subheadline)
+                        .underline()
+                        .foregroundStyle(Theme.ink)
+                }
+                // Plain, or a tap anywhere in the card opens GitHub.
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens GitHub")
+                .accessibilityIdentifier("wireguard.issues")
             }
         }
     }
