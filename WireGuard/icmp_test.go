@@ -17,6 +17,10 @@ import (
 )
 
 // pingFrom sends one echo request from the device and returns the reply, or an error after wait.
+// The read starts before the request goes out: wireguard-go's PingConn.Read waits for gVisor to
+// say a reply came without first checking the socket's queue, so a reply that landed before Read
+// was never read, and since gVisor says so only when the queue was empty, no later reply rescued it
+// (#363).
 func pingFrom(c *client, dst string, seq int, data []byte, wait time.Duration) (*icmp.Echo, error) {
 	pc, err := c.net.DialPingAddr(netip.Addr{}, netip.MustParseAddr(dst))
 	if err != nil {
@@ -27,12 +31,26 @@ func pingFrom(c *client, dst string, seq int, data []byte, wait time.Duration) (
 	if err != nil {
 		return nil, err
 	}
-	if _, err := pc.Write(b); err != nil {
-		return nil, err
-	}
 	pc.SetReadDeadline(time.Now().Add(wait))
+	type result struct {
+		n   int
+		err error
+	}
 	buf := make([]byte, 65535)
-	n, err := pc.Read(buf)
+	reading, read := make(chan struct{}), make(chan result, 1)
+	go func() {
+		close(reading)
+		n, err := pc.Read(buf)
+		read <- result{n, err}
+	}()
+	// Read can't say when it waits, so the request goes out a moment after it started.
+	<-reading
+	time.Sleep(10 * time.Millisecond)
+	if _, err := pc.Write(b); err != nil {
+		return nil, err // the deferred Close ends the read
+	}
+	r := <-read
+	n, err := r.n, r.err
 	if err != nil {
 		return nil, err
 	}
