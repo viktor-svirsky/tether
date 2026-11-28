@@ -24,13 +24,14 @@ final class ProxyTests: TetherUITestCase {
     func testAddADeviceAsksAboutWireGuardFirst() {
         launch(.noDevices)
         openAddDeviceQuestion()
-        XCTAssertEqual(label(of: "add.question"), "Does the other device have the WireGuard app?")
-        XCTAssertEqual(label(of: "add.way.wireGuard"), "Yes, use WireGuard, Everything on it goes through Tether, games and calls too.")
-        XCTAssertEqual(label(of: "add.way.proxy"), "No, use the proxy, No app needed. Most apps go through Tether, some don't.")
-        XCTAssertEqual(label(of: "add.wayHint"), "Can't install apps? A TV, a console or a work laptop can use the proxy.")
-        // Yes opens the WireGuard steps as they were, and Back comes back to the question.
+        XCTAssertEqual(label(of: "add.question"), "Can you install an app on the other device?")
+        XCTAssertEqual(label(of: "add.way.wireGuard"),
+                       "Yes, install WireGuard, Recommended. The app is free. Everything on it goes through Tether, games and calls too.")
+        XCTAssertEqual(label(of: "add.way.proxy"),
+                       "No, use the proxy, No app needed. For a TV, a console or a work laptop. Most apps go through Tether, some don't.")
+        // Yes opens the WireGuard steps, and Back comes back to the question.
         element("add.way.wireGuard").tap()
-        XCTAssertEqual(label(of: "add.step1"), "Step 1 of 3, Join this iPhone's hotspot")
+        XCTAssertEqual(label(of: "add.step1"), "Step 1 of 4, Join this iPhone's hotspot")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(element("add.question").waitForExistence(timeout: 5))
         assertNowhere(element("proxy.row"), message: "nothing turned the proxy on")
@@ -46,11 +47,13 @@ final class ProxyTests: TetherUITestCase {
         }
     }
 
-    /// The proxy turns on as its steps open: the server and port to type, with Copy, where each kind
+    /// Turn on the proxy on its steps (H5): the server and port to type, with Copy, where each kind
     /// of device takes them, and the last step waits for the first page.
     func testTheProxyStepsShowWhereToSetIt() {
         launch(.noDevices)
         openProxySteps()
+        reveal(element("add.proxy.turnOn")).tap()
+        XCTAssertTrue(element("add.proxy.server").waitForExistence(timeout: 5), "the proxy did not turn on")
         XCTAssertEqual(label(of: "add.proxy.step1"), "Step 1 of 3, Join this iPhone's hotspot")
         XCTAssertEqual(value(of: element("add.proxy.step1")), "Done", "the demo's hotspot is on")
         XCTAssertEqual(label(of: "add.proxy.step2"), "Step 2 of 3, In its Wi-Fi settings, set the proxy")

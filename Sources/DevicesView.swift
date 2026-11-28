@@ -69,10 +69,7 @@ struct DeviceView: View {
                                         : "Its config points at an old address of this iPhone, so it can't connect.")
                             .accessibilityIdentifier("device.oldAddress")
                         // Add a device for this entry: the new code takes its place, with its name, limit and use.
-                        Button {
-                            model.openAddWindow(replacing: peer.id)
-                            givingNewConfig = true
-                        } label: {
+                        Button { givingNewConfig = true } label: {
                             InkOutline(title: Copy.giveNewConfig)
                         }
                         .buttonStyle(.plain)
@@ -182,7 +179,7 @@ struct DeviceView: View {
             }
         }
         // Closing it any way leaves this device as it was, unless its new config was claimed.
-        .sheet(isPresented: $givingNewConfig) { AddDeviceSheet(model: model) }
+        .sheet(isPresented: $givingNewConfig) { AddDeviceSheet(model: model, replacing: peer.id) }
     }
 }
 

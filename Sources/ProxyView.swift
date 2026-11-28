@@ -111,10 +111,6 @@ struct ProxyView: View {
         // Room under Turn off, so the Copied capsule does not cover it (L4).
         .contentMargins(.bottom, 64, for: .scrollContent)
         .animation(PaperMotion.change(reduceMotion: reduceMotion), value: rows(servers: servers.count))
-        // Only the copy buttons write the pasteboard here, by tap, VoiceOver or a keyboard alike.
-        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
-            withAnimation(PaperMotion.change(reduceMotion: reduceMotion)) { copied = true }
-        }
         .copiedToast($copied, id: "proxy.copied")
         .navigationTitle(ProxyStatus.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -162,7 +158,7 @@ struct ProxyView: View {
                     .accessibilityLabel(label)
                     .accessibilityValue(text)
                     .accessibilityIdentifier(id)
-                CopyButton(text: text, label: copyLabel, fill: Theme.dot)
+                CopyButton(text: text, label: copyLabel, fill: Theme.dot, copied: $copied)
                     .accessibilityIdentifier("\(id).copy")
             }
         } label: {

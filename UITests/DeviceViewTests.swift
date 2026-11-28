@@ -214,12 +214,14 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(element("device.oldAddress"), element("device.newConfig"))
     }
 
-    /// Give it a new config opens Add a device over its screen. Closing it leaves the device as it was.
-    func testGiveItANewConfigOpensAddADevice() {
+    /// Give it a new config opens Add a device for this device, on its WireGuard steps. Closing it
+    /// leaves the device as it was.
+    func testGiveItANewConfigOpensAddADeviceForIt() {
         launch(.oldAddress)
         openDevice("Windows PC")
         reveal(element("device.newConfig")).tap()
-        XCTAssertTrue(element("add.close").waitForExistence(timeout: 5), "Add a device did not open")
+        XCTAssertTrue(app.navigationBars["New config for Windows PC"].waitForExistence(timeout: 5), "Add a device did not open for it")
+        XCTAssertTrue(element("add.step1").exists)
         element("add.close").tap()
         waitUntilGone(element("add.close"))
         XCTAssertTrue(app.navigationBars["Windows PC"].exists, "back on its screen")
