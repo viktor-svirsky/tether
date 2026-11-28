@@ -1,26 +1,27 @@
 import SwiftUI
 
-/// One device: whether it's connected or paused, renaming it, pausing and resuming it, and removing
-/// it. Rename, or tapping the title, renames it (#173). A change that couldn't be saved says so at the top, and so does a config
-/// that points at an old address of this iPhone. Paper and ink (#349): its name big on top, the usage
-/// in the floating card, the rest as plain rows.
+/// One device: whether it's connected or paused, pausing and resuming it, what it used against its
+/// data limit, renaming it, and removing it. Rename, or tapping the title, renames it (#173). A change
+/// that couldn't be saved says so at the top, and so does a config that no longer reaches this iPhone,
+/// with the way to give it a new one (M1). Paper and ink (#349): its name big on top, the usage in the
+/// floating card, the rest as plain rows. Pause comes right after the status, Rename next to Remove (L6).
 struct DeviceView: View {
     @ObservedObject var model: Model
     let peer: WireGuardSetup.Peer
     @State private var confirmRemove = false
-    /// Other amount, typed in GB.
-    @State private var typingLimit = false
-    @State private var typedLimit = ""
+    @State private var limitQuestions = LimitQuestions()
     @State private var renaming = false
     @State private var typedName = ""
     /// Selects the name when its field starts editing, see `SelectsAllOnEdit`.
     @State private var selectsName = false
+    /// Add a device, giving this one a new config (M1).
+    @State private var givingNewConfig = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The saved device, so a new name shows at once.
     private var current: WireGuardSetup.Peer { model.wireGuardPeers.first { $0.id == peer.id } ?? peer }
-    private var status: DeviceStatus { DeviceStatus(current, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN) }
+    private var status: DeviceStatus { DeviceStatus(current, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily) }
     /// A change to this device that couldn't be saved.
     private var problem: String? { model.wireGuardDeviceProblem.flatMap { $0.device == peer.id ? $0.text : nil } }
 
@@ -43,7 +44,13 @@ struct DeviceView: View {
              overLimit: model.overLimit(peer.id))
     }
 
+    private var limitChoice: DataLimitChoice {
+        DataLimitChoice(name: current.name, limit: current.limit, paused: current.paused,
+                        used: model.usage(of: peer.id).thisMonth.total, resets: model.nextResetDay) { model.setLimit(peer.id, $0) }
+    }
+
     var body: some View {
+        let newConfig = model.newConfig(current)
         ScrollViewReader { proxy in
             List {
                 // On top, where a rename is made, and the screen a failed removal stays on.
@@ -55,12 +62,18 @@ struct DeviceView: View {
                     .paperRow()
                     .id("problem")
                 }
-                if let reason = model.newConfig(current) {
+                if let newConfig {
                     Section {
-                        InkWarningLabel(reason == .nameNotAnswered
-                                        ? "Its config uses this iPhone's name, which isn't answering on the hotspot, so it can't connect. Remove it, then add it again."
-                                        : "Its config points at an old address of this iPhone, so it can't connect. Remove it, then add it again.")
+                        InkWarningLabel(newConfig == .nameNotAnswered
+                                        ? "Its config uses this iPhone's name, which isn't answering on the hotspot, so it can't connect."
+                                        : "Its config points at an old address of this iPhone, so it can't connect.")
                             .accessibilityIdentifier("device.oldAddress")
+                        // Add a device for this entry: the new code takes its place, with its name, limit and use.
+                        Button { givingNewConfig = true } label: {
+                            InkOutline(title: Copy.giveNewConfig)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("device.newConfig")
                     }
                     .paperRow()
                 }
@@ -80,6 +93,15 @@ struct DeviceView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(DeviceScreenMotion.appear)
                                 .accessibilityIdentifier("device.statusDetail")
+                        }
+                        // What to do on that device (M1), unless the warning above says it needs a new config.
+                        if status == .notConnected, newConfig == nil {
+                            Text(Copy.notConnectedHint)
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(DeviceScreenMotion.appear)
+                                .accessibilityIdentifier("device.notConnectedHint")
                         }
                         // While it's connected, the address its handshake comes from, once the server says (#73).
                         // It goes under the status like a paused device's detail line, so the Pause and Resume
@@ -101,8 +123,13 @@ struct DeviceView: View {
                     }
                 }
                 .paperRow()
-                // A row anyone finds, since the title's menu is easy to miss (#173).
+                PauseSection(paused: current.paused != nil, id: "device",
+                             footer: "Pause stops it from connecting for a while, or until you resume it.",
+                             pause: { model.pauseWireGuardDevice(peer.id, for: $0) },
+                             resume: { model.resumeWireGuardDevice(peer.id) })
+                usageSection
                 Section {
+                    // A row anyone finds, since the title's menu is easy to miss (#173).
                     Button {
                         typedName = current.name
                         selectsName = true
@@ -111,11 +138,6 @@ struct DeviceView: View {
                         Text("Rename").underline().foregroundStyle(Theme.ink)
                     }
                     .accessibilityIdentifier("device.rename")
-                }
-                .paperRow()
-                pauseSection
-                usageSection
-                Section {
                     Button(role: .destructive) { confirmRemove = true } label: {
                         Text("Remove device").foregroundStyle(Theme.danger)
                     }
@@ -139,18 +161,7 @@ struct DeviceView: View {
         .navigationTitle(Binding(get: { current.name }, set: { model.renameWireGuardDevice(peer.id, to: $0) }))
         .navigationBarTitleDisplayMode(.inline)
         .toolbarRole(.editor)
-        .alert("Data limit", isPresented: $typingLimit) {
-            TextField("GB", text: $typedLimit)
-                .keyboardType(.decimalPad)
-            Button("Set") {
-                if let bytes = DataLimit.bytes(typedGB: typedLimit) { model.setLimit(peer.id, bytes) }
-            }
-            // Nothing to set until it's an amount, rather than closing as if it were.
-            .disabled(DataLimit.bytes(typedGB: typedLimit) == nil)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Per month, both ways, in GB.")
-        }
+        .dataLimitQuestions($limitQuestions, limitChoice)
         .alert("Rename", isPresented: $renaming) {
             TextField("Name", text: $typedName)
                 .textInputAutocapitalization(.words)
@@ -167,56 +178,22 @@ struct DeviceView: View {
                 if model.removeWireGuardDevice(peer.id) { dismiss() }
             }
         }
+        // Closing it any way leaves this device as it was, unless its new config was claimed.
+        .sheet(isPresented: $givingNewConfig) { AddDeviceSheet(model: model, replacing: peer.id) }
     }
 }
 
 extension DeviceView {
     /// What it used, both ways, counted the way the main screen counts (#75). iOS Settings > Cellular
-    /// adds the iPhone's own headers on top, so it says "through Tether".
-    /// In the floating card: the period as a small label, this month as a big number, and with a limit
-    /// a meter against it and when the count resets (#75). Either way down and up under it, once
-    /// there's any. VoiceOver reads the card as one line, as it did before the card.
+    /// adds the iPhone's own headers on top, so it says "through Tether". The card says when the count
+    /// resets, so the footer doesn't say it again (L7), unless there's no limit and so no date on the card.
     private var usageSection: some View {
         let usage = model.usage(of: peer.id)
-        let used = usage.thisMonth.total
-        let resets = model.nextResetDay, period = model.usagePeriod
+        let resets = model.nextResetDay
         return Section {
-            Group {
-                if let limit = current.limit {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(period).monoCaps()
-                        bigNumber(Format.bytes(used), of: " of \(Format.bytes(limit))")
-                        if used > 0 { downAndUp(usage.thisMonth) }
-                        let fraction = limit == 0 ? 1 : min(1, Double(used) / Double(limit))
-                        // Keyed on whole percents, so a traffic sample that doesn't move the line doesn't animate.
-                        LimitMeter(fraction: fraction)
-                            .animation(PaperMotion.change(reduceMotion: reduceMotion), value: Int(fraction * 100))
-                        Text("Resets on \(resets)")
-                            .font(.subheadline)
-                            .foregroundStyle(Theme.secondary)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(spoken(["\(Format.bytes(used)) of \(Format.bytes(limit)) \(period)",
-                                                used > 0 ? downAndUpSpoken(usage.thisMonth) : nil,
-                                                "Resets on \(resets)"]))
-                } else if used == 0 {
-                    Text(Format.used(0, period))
-                        .font(.headline)
-                        .foregroundStyle(Theme.ink)
-                } else {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(period).monoCaps()
-                        bigNumber(Format.bytes(used), of: nil)
-                        downAndUp(usage.thisMonth)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(spoken(["\(Format.bytes(used)) \(period)", downAndUpSpoken(usage.thisMonth)]))
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .liveCard()
-            .accessibilityIdentifier("device.thisMonth")
-            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            UsageCard(month: usage.thisMonth, limit: current.limit, period: model.usagePeriod, resets: resets)
+                .accessibilityIdentifier("device.thisMonth")
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             if model.overLimit(peer.id) {
                 Text("Over its limit until \(resets), because you resumed it.")
                     .font(.subheadline)
@@ -227,106 +204,17 @@ extension DeviceView {
             LabeledContent { Text(Format.bytes(usage.lastMonth.total)).foregroundStyle(Theme.secondary) } label: { DashLabel(model.lastPeriodLabel) }
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("device.lastMonth")
-            Picker(selection: Binding(get: { LimitPick.preset(current.limit) }, set: { pick in
-                switch pick {
-                case let .preset(limit): model.setLimit(peer.id, limit)
-                case .other:
-                    typedLimit = ""
-                    typingLimit = true
-                }
-            })) {
-                ForEach(limitPicks, id: \.self) { pick in
-                    switch pick {
-                    case let .preset(limit): Text(DataLimit.label(limit)).tag(pick)
-                    case .other: Text("Other amount").tag(pick)
-                    }
-                }
-            } label: {
-                DashLabel("Limit")
-            }
-            .pickerStyle(.menu)
-            .tint(Theme.secondary)
-            .accessibilityIdentifier("device.limit")
+            DataLimitPicker(choice: limitChoice, questions: $limitQuestions, id: "device.limit")
         } header: {
             PaperHeader(title: "Data through Tether")
         } footer: {
             Text(current.limit == nil
                  ? "Counts data both ways. With a limit, Tether pauses \(current.name) when it reaches it, until the count resets on \(resets)."
-                 : "Counts data both ways. When \(current.name) reaches it, Tether pauses \(current.name) until the count resets on \(resets). You can resume it sooner.")
+                 : "Counts data both ways. When \(current.name) reaches it, Tether pauses \(current.name) until the count resets. You can resume it sooner.")
                 .foregroundStyle(Theme.secondary)
                 .accessibilityIdentifier("device.limitFooter")
         }
         .paperRow()
-    }
-
-    /// "3.12 GB" big, with " of 10 GB" after it in the second colour. The number rolls as it grows.
-    private func bigNumber(_ number: String, of rest: String?) -> some View {
-        // One text, so it wraps with large text instead of squeezing the number.
-        Text("\(Text(number).font(.largeTitle.weight(.medium)).foregroundStyle(Theme.ink))\(Text(rest ?? "").font(.subheadline).foregroundStyle(Theme.secondary))")
-            .fixedSize(horizontal: false, vertical: true)
-            .deviceScreenChange(number + (rest ?? ""), numbers: true, reduceMotion: reduceMotion)
-    }
-
-    /// "↓ 3 GB ↑ 120 MB", which VoiceOver reads as "3 GB down, 120 MB up" rather than the arrows.
-    private func downAndUp(_ month: TrafficTotals) -> some View {
-        let down = Format.bytes(month.bytesDown), up = Format.bytes(month.bytesUp)
-        return Text("↓ \(down) ↑ \(up)")
-            .font(.subheadline)
-            .foregroundStyle(Theme.secondary)
-            .deviceScreenChange("\(down) \(up)", numbers: true, reduceMotion: reduceMotion)
-            .accessibilityLabel(downAndUpSpoken(month))
-    }
-
-    private func downAndUpSpoken(_ month: TrafficTotals) -> String {
-        "\(Format.bytes(month.bytesDown)) down, \(Format.bytes(month.bytesUp)) up"
-    }
-
-    /// The card's lines as VoiceOver reads them, the way a combined element joins its texts.
-    private func spoken(_ lines: [String?]) -> String {
-        lines.compactMap { $0 }.joined(separator: ", ")
-    }
-
-    /// The menu's choices, with a typed amount the device has, then Other amount.
-    private var limitPicks: [LimitPick] { LimitPick.picks(current.limit) }
-
-    /// Under the status: Pause, outlined in ink, or Resume once it's paused, filled in ink since
-    /// it's the main action then. Both sit in the same place.
-    @ViewBuilder private var pauseSection: some View {
-        if current.paused == nil {
-            Section {
-                // How long, as Do Not Disturb asks (#312). The last one is the pause it always was.
-                Menu {
-                    ForEach(WireGuardSetup.PauseLength.allCases, id: \.self) { length in
-                        Button(length.title) { model.pauseWireGuardDevice(peer.id, for: length) }
-                    }
-                } label: {
-                    // The whole row opens it, as the button it replaced did.
-                    InkOutline(title: "Pause")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityIdentifier("device.pause")
-            } footer: {
-                Text("Pause stops it from connecting for a while, or until you resume it.")
-                    .foregroundStyle(Theme.secondary)
-            }
-            .paperRow()
-        } else {
-            Section {
-                Button { model.resumeWireGuardDevice(peer.id) } label: {
-                    Text("Resume")
-                        .font(.headline)
-                        .foregroundStyle(Theme.paper)
-                        .frame(maxWidth: .infinity, minHeight: 50)
-                        .background(Theme.ink, in: Capsule())
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("device.resume")
-            }
-            .paperRow()
-            .listRowInsets(EdgeInsets())
-        }
     }
 }
 
@@ -338,8 +226,8 @@ struct OldAddressLabel: View {
 
     var body: some View {
         Label {
-            Text(reason == .nameNotAnswered ? "Its config uses this iPhone's name, which isn't answering. Add it again."
-                 : "Its config points at an old address. Add it again.")
+            Text(reason == .nameNotAnswered ? "Its config uses this iPhone's name, which isn't answering. \(Copy.giveNewConfig)."
+                 : "Its config points at an old address. \(Copy.giveNewConfig).")
         } icon: {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
@@ -369,38 +257,6 @@ struct DeviceStatusLabel: View {
             .accessibilityHidden(true)
             Text(text ?? status.label)
         }
-    }
-}
-
-/// A choice in a device's Limit menu, and the proxy's.
-enum LimitPick: Hashable {
-    case preset(UInt64?)
-    case other
-
-    /// The menu's choices, with a typed amount `limit` is, then Other amount.
-    static func picks(_ limit: UInt64?) -> [LimitPick] {
-        var picks = DataLimit.choices.map(LimitPick.preset)
-        if let limit, !DataLimit.choices.contains(limit) { picks.append(.preset(limit)) }
-        return picks + [.other]
-    }
-}
-
-/// This month's data against the limit: a thin ink line on a faint track, like the board. At the
-/// limit the line is full, and the words under the card say what that means.
-private struct LimitMeter: View {
-    let fraction: Double
-
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Rectangle().fill(Theme.dot)
-                Rectangle()
-                    .fill(Theme.ink)
-                    .frame(width: max(3, geometry.size.width * fraction))
-            }
-        }
-        .frame(height: 3)
-        .accessibilityHidden(true)
     }
 }
 

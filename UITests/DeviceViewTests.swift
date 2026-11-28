@@ -31,9 +31,9 @@ final class DeviceViewTests: TetherUITestCase {
         let lastMonth = reveal(element("device.lastMonth"))
         XCTAssertTrue(lastMonth.label.contains("Last month") && lastMonth.label.contains("0 bytes"), lastMonth.label)
         XCTAssertTrue(sectionHeader("Data through Tether").exists)
-        let footer = reveal(element("device.limitFooter")).label
-        XCTAssertTrue(footer.hasPrefix("Counts data both ways. When iPad reaches it, Tether pauses iPad until the count resets on November 1"), footer)
-        XCTAssertTrue(footer.hasSuffix(". You can resume it sooner."), footer)
+        // The card says when it resets, so the footer doesn't say it again (L7).
+        XCTAssertEqual(reveal(element("device.limitFooter")).label,
+                       "Counts data both ways. When iPad reaches it, Tether pauses iPad until the count resets. You can resume it sooner.")
         try audit(only: "device.")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         openDevice("Windows PC")
@@ -42,12 +42,12 @@ final class DeviceViewTests: TetherUITestCase {
                        "Counts data both ways. With a limit, Tether pauses Windows PC when it reaches it, until the count resets on November 1.")
     }
 
-    /// The limit is a menu: None, 5, 10, 20, 50 GB and Other amount, which asks for GB.
+    /// The Data limit is a menu: None, 5, 10, 20, 50 GB and Other amount, which asks for GB.
     func testTheLimitIsAMenuWithOtherAmount() {
         launch(.sharing)
         openDevice("Windows PC")
         let menu = reveal(app.buttons["device.limit"].firstMatch)
-        XCTAssertTrue(menu.label.contains("Limit") && (menu.label.contains("None") || value(of: menu) == "None"), menu.label)
+        XCTAssertTrue(menu.label.contains(Copy.dataLimit) && (menu.label.contains("None") || value(of: menu) == "None"), menu.label)
         menu.tap()
         for choice in ["None", "5 GB", "10 GB", "20 GB", "50 GB", "Other amount"] {
             XCTAssertTrue(app.buttons[choice].waitForExistence(timeout: 3), choice)
@@ -65,11 +65,13 @@ final class DeviceViewTests: TetherUITestCase {
         XCTAssertTrue(reveal(app.buttons["device.limit"].firstMatch).label.contains("7.5 GB") || value(of: app.buttons["device.limit"].firstMatch) == "7.5 GB")
     }
 
-    /// And when it last connected (#73): two hours before the demo's 6 PM.
+    /// And when it last connected (#73): two hours before the demo's 6 PM. What to do on that device
+    /// is under it (M1).
     func testAnUnconnectedDeviceSaysNotConnected() {
         launch(.sharing)
         openDevice("Windows PC")
         XCTAssertEqual(staticText("device.status").label, Copy.notConnected)
+        XCTAssertEqual(staticText("device.notConnectedHint").label, Copy.notConnectedHint)
         let last = reveal(element("device.lastConnected")).label
         XCTAssertTrue(last.contains("Last connected") && last.contains("Today at 4:00"), last)
         assertNowhere(element("device.connectsFrom"), message: "only while connected")
@@ -92,7 +94,7 @@ final class DeviceViewTests: TetherUITestCase {
         launch(.paused)
         openDevice("iPad")
         XCTAssertEqual(staticText("device.status").label, "Paused")
-        assertNowhere(element("device.lastConnected"))
+        assertNowhere(element("device.lastConnected"), element("device.notConnectedHint"))
         assertNowhere(element("device.connectsFrom"), message: "its tunnel is up, but it isn't connected")
     }
 
@@ -125,14 +127,21 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(element("device.Windows PC"))
     }
 
-    /// A Rename row above Pause and Remove, since the title's menu is easy to miss (#173). The name
-    /// is selected, so typing replaces it.
+    /// A Rename row, since the title's menu is easy to miss (#173), next to Remove under the data, so
+    /// Pause comes right after the status (L6). The name is selected, so typing replaces it.
     func testTheRenameRowRenamesTheDevice() {
         launch(.sharing)
         openDevice("Windows PC")
         let row = reveal(element("device.rename"))
         XCTAssertEqual(row.label, "Rename")
-        XCTAssertLessThan(row.frame.maxY, reveal(element("device.pause")).frame.minY, "above Pause")
+        // Frames read in one scroll position: a List drops rows far off screen, so each is checked
+        // only while it's there.
+        let remove = reveal(element("device.remove"))
+        XCTAssertLessThan(row.frame.maxY, remove.frame.minY, "above Remove")
+        let limit = app.buttons["device.limit"].firstMatch
+        if limit.exists { XCTAssertGreaterThan(row.frame.minY, limit.frame.maxY, "under the data") }
+        let pause = element("device.pause")
+        if pause.exists, limit.exists { XCTAssertLessThan(pause.frame.maxY, limit.frame.minY, "Pause above the data") }
         row.tap()
         let alert = app.alerts["Rename"]
         XCTAssertTrue(alert.waitForExistence(timeout: 5))
@@ -186,20 +195,37 @@ final class DeviceViewTests: TetherUITestCase {
     }
 
     /// On an IPv6-only carrier the iPhone's address changes with the cellular session, and a device set
-    /// up before points at the old one (#65). Its row and its screen say so, and only its own.
-    func testADeviceWhoseConfigPointsAtAnOldAddressSaysToAddItAgain() {
+    /// up before points at the old one (#65). Its row and its screen say so, and only its own, and its
+    /// screen gives it a new config (M1).
+    func testADeviceWhoseConfigPointsAtAnOldAddressSaysToGiveItANewConfig() {
         launch(.oldAddress)
         let pc = reveal(element("device.Windows PC"))
-        XCTAssertTrue(pc.label.contains("Its config points at an old address. Add it again."), pc.label)
+        XCTAssertTrue(pc.label.contains("Its config points at an old address. Give it a new config."), pc.label)
         XCTAssertFalse(element("device.iPad").label.contains("old address"), element("device.iPad").label)
         openDevice("Windows PC")
         let warning = staticText("device.oldAddress") // the warning icon carries the identifier too
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        XCTAssertEqual(warning.label, "Its config points at an old address of this iPhone, so it can't connect. Remove it, then add it again.")
+        XCTAssertEqual(warning.label, "Its config points at an old address of this iPhone, so it can't connect.")
+        XCTAssertEqual(reveal(element("device.newConfig")).label, Copy.giveNewConfig)
+        assertNowhere(element("device.notConnectedHint"), message: "the warning says what to do")
         XCTAssertTrue(reveal(element("device.remove")).exists) // below the screen on an iPhone SE
         goBack(to: "Tether")
         openDevice("iPad")
-        assertNowhere(element("device.oldAddress"))
+        assertNowhere(element("device.oldAddress"), element("device.newConfig"))
+    }
+
+    /// Give it a new config opens Add a device for this device, on its WireGuard steps. Closing it
+    /// leaves the device as it was.
+    func testGiveItANewConfigOpensAddADeviceForIt() {
+        launch(.oldAddress)
+        openDevice("Windows PC")
+        reveal(element("device.newConfig")).tap()
+        XCTAssertTrue(app.navigationBars["New config for Windows PC"].waitForExistence(timeout: 5), "Add a device did not open for it")
+        XCTAssertTrue(element("add.step1").exists)
+        element("add.close").tap()
+        waitUntilGone(element("add.close"))
+        XCTAssertTrue(app.navigationBars["Windows PC"].exists, "back on its screen")
+        XCTAssertTrue(staticText("device.oldAddress").exists, "nothing changed")
     }
 
     /// A device whose config uses this iPhone's name, while the name isn't answered (taken by another
@@ -207,12 +233,13 @@ final class DeviceViewTests: TetherUITestCase {
     func testADeviceOnANameThatIsntAnsweredSaysSo() {
         launch(.nameNotAnswered)
         let pc = reveal(element("device.Windows PC"))
-        XCTAssertTrue(pc.label.contains("Its config uses this iPhone's name, which isn't answering. Add it again."), pc.label)
+        XCTAssertTrue(pc.label.contains("Its config uses this iPhone's name, which isn't answering. Give it a new config."), pc.label)
         XCTAssertFalse(pc.label.contains("old address"), pc.label)
         openDevice("Windows PC")
         let warning = staticText("device.oldAddress")
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        XCTAssertEqual(warning.label, "Its config uses this iPhone's name, which isn't answering on the hotspot, so it can't connect. Remove it, then add it again.")
+        XCTAssertEqual(warning.label, "Its config uses this iPhone's name, which isn't answering on the hotspot, so it can't connect.")
+        XCTAssertTrue(reveal(element("device.newConfig")).exists)
     }
 
     /// A usual carrier's address never changes, so nothing says it did.
@@ -222,6 +249,59 @@ final class DeviceViewTests: TetherUITestCase {
         assertNowhere(text(containing: "old address"))
         openDevice("Windows PC")
         assertNowhere(element("device.oldAddress"))
+    }
+
+    // MARK: a limit that pauses it at once (L1)
+
+    /// Picks a limit from the Data limit menu.
+    private func pickLimit(_ choice: String) {
+        reveal(app.buttons["device.limit"].firstMatch).tap()
+        XCTAssertTrue(app.buttons[choice].waitForExistence(timeout: 3), choice)
+        app.buttons[choice].tap()
+    }
+
+    /// The demo's iPad used 9.5 GB of its 10 GB. 5 GB would pause it at once, so it asks first, and
+    /// Cancel keeps the 10 GB.
+    func testALimitUnderWhatItUsedAsksFirst() {
+        launch(.limits)
+        openDevice("iPad")
+        pickLimit("5 GB")
+        let alert = app.alerts["iPad already used 9.5 GB"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        XCTAssertTrue(alert.staticTexts["With a 5 GB limit it pauses now, until the count resets on November 1."].exists)
+        alert.buttons["Cancel"].tap()
+        waitUntilGone(alert)
+        XCTAssertTrue(reveal(element("device.thisMonth")).label.contains("of 10 GB"), "the limit stays")
+        XCTAssertEqual(staticText("device.status").label, "Connected")
+        pickLimit("5 GB")
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.buttons["Set the limit and pause it"].tap()
+        let status = staticText("device.status")
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        let paused = expectation(for: NSPredicate(format: "label == 'Paused at its limit'"), evaluatedWith: status)
+        XCTAssertEqual(XCTWaiter().wait(for: [paused], timeout: 10), .completed, status.label)
+        XCTAssertTrue(reveal(element("device.thisMonth")).label.contains("of 5 GB"))
+    }
+
+    /// A typed amount asks the same, and one over what it used doesn't ask.
+    func testATypedLimitUnderWhatItUsedAsksToo() {
+        launch(.limits)
+        openDevice("iPad")
+        pickLimit("Other amount")
+        let typing = app.alerts["Data limit"]
+        XCTAssertTrue(typing.waitForExistence(timeout: 3))
+        let amount = typing.textFields.firstMatch
+        amount.tap()
+        amount.typeText("1")
+        typing.buttons["Set"].tap()
+        let alert = app.alerts["iPad already used 9.5 GB"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        XCTAssertTrue(alert.staticTexts["With a 1 GB limit it pauses now, until the count resets on November 1."].exists)
+        alert.buttons["Cancel"].tap()
+        waitUntilGone(alert)
+        pickLimit("20 GB")
+        XCTAssertTrue(reveal(element("device.thisMonth")).label.contains("of 20 GB"), "set at once")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
     }
 
     // MARK: problems
