@@ -21,7 +21,7 @@ struct DeviceView: View {
 
     /// The saved device, so a new name shows at once.
     private var current: WireGuardSetup.Peer { model.wireGuardPeers.first { $0.id == peer.id } ?? peer }
-    private var status: DeviceStatus { DeviceStatus(current, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN) }
+    private var status: DeviceStatus { DeviceStatus(current, connected: model.wireGuardConnected, keptOut: model.blockedWithoutVPN, onlyFamily: model.vpnOnlyFamily) }
     /// A change to this device that couldn't be saved.
     private var problem: String? { model.wireGuardDeviceProblem.flatMap { $0.device == peer.id ? $0.text : nil } }
 
