@@ -461,16 +461,6 @@ struct SpeedRow: View {
     }
 }
 
-extension Color {
-    /// A filled button's blue, under white text. The accent is light in dark mode, for text and links
-    /// on black, and white on it fails the contrast audit, so a filled button keeps a darker blue.
-    static let filledButton = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.0, green: 0.40, blue: 0.82, alpha: 1)
-            : UIColor(red: 0.0, green: 0.45, blue: 0.78, alpha: 1)
-    })
-}
-
 /// The one-second answer at the top of Home: a big light title saying whether this phone shares,
 /// with the live dot while it does, who uses it, and under that the speeds while sharing, or what to
 /// do. Turning off Personal Hotspot is how sharing stops, so there's no switch.
@@ -577,31 +567,6 @@ struct StatusCard: View {
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: headline)
-    }
-}
-
-/// The large round sign of sharing, in the app icon's colours. Home doesn't show it any more
-/// (#349): Add a device and the Local Network intro still do, until their screens move over.
-struct StatusOrb: View {
-    enum Look { case sharing }
-    let look: Look
-    /// Grows with the text size.
-    @ScaledMetric(relativeTo: .title) private var size: CGFloat = 84
-
-    /// The app icon's gradient, sampled from its corners.
-    static let iconColors = [Color(red: 0.12, green: 0.40, blue: 0.94), Color(red: 0.08, green: 0.74, blue: 0.75)]
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(LinearGradient(colors: Self.iconColors, startPoint: .topLeading, endPoint: .bottomTrailing))
-            Circle().strokeBorder(.white.opacity(0.25), lineWidth: size * 0.06)
-            Image(systemName: "link")
-                .font(.system(size: size * 0.38, weight: .semibold))
-                .foregroundStyle(.white)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 

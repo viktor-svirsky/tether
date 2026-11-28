@@ -38,20 +38,16 @@ struct AddDeviceSection: View {
 
     private var title: String { first ? "Add a device" : "Add another device" }
 
-    @ViewBuilder private var addButton: some View {
+    private var addButton: some View {
         // The icon and the title side by side: a Label in a list row can drop its icon.
-        let button = Button(action: add) {
+        Button(action: add) {
             HStack(spacing: 8) {
                 Image(systemName: "plus").fontWeight(.bold).accessibilityHidden(true)
                 Text(title)
             }
-            .font(.headline)
-            .frame(maxWidth: .infinity)
         }
-        .buttonBorderShape(.capsule)
-        .controlSize(.large)
+        .buttonStyle(InkCapsuleButtonStyle())
         .accessibilityIdentifier("add.open")
-        if first { button.buttonStyle(.borderedProminent).tint(.filledButton) } else { button.buttonStyle(.bordered) }
     }
 }
 
@@ -174,10 +170,10 @@ struct DeviceView: View {
                                 .accessibilityIdentifier("device.connectsFrom")
                         }
                     }
-                    .animation(DeviceScreenMotion.rows(reduceMotion: reduceMotion), value: rows)
+                    .animation(PaperMotion.change(reduceMotion: reduceMotion), value: rows)
                     // Only while it isn't connected (#73): connected says it all, and a paused one says why.
                     if status == .notConnected {
-                        LabeledContent { Text(model.lastConnected(of: peer.id)).foregroundStyle(Theme.secondary) } label: { DetailLabel("Last connected") }
+                        LabeledContent { Text(model.lastConnected(of: peer.id)).foregroundStyle(Theme.secondary) } label: { DashLabel("Last connected") }
                             .accessibilityElement(children: .combine)
                             .accessibilityIdentifier("device.lastConnected")
                     }
@@ -212,10 +208,10 @@ struct DeviceView: View {
             .tint(Theme.ink)
             // Closer than a grouped list's gaps, like the board's rows.
             .listSectionSpacing(12)
-            .animation(DeviceScreenMotion.rows(reduceMotion: reduceMotion), value: rows)
+            .animation(PaperMotion.change(reduceMotion: reduceMotion), value: rows)
             // Remove is at the bottom, so a removal that fails says so up there, out of sight with large text.
             .onChange(of: problem) { _, problem in
-                if problem != nil { withAnimation(DeviceScreenMotion.rows(reduceMotion: reduceMotion)) { proxy.scrollTo("problem", anchor: .top) } }
+                if problem != nil { withAnimation(PaperMotion.change(reduceMotion: reduceMotion)) { proxy.scrollTo("problem", anchor: .top) } }
             }
         }
         .navigationTitle(Binding(get: { current.name }, set: { model.renameWireGuardDevice(peer.id, to: $0) }))
@@ -272,7 +268,7 @@ extension DeviceView {
                         let fraction = limit == 0 ? 1 : min(1, Double(used) / Double(limit))
                         // Keyed on whole percents, so a traffic sample that doesn't move the line doesn't animate.
                         LimitMeter(fraction: fraction)
-                            .animation(reduceMotion ? nil : DeviceScreenMotion.ease, value: Int(fraction * 100))
+                            .animation(PaperMotion.change(reduceMotion: reduceMotion), value: Int(fraction * 100))
                         Text("Resets on \(resets)")
                             .font(.subheadline)
                             .foregroundStyle(Theme.secondary)
@@ -306,7 +302,7 @@ extension DeviceView {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("device.overLimit")
             }
-            LabeledContent { Text(Format.bytes(usage.lastMonth.total)).foregroundStyle(Theme.secondary) } label: { DetailLabel(model.lastPeriodLabel) }
+            LabeledContent { Text(Format.bytes(usage.lastMonth.total)).foregroundStyle(Theme.secondary) } label: { DashLabel(model.lastPeriodLabel) }
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("device.lastMonth")
             Picker(selection: Binding(get: { LimitPick.preset(current.limit) }, set: { pick in
@@ -324,13 +320,13 @@ extension DeviceView {
                     }
                 }
             } label: {
-                DetailLabel("Limit")
+                DashLabel("Limit")
             }
             .pickerStyle(.menu)
             .tint(Theme.secondary)
             .accessibilityIdentifier("device.limit")
         } header: {
-            DetailHeader("Data through Tether")
+            PaperHeader(title: "Data through Tether")
         } footer: {
             Text(current.limit == nil
                  ? "Counts data both ways. With a limit, Tether pauses \(current.name) when it reaches it, until the count resets on \(resets)."

@@ -29,32 +29,6 @@ struct DeviceScreenTitle: View {
     }
 }
 
-/// A Details row's label, after a dash like the reference's lists. VoiceOver skips the dash.
-struct DetailLabel: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            Text("– ").foregroundStyle(Theme.secondary).accessibilityHidden(true)
-            Text(text).foregroundStyle(Theme.ink)
-        }
-    }
-}
-
-/// A Details section's header: ink, in sentence case, like Details on the board.
-struct DetailHeader: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text)
-            .font(.title3.weight(.semibold))
-            .foregroundStyle(Theme.ink)
-            .textCase(nil)
-    }
-}
-
 /// A problem on one of these screens. Problems use words, not a second colour, so the icon is ink.
 /// Same shape as `WarningLabel`, which the other screens still use: the icon carries the identifier too.
 struct InkWarningLabel: View {
@@ -85,14 +59,9 @@ struct InkOutline: View {
     }
 }
 
-/// The motion of these two screens. A state change eases in 0.25 s, and only when a value changes:
-/// nothing runs on its own. With Reduce Motion nothing moves: rows appear in place, and words only fade.
+/// The motion of these two screens, on top of `PaperMotion`: a state change eases in 0.25 s, and only
+/// when a value changes. With Reduce Motion nothing moves: rows appear in place, and words only fade.
 enum DeviceScreenMotion {
-    static let ease = Animation.easeInOut(duration: 0.25)
-
-    /// For rows coming and going. Nil with Reduce Motion, since the rows under them would slide.
-    static func rows(reduceMotion: Bool) -> Animation? { reduceMotion ? nil : ease }
-
     /// A line that comes and goes inside a row. List animates whole rows itself. With Reduce Motion
     /// the animation is nil, so the line appears in place.
     static let appear = AnyTransition.opacity.combined(with: .move(edge: .top))
@@ -102,6 +71,6 @@ extension View {
     /// A text that changes: numbers roll, words cross-fade. With Reduce Motion only a fade.
     func deviceScreenChange<Value: Equatable>(_ value: Value, numbers: Bool = false, reduceMotion: Bool) -> some View {
         contentTransition(numbers && !reduceMotion ? .numericText() : .opacity)
-            .animation(DeviceScreenMotion.ease, value: value)
+            .animation(PaperMotion.change, value: value)
     }
 }

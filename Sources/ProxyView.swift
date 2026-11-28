@@ -69,7 +69,7 @@ struct ProxyView: View {
                             .accessibilityIdentifier("proxy.statusDetail")
                     }
                 }
-                .animation(DeviceScreenMotion.rows(reduceMotion: reduceMotion), value: rows(servers: servers.count))
+                .animation(PaperMotion.change(reduceMotion: reduceMotion), value: rows(servers: servers.count))
             }
             .paperRow()
             usageSection
@@ -82,13 +82,13 @@ struct ProxyView: View {
                 Toggle(isOn: Binding(get: { proxy.paused != nil }, set: { pause in
                     if pause { askingPauseLength = true } else { model.resumeWireGuardDevice(proxy.id) }
                 })) {
-                    DetailLabel("Pause")
+                    DashLabel("Pause")
                 }
                 .toggleStyle(.ink)
                 .accessibilityIdentifier("proxy.pause")
                 limitPicker
             } header: {
-                DetailHeader("Details")
+                PaperHeader(title: "Details")
             } footer: {
                 Text("Games, calls and apps that skip the proxy still go out as hotspot data. For those, use WireGuard on that device.")
                     .foregroundStyle(Theme.secondary)
@@ -110,7 +110,7 @@ struct ProxyView: View {
         .tint(Theme.ink)
         // Closer than a grouped list's gaps, like the board's rows.
         .listSectionSpacing(12)
-        .animation(DeviceScreenMotion.rows(reduceMotion: reduceMotion), value: rows(servers: servers.count))
+        .animation(PaperMotion.change(reduceMotion: reduceMotion), value: rows(servers: servers.count))
         .navigationTitle(ProxyStatus.name)
         .navigationBarTitleDisplayMode(.inline)
         // On the list, not the row: on the row its choices didn't run.
@@ -180,7 +180,7 @@ struct ProxyView: View {
             }
         } label: {
             // Not hidden from VoiceOver: the audit flags text on screen it can't reach.
-            DetailLabel(label)
+            DashLabel(label)
         }
     }
 
@@ -200,7 +200,7 @@ struct ProxyView: View {
                 }
             }
         } label: {
-            DetailLabel("Data limit")
+            DashLabel("Data limit")
         }
         .pickerStyle(.menu)
         .tint(Theme.secondary)

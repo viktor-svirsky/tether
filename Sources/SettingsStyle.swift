@@ -1,7 +1,7 @@
 import SwiftUI
 
-// The paper and ink pieces Settings and Diagnostics share (#349). They could move into Theme.swift
-// once the other screens settle on the same ones.
+// The paper and ink pieces Settings, Diagnostics and the device and proxy screens share (#349).
+// They could move into Theme.swift once the other screens settle on the same ones.
 
 /// A screen's large light title, the first row of its list. The navigation bar keeps the same title
 /// for VoiceOver's screen change and the UI tests, but doesn't show it (see `paperNavigationBar`).

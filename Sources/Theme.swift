@@ -161,6 +161,7 @@ struct InkToggleStyle: ToggleStyle {
 private struct InkToggle: View {
     let configuration: ToggleStyleConfiguration
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack {
@@ -175,7 +176,7 @@ private struct InkToggle: View {
                     .padding(3)
             }
             .frame(width: 46, height: 28)
-            .animation(.snappy(duration: 0.2), value: configuration.isOn)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: configuration.isOn)
             .frame(minWidth: 44, minHeight: 44)
             .contentShape(.rect)
             .onTapGesture { if isEnabled { configuration.isOn.toggle() } }
