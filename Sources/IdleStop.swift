@@ -73,4 +73,6 @@ struct IdleStopped: Equatable {
     var byYou = false
     /// Stopped at this battery level, not the idle time, see `LowBatteryStop` (#311).
     var lowBattery: LowBatteryStop.Level? = nil
+    /// What the battery read then, at or under `lowBattery`, for the note on Home (H3).
+    var batteryPercent: Int? = nil
 }

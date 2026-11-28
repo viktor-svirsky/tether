@@ -1939,7 +1939,7 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertFalse(session.sharing)
         XCTAssertFalse(server.running)
         XCTAssertFalse(sound.playing, "so iOS suspends Tether")
-        XCTAssertEqual(session.idleStopped, IdleStopped(at: minutes(1), after: .never, lowBattery: .twenty))
+        XCTAssertEqual(session.idleStopped, IdleStopped(at: minutes(1), after: .never, lowBattery: .twenty, batteryPercent: 20))
         XCTAssertTrue(session.shortcutState().lowBattery, "Is Tether Sharing? says why")
         now = minutes(2)
         session.watch()
@@ -2484,9 +2484,9 @@ final class HotspotSessionTests: XCTestCase {
     /// A newer stop takes the note's place: at low battery, then from a widget.
     func testANewerStopTakesTheNotesPlace() {
         batteryLevel = .twenty
-        battery = LowBatteryStop.Battery(percent: 20, charging: false)
+        battery = LowBatteryStop.Battery(percent: 17, charging: false)
         shareInTheBackground()
-        XCTAssertEqual(session.lastStop, LastStop(at: start, reason: .lowBattery(.twenty)))
+        XCTAssertEqual(session.lastStop, LastStop(at: start, reason: .lowBattery(percent: 17)), "what the battery read, not the setting")
         battery = LowBatteryStop.Battery(percent: 20, charging: true)
         session.wake()
         session.watch()
@@ -2518,6 +2518,19 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertTrue(session.stopNow())
         XCTAssertFalse(session.stopIgnored)
         XCTAssertEqual(session.lastStop?.reason, .byYou)
+    }
+
+    /// A Stop while WireGuard couldn't start stopped nothing anyone used either.
+    func testAStopWhileWireGuardIsNotRunningLeavesNoNote() {
+        makeSession(sceneActive: false)
+        server.startError = FakeServer.Failure()
+        address = hotspot
+        session.wake()
+        XCTAssertTrue(session.running)
+        XCTAssertFalse(session.sharing)
+        session.stopNow()
+        XCTAssertNotNil(session.idleStopped)
+        XCTAssertNil(session.lastStop)
     }
 
     /// A Stop with the hotspot off stopped nothing anyone used, so there's no note about it.
@@ -2590,11 +2603,13 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(session.wireGuardPeers.first?.publicKey, fresh.publicKey)
     }
 
-    /// Closing the sheet leaves the device as it was: a code claimed later, in the 10 minutes it still
-    /// works, is a new device.
+    /// Closing the sheet leaves the device as it was, and its code stops working at once: scanned
+    /// and claimed later, it would be a second device next to the iPad, with no limit or pause.
     func testClosingTheSheetLeavesTheDeviceAsItWas() throws {
         var saved = WireGuardSetup.new()
         let ipad = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        saved.limitPeer(ipad.id, 5_000_000_000)
+        saved.pausePeer(ipad.id, .byYou)
         makeSession(saved: saved)
         address = hotspot
         session.syncWithHotspot()
@@ -2602,10 +2617,66 @@ final class HotspotSessionTests: XCTestCase {
         let ready = try XCTUnwrap(session.wireGuardReady)
         session.closeAddWindow()
         XCTAssertNil(session.replacing)
-        server.connected = [ready.address]
+        XCTAssertNotEqual(session.wireGuardReady?.publicKey, ready.publicKey, "a new code")
+        // The server lets in by key, so a device that scanned the old code can't handshake any more.
+        // (The fake server connects by address, and the new code may take the same one, so connecting
+        // it here would claim the new code, which nobody has.)
+        XCTAssertFalse(server.lastSetup?.serverPeers.contains { $0.publicKey == ready.publicKey } ?? true, "the scanned one no longer works")
+        XCTAssertEqual(session.wireGuardPeers.count, 1, "no second device")
+        XCTAssertEqual(session.wireGuardPeers.first?.publicKey, ipad.publicKey)
+        XCTAssertEqual(session.wireGuardPeers.first?.limit, 5_000_000_000)
+    }
+
+    /// Leaving the screen isn't closing the sheet: the code for a new config still works.
+    func testLeavingTheScreenKeepsTheNewConfigsCode() throws {
+        var saved = WireGuardSetup.new()
+        let ipad = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        makeSession(saved: saved)
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow(replacing: ipad.id)
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        session.leftScreen()
+        XCTAssertEqual(session.replacing, ipad.id)
+        XCTAssertEqual(session.wireGuardReady, ready)
+    }
+
+    /// The new code for a new config can't be saved: the earlier code leaves the server anyway, as
+    /// when a window opens from closed.
+    func testAnEarlierCodeLeavesTheServerEvenWhenTheNewOneCantBeSaved() throws {
+        var saved = WireGuardSetup.new()
+        let pc = try XCTUnwrap(saved.addPeer(name: "Windows PC"))
+        makeSession(saved: saved)
+        address = hotspot
+        session.syncWithHotspot()
+        session.openAddWindow()
+        let earlier = try XCTUnwrap(session.wireGuardReady)
+        session.closeAddWindow()
+        secrets.savesFail = true
+        session.openAddWindow(replacing: pc.id)
+        XCTAssertNil(session.wireGuardReady)
+        XCTAssertFalse(server.lastSetup?.serverPeers.contains { $0.publicKey == earlier.publicKey } ?? true)
+    }
+
+    /// The new address's counter starts at zero, so its first read counts in full, even when it's
+    /// bigger than the old key's last read.
+    func testANewConfigCountsItsFirstReadInFull() throws {
+        var saved = WireGuardSetup.new()
+        let ipad = try XCTUnwrap(saved.addPeer(name: "iPad"))
+        makeSession(saved: saved)
+        address = hotspot
+        session.syncWithHotspot()
+        server.connected = [ipad.address]
+        server.peerTraffic = [ipad.address: TrafficTotals(bytesUp: 10, bytesDown: 1000)]
         session.sampleTraffic()
-        XCTAssertEqual(session.wireGuardPeers.map(\.name), ["iPad", "Device"])
-        XCTAssertEqual(session.wireGuardPeers.first, ipad)
+        server.connected = []
+        server.peerTraffic = [:]
+        session.openAddWindow(replacing: ipad.id)
+        let ready = try XCTUnwrap(session.wireGuardReady)
+        server.connected = [ready.address]
+        server.peerTraffic = [ready.address: TrafficTotals(bytesUp: 30, bytesDown: 3000)]
+        session.sampleTraffic()
+        XCTAssertEqual(session.usage(of: ipad.id).thisMonth, TrafficTotals(bytesUp: 40, bytesDown: 4000))
     }
 
     /// A download from the page gives the device its new config too, named after it.
@@ -2655,6 +2726,10 @@ final class HotspotSessionTests: XCTestCase {
         session.syncWithHotspot()
         XCTAssertTrue(session.blockedWithoutVPN)
         XCTAssertEqual(session.shortcutDevices()?.map(\.status), ["Kept out, no VPN"])
+        onlyFamily = .ipv4
+        session.checkVPN()
+        XCTAssertEqual(session.shortcutDevices()?.map(\.status), ["Kept out, VPN for IPv4 only"], "the status card's VPN")
+        onlyFamily = nil
         vpn = "utun5"
         session.checkVPN()
         XCTAssertEqual(session.shortcutDevices()?.map(\.status), ["Connected"])

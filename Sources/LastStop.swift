@@ -8,8 +8,8 @@ struct LastStop: Codable, Equatable {
     enum Reason: Codable, Equatable {
         /// No device was connected for this long, see `IdleStop`.
         case idle(IdleStop.After)
-        /// The battery reached this level, not charging, see `LowBatteryStop`.
-        case lowBattery(LowBatteryStop.Level)
+        /// The battery read this percent, at or under the stop level, not charging, see `LowBatteryStop`.
+        case lowBattery(percent: Int)
         /// Stop on a widget or in Control Center.
         case byYou
     }
@@ -20,7 +20,13 @@ struct LastStop: Codable, Equatable {
     /// What `HotspotSession` stopped for.
     init(_ stopped: IdleStopped) {
         at = stopped.at
-        reason = stopped.byYou ? .byYou : stopped.lowBattery.map(Reason.lowBattery) ?? .idle(stopped.after)
+        if stopped.byYou {
+            reason = .byYou
+        } else if let level = stopped.lowBattery {
+            reason = .lowBattery(percent: stopped.batteryPercent ?? level.rawValue)
+        } else {
+            reason = .idle(stopped.after)
+        }
     }
 
     init(at: Date, reason: Reason) {
@@ -33,7 +39,7 @@ struct LastStop: Codable, Equatable {
         let when = Self.when(at, now: now, calendar: calendar, locale: locale)
         return switch reason {
         case let .idle(after): "Sharing stopped \(when). No device was connected for \(after.spelledOut)."
-        case let .lowBattery(level): "Sharing stopped \(when). The battery reached \(level.rawValue)%."
+        case let .lowBattery(percent): "Sharing stopped \(when). The battery reached \(percent)%."
         case .byYou: "You stopped sharing \(when), from a widget or Control Center."
         }
     }
@@ -63,4 +69,3 @@ struct LastStop: Codable, Equatable {
 }
 
 extension IdleStop.After: Codable {}
-extension LowBatteryStop.Level: Codable {}

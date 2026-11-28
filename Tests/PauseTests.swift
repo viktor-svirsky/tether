@@ -263,6 +263,8 @@ final class PauseTests: XCTestCase {
             // Only share through a VPN with no VPN (H1): connected, but nothing gets through.
             (DeviceStatus(peer, connected: ["10.7.0.2"], keptOut: true), "Kept out, no VPN", "Kept out",
              "No VPN is on, so nothing gets through. It works again when a VPN is on.", #line),
+            (DeviceStatus(peer, connected: ["10.7.0.2"], keptOut: true, onlyFamily: .ipv4), "Kept out, VPN for IPv4 only", "Kept out",
+             "Your VPN carries only IPv4, so nothing gets through. It works again when it carries IPv6 too.", #line),
             (DeviceStatus(peer, connected: [], keptOut: true), "Not connected", "Not connected", nil, #line),
             (DeviceStatus(paused, connected: ["10.7.0.2"], keptOut: true), "Paused", "Paused", "It can't connect until you resume it.", #line),
         ]
