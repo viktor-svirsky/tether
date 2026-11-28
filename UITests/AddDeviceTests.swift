@@ -119,7 +119,7 @@ final class AddDeviceTests: TetherUITestCase {
     /// button's value, which goes with the tick.
     func testCopyingTheAddressSaysCopied() {
         // The capsule stays long enough for a busy runner to see it.
-        launch(.addDeviceComputer, arguments: ["-diagnostics.copiedShownFor", "60"])
+        launch(.addDeviceComputer, arguments: ["-copiedToast.shownFor", "60"])
         let copy = reveal(element("add.copy"))
         copy.tap()
         XCTAssertEqual(value(of: copy), "Copied")
@@ -430,7 +430,7 @@ final class AddDeviceTests: TetherUITestCase {
 
     /// The proxy's copy buttons show the same Copied capsule (L4).
     func testCopyingTheProxyServerShowsCopied() {
-        launch(.addDeviceProxy, arguments: ["-diagnostics.copiedShownFor", "60"], screen: "add.proxy.step1")
+        launch(.addDeviceProxy, arguments: ["-copiedToast.shownFor", "60"], screen: "add.proxy.step1")
         reveal(element("add.proxy.copyServer")).tap()
         XCTAssertEqual(label(of: "add.copied"), "Copied")
     }

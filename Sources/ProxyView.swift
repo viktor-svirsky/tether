@@ -9,9 +9,11 @@ struct ProxyView: View {
     @State private var limitQuestions = LimitQuestions()
     @State private var confirmTurnOff = false
     /// A server or the port was copied: "Copied" shows at the bottom for a moment (L4).
-    @State private var copied = false
+    @State private var copied: Date?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The room under the list for the Copied capsule, grown with the text like the capsule.
+    @ScaledMetric(relativeTo: .subheadline) private var copiedRoom: CGFloat = 64
 
     /// Off once turned off from here, until the screen goes.
     private var proxy: WireGuardSetup.Proxy { model.proxy ?? WireGuardSetup.Proxy(on: false) }
@@ -109,7 +111,7 @@ struct ProxyView: View {
         // Closer than a grouped list's gaps, like the board's rows.
         .listSectionSpacing(12)
         // Room under Turn off, so the Copied capsule does not cover it (L4).
-        .contentMargins(.bottom, 64, for: .scrollContent)
+        .contentMargins(.bottom, copiedRoom, for: .scrollContent)
         .animation(PaperMotion.change(reduceMotion: reduceMotion), value: rows(servers: servers.count))
         .copiedToast($copied, id: "proxy.copied")
         .navigationTitle(ProxyStatus.name)

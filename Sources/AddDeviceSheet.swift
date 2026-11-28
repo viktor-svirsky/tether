@@ -39,7 +39,7 @@ struct AddDeviceSheet: View {
     /// Kept as it was then, like `follow`, so the sheet doesn't change pages if the device goes.
     @State private var replacing: WireGuardSetup.Peer?
     /// The Copied capsule at the bottom, after a copy button's tap (L4).
-    @State private var copied = false
+    @State private var copied: Date?
 
     enum Kind: Hashable { case phone, computer }
 
@@ -267,7 +267,7 @@ struct AddDeviceSheet: View {
         .paperBackground()
         // Under Done's inset, not over it. Gone when the page goes: its timer stops with the page.
         .copiedToast($copied, id: "add.copied")
-        .onDisappear { copied = false }
+        .onDisappear { copied = nil }
         // Lowering the keyboard needs a way other than its Done, which saves and closes.
         .scrollDismissesKeyboard(.immediately)
         // iOS scrolls only the text of a focused field above the keyboard, not the box around
@@ -703,7 +703,7 @@ struct AddDeviceSheet: View {
         }
         .paperBackground()
         .copiedToast($copied, id: "add.copied")
-        .onDisappear { copied = false }
+        .onDisappear { copied = nil }
         .safeAreaInset(edge: .bottom) {
             VStack { if working {
                 Button { dismiss() } label: {
@@ -840,8 +840,8 @@ struct AddressText: View {
 
 /// Copies `text`, and says it worked for a moment: the icon turns into a tick, and VoiceOver hears
 /// "Copied" (#175). A second tap starts the tick again. Given `copied`, the screen's Copied capsule
-/// shows too, see `CopiedToast` (L4), and says it to VoiceOver instead. A tap while it shows still
-/// says it, since the capsule doesn't come again.
+/// shows too, see `CopiedToast` (L4), and says it to VoiceOver instead. A tap while it shows starts
+/// its time again, and it says it again.
 struct CopyButton: View {
     let text: String
     /// What VoiceOver calls it, "Copy the address".
@@ -849,7 +849,7 @@ struct CopyButton: View {
     /// Behind the icon: the card's colour on the sheet's paper, a fill on a list row.
     var fill = Theme.card
     /// The screen's `copiedToast`, nil for none.
-    var copied: Binding<Bool>?
+    var copied: Binding<Date?>?
     @State private var ticked = false
     @State private var reset: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -858,8 +858,8 @@ struct CopyButton: View {
         Button {
             UIPasteboard.general.string = text
             ticked = true
-            if let copied, !copied.wrappedValue {
-                withAnimation(PaperMotion.change(reduceMotion: reduceMotion)) { copied.wrappedValue = true }
+            if let copied {
+                withAnimation(PaperMotion.change(reduceMotion: reduceMotion)) { copied.wrappedValue = Date() }
             } else {
                 AccessibilityNotification.Announcement(Copy.copied).post()
             }

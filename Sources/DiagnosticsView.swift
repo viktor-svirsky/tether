@@ -7,7 +7,9 @@ import UIKit
 struct DiagnosticsView: View {
     @ObservedObject var model: Model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var copied = false
+    @State private var copied: Date?
+    /// The room under the list for the Copied capsule, grown with the text like the capsule.
+    @ScaledMetric(relativeTo: .subheadline) private var copiedRoom: CGFloat = 72
 
     var body: some View {
         // The counters change at most once a second, here. Each value animates only when it changed.
@@ -45,7 +47,7 @@ struct DiagnosticsView: View {
             .listSectionSpacing(.compact)
             .paperList()
             // Room under the last row, so "Copied" doesn't cover it.
-            .contentMargins(.bottom, 72, for: .scrollContent)
+            .contentMargins(.bottom, copiedRoom, for: .scrollContent)
         }
         .copiedToast($copied, id: "diagnostics.copied")
         .paperNavigationBar("Diagnostics")
@@ -53,10 +55,8 @@ struct DiagnosticsView: View {
 
     private func copy(_ text: String) {
         UIPasteboard.general.string = text
-        // The toast announces when it shows. A copy while it still shows doesn't show it again, so
-        // VoiceOver hears that one here.
-        if copied { AccessibilityNotification.Announcement(Copy.copied).post() }
-        withAnimation(PaperMotion.change) { copied = true }
+        // The toast announces each copy, and a copy while it shows starts its time again.
+        withAnimation(PaperMotion.change) { copied = Date() }
     }
 
     private func row(_ row: Diagnostics.Row) -> some View {

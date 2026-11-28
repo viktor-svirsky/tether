@@ -197,7 +197,7 @@ final class ProxyTests: TetherUITestCase {
 
     /// Copy says so the one way every screen does (L4): "Copied" at the bottom for a moment.
     func testCopyingTheServerSaysCopiedAtTheBottom() {
-        launch(.proxy, arguments: ["-diagnostics.copiedShownFor", "10"])
+        launch(.proxy, arguments: ["-copiedToast.shownFor", "10"])
         openProxy()
         let button = reveal(element("proxy.server.copy"))
         button.tap()
