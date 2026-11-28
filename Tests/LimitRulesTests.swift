@@ -56,6 +56,14 @@ final class LimitRulesTests: XCTestCase {
         XCTAssertEqual(LimitRules.timedPausesOver([timed], at: end.addingTimeInterval(3_600)), [id])
     }
 
+    /// Read as not paused once its time is up, a device over its limit is paused at it, one under it
+    /// isn't, and until then its timed pause stands.
+    func testATimedPauseThatEndedOverTheLimitPausesAtIt() {
+        XCTAssertNil(LimitRules.action(for: device(paused: .until(Date(timeIntervalSince1970: 1_000)), limit: 10 * gb, used: 12 * gb)))
+        XCTAssertEqual(LimitRules.action(for: device(limit: 10 * gb, used: 12 * gb)), .pauseAtLimit)
+        XCTAssertNil(LimitRules.action(for: device(limit: 10 * gb, used: 1 * gb)))
+    }
+
     func testOnlyTimedPausesEnd() {
         let at = Date(timeIntervalSince1970: 1_000)
         XCTAssertEqual(LimitRules.timedPausesOver([device(paused: .byYou), device(paused: .atLimit), device()], at: at), [])
