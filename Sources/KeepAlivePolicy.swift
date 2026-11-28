@@ -57,3 +57,50 @@ enum KeepAlivePolicy {
         }
     }
 }
+
+/// The retry loop `KeepAlive` runs while iOS gives it background time after an audio event: start the
+/// sound, and again once a second until it plays or that hold ends. Foundation only, so it's tested
+/// with a fake sound and clock; `KeepAlive` gives it the real ones.
+final class KeepAliveRetry {
+    private let start: () -> Void
+    private let sounding: () -> Bool
+    private let after: (TimeInterval, @escaping () -> Void) -> Void
+    private let log: (String) -> Void
+    private let done: () -> Void
+
+    /// `after` runs its work that many seconds later, `done` ends the hold once the sound plays.
+    init(start: @escaping () -> Void, sounding: @escaping () -> Bool,
+         after: @escaping (TimeInterval, @escaping () -> Void) -> Void, log: @escaping (String) -> Void,
+         done: @escaping () -> Void) {
+        self.start = start
+        self.sounding = sounding
+        self.after = after
+        self.log = log
+        self.done = done
+    }
+
+    /// Tries now, then once a second, while `isCurrent` says the hold it was started for still runs:
+    /// a try left over from an earlier hold stops, so two never run at once.
+    func run(after event: KeepAlivePolicy.AudioEvent, tries: Int = 1, isCurrent: @escaping () -> Bool) {
+        guard isCurrent() else { return }
+        start()
+        if sounding() {
+            log(Self.back(after: event, tries: tries))
+            done()
+            return
+        }
+        after(1) { [weak self] in
+            self?.run(after: event, tries: tries + 1, isCurrent: isCurrent)
+        }
+    }
+
+    /// The log line once the sound plays again.
+    static func back(after event: KeepAlivePolicy.AudioEvent, tries: Int) -> String {
+        let cause = switch event {
+        case .mediaServicesLost: "the media services were lost"
+        case .interruptionBegan: "the interruption began"
+        default: "the interruption"
+        }
+        return "keep-alive sound back after \(cause), \(tries) \(tries == 1 ? "try" : "tries")"
+    }
+}

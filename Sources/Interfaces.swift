@@ -266,3 +266,26 @@ enum Interfaces {
         return out
     }
 }
+
+/// Where Tether listens on the hotspot, as `Interfaces.hotspotAddress(in:keeping:)` picks it, with the
+/// IPv6 address it last used kept in `defaults`: a device's config points at the address it was given,
+/// so Tether keeps it through the hotspot going off and on and a relaunch, while the bridge has it.
+/// Only IPv6 is kept, since 172.20.10.1 is always the same.
+final class HotspotAddressKeeper {
+    static let key = "hotspot.ipv6Address"
+    private let defaults: UserDefaults
+    private let interfaces: () -> [String]
+
+    /// `interfaces` are lines like "bridge100: 172.20.10.1", the tests' own in place of the iPhone's.
+    init(defaults: UserDefaults, interfaces: @escaping () -> [String] = Interfaces.addresses) {
+        self.defaults = defaults
+        self.interfaces = interfaces
+    }
+
+    func address() -> String? {
+        let kept = defaults.string(forKey: Self.key)
+        let address = Interfaces.hotspotAddress(in: interfaces(), keeping: kept)
+        if let address, address.contains(":"), address != kept { defaults.set(address, forKey: Self.key) }
+        return address
+    }
+}

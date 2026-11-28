@@ -1087,15 +1087,7 @@ final class HotspotSession {
             checkLimits()
             return
         }
-        let snap = server.snapshot()
-        let connected = snap.connected
-        tunnelsUp = connected
-        publishConnected()
-        if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
-        if snap.stale != staleConfig { staleConfig = snap.stale }
-        publishProxyStats(snap.proxy)
-        absorb(snap.peers)
-        countUsage(snap)
+        let snap = readServer(onScreen: true)
         guard let speeds = sampler.sample(snap.totals, at: now) else { return } // nothing to compare with yet
         // Keep zero and unchanged readings too, so an idle graph still moves to the left.
         speedHistory.append(SpeedSample(at: now, up: speeds.up, down: speeds.down))
@@ -1156,12 +1148,29 @@ final class HotspotSession {
             publishProxyStats(ProxyStats(traffic: proxyStats.traffic))
             return
         }
+        readServer(onScreen: false)
+    }
+
+    /// The sampler's read of a running server (on screen, every second) and the watcher's (off screen):
+    /// who is connected, the proxy's stats (for the idle stop too), what `absorb` does and this
+    /// month's counts. On screen it also publishes what the screen shows, off screen only who is
+    /// connected, for the notifications. The add window, Shortcuts and the config page read the
+    /// server for their own needs.
+    @discardableResult
+    private func readServer(onScreen: Bool) -> ServerSnapshot {
         let snap = server.snapshot()
         tunnelsUp = snap.connected
-        watchedConnected = unpaused(snap.connected)
-        publishProxyStats(snap.proxy) // for the idle stop
+        if onScreen {
+            publishConnected()
+            if snap.peers != wireGuardPeerStats { wireGuardPeerStats = snap.peers }
+            if snap.stale != staleConfig { staleConfig = snap.stale }
+        } else {
+            watchedConnected = unpaused(snap.connected)
+        }
+        publishProxyStats(snap.proxy)
         absorb(snap.peers)
         countUsage(snap)
+        return snap
     }
 
     // MARK: Devices not using Tether (#109)
@@ -1259,31 +1268,29 @@ final class HotspotSession {
         // in the same round as if it weren't paused. Over its limit, it goes straight to paused at its
         // limit in one save, so a save that fails leaves the timed pause, never the device let through.
         // One that couldn't be saved is tried again at the next round.
-        // The proxy goes by the same rules, named "Proxy" in the notifications.
-        var limited = devices.setup.peers.map { (id: $0.id, name: $0.name, paused: $0.paused, limit: $0.limit) }
-        if let proxy = devices.setup.proxy { limited.append((proxy.id, ProxyStatus.name, proxy.paused, proxy.limit)) }
-        for peer in limited {
-            let used = monthlyUsage.of(peer.id, at: now, calendar: calendar).thisMonth.total
-            var ended = peer.paused?.until.map { now >= $0 } ?? false
-            switch (ended ? nil : peer.paused, peer.limit) {
-            case (.atLimit?, nil):
-                changed = devices.pause(peer.id, nil) || changed
-            case let (.atLimit?, limit?) where used < limit:
-                changed = devices.pause(peer.id, nil) || changed
-            case let (nil, limit?) where used >= limit && !monthlyUsage.resumedOver(peer.id, at: now, calendar: calendar):
+        let devicesNow = limitDevices(at: now)
+        let over = Set(LimitRules.timedPausesOver(devicesNow, at: now))
+        for var device in devicesNow {
+            var ended = over.contains(device.id)
+            if ended { device.paused = nil }
+            switch LimitRules.action(for: device) {
+            case .resume?:
+                changed = devices.pause(device.id, nil) || changed
+            case .pauseAtLimit?:
                 ended = false // this save replaces the timed pause, or leaves it
-                guard devices.pause(peer.id, .atLimit) else { continue }
+                guard let limit = device.limit, devices.pause(device.id, .atLimit) else { continue }
                 changed = true
                 log("WireGuard: a device reached its limit and is paused until the count resets")
-                alert(peer.id, peer.name, .reached, used: used, limit: limit, now: now)
-            case let (nil, limit?) where used < limit && used >= limit / 10 * 9 && !monthlyUsage.nearTold(peer.id, at: now, calendar: calendar):
-                monthlyUsage.markNearTold(peer.id, at: now, calendar: calendar)
+                alert(device.id, device.name, .reached, used: device.used, limit: limit, now: now)
+            case .near?:
+                guard let limit = device.limit else { continue }
+                monthlyUsage.markNearTold(device.id, at: now, calendar: calendar)
                 usageUnsaved = true
-                alert(peer.id, peer.name, .near, used: used, limit: limit, now: now)
-            default:
+                alert(device.id, device.name, .near, used: device.used, limit: limit, now: now)
+            case nil:
                 break
             }
-            if ended, devices.pause(peer.id, nil) {
+            if ended, devices.pause(device.id, nil) {
                 changed = true
                 log("WireGuard: a timed pause ended")
             }
@@ -1291,6 +1298,19 @@ final class HotspotSession {
         if changed {
             wireGuardPeersChanged()
             publishConnected()
+        }
+    }
+
+    /// The devices and the proxy as `LimitRules` reads them, from the saved setup and this period's
+    /// counts. The proxy is named "Proxy" in the notifications.
+    private func limitDevices(at now: Date) -> [LimitRules.Device] {
+        var list = devices.setup.peers.map { (id: $0.id, name: $0.name, paused: $0.paused, limit: $0.limit) }
+        if let proxy = devices.setup.proxy { list.append((proxy.id, ProxyStatus.name, proxy.paused, proxy.limit)) }
+        return list.map { device in
+            LimitRules.Device(id: device.id, name: device.name, paused: device.paused, limit: device.limit,
+                              used: monthlyUsage.of(device.id, at: now, calendar: calendar).thisMonth.total,
+                              resumedOver: monthlyUsage.resumedOver(device.id, at: now, calendar: calendar),
+                              nearTold: monthlyUsage.nearTold(device.id, at: now, calendar: calendar))
         }
     }
 
@@ -1306,29 +1326,6 @@ final class HotspotSession {
         monthlyUsage.save(to: usageDefaults)
         usageSavedAt = now()
         usageUnsaved = false
-    }
-}
-
-/// Where Tether listens on the hotspot, as `Interfaces.hotspotAddress(in:keeping:)` picks it, with the
-/// IPv6 address it last used kept in `defaults`: a device's config points at the address it was given,
-/// so Tether keeps it through the hotspot going off and on and a relaunch, while the bridge has it.
-/// Only IPv6 is kept, since 172.20.10.1 is always the same.
-final class HotspotAddressKeeper {
-    static let key = "hotspot.ipv6Address"
-    private let defaults: UserDefaults
-    private let interfaces: () -> [String]
-
-    /// `interfaces` are lines like "bridge100: 172.20.10.1", the tests' own in place of the iPhone's.
-    init(defaults: UserDefaults, interfaces: @escaping () -> [String] = Interfaces.addresses) {
-        self.defaults = defaults
-        self.interfaces = interfaces
-    }
-
-    func address() -> String? {
-        let kept = defaults.string(forKey: Self.key)
-        let address = Interfaces.hotspotAddress(in: interfaces(), keeping: kept)
-        if let address, address.contains(":"), address != kept { defaults.set(address, forKey: Self.key) }
-        return address
     }
 }
 

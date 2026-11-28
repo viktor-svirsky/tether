@@ -155,25 +155,18 @@ final class KeepAlive {
         if holdingOn == .invalid { start() } else { startAgainWhileHoldingOn(holdingOn, after: event, tries: 1) }
     }
 
-    /// Tries once a second until the sound plays, or the background time `task` runs out. A try left
-    /// over from an earlier hold stops, so two never run at once.
+    /// Tries once a second until the sound plays, or the background time `task` runs out, see
+    /// `KeepAliveRetry`.
     private func startAgainWhileHoldingOn(_ task: UIBackgroundTaskIdentifier, after event: KeepAlivePolicy.AudioEvent, tries: Int) {
-        guard holdingOn == task else { return }
-        start()
-        if sounding {
-            let cause = switch event {
-            case .mediaServicesLost: "the media services were lost"
-            case .interruptionBegan: "the interruption began"
-            default: "the interruption"
-            }
-            log("keep-alive sound back after \(cause), \(tries) \(tries == 1 ? "try" : "tries")")
-            stopHoldingOn()
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-            self?.startAgainWhileHoldingOn(task, after: event, tries: tries + 1)
-        }
+        retry.run(after: event, tries: tries) { [weak self] in self?.holdingOn == task }
     }
+
+    private lazy var retry = KeepAliveRetry(
+        start: { [weak self] in self?.start() },
+        sounding: { [weak self] in self?.sounding == true },
+        after: { seconds, work in DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work) },
+        log: { [weak self] in self?.log($0) },
+        done: { [weak self] in self?.stopHoldingOn() })
 
     private func stopHoldingOn() {
         guard holdingOn != .invalid else { return }
