@@ -366,8 +366,10 @@ final class HotspotSession {
         let proxyMoved = proxy?.paused == nil && !blockedWithoutVPN && (idleProxyTraffic.map { $0 != proxyStats.traffic } ?? false)
         idleProxyTraffic = proxyStats.traffic
         // A device paused for a set time with its tunnel up comes back when the time is up (#312), so it
-        // counts as a connected one. Not one paused by you or at its limit.
+        // counts as a connected one, and so does the proxy paused for a set time: a paused proxy shows
+        // no data, so who waits for it can't be told. Not one paused by you or at its limit.
         let waiting = devices.setup.peers.contains { $0.paused?.until != nil && tunnelsUp.contains($0.address) }
+            || devices.setup.proxy?.paused?.until != nil
         let connected = !connectedNow.isEmpty || proxyMoved || waiting
         guard idleStop.check(sharing: sharing, connected: connected, onScreen: sceneActive, after: after, now: now) else {
             return
@@ -655,6 +657,7 @@ final class HotspotSession {
         // Nobody is connected to a stopped server, and no later round may get to say so: iOS suspends
         // Tether once the sound stops, and the widgets are told right after this.
         watchedConnected = []
+        tunnelsUp = [] // or a pause or resume before the next round publishes them again
         if !wireGuardConnected.isEmpty { wireGuardConnected = [] }
         waitingSince = .distantPast // so the next rounds don't start the sound again, see keepAliveWhileSharing
         keepAlive.stop()

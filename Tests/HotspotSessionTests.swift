@@ -2014,6 +2014,41 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertFalse(session.sharing, "paused until resumed, it isn't coming back by itself")
     }
 
+    /// The proxy paused for a set time comes back when the time is up too, so it holds off the idle
+    /// stop until then, with only devices on the proxy and no tunnel up.
+    func testTheProxyPausedForATimeHoldsOffTheIdleStop() throws {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        XCTAssertTrue(session.setProxy(on: true))
+        let proxy = try XCTUnwrap(devices.setup.proxy?.id)
+        session.pauseWireGuardDevice(proxy, for: .halfHour)
+        for m in [5.0, 15, 29] {
+            now = minutes(m)
+            session.watch()
+            XCTAssertTrue(session.sharing, "at \(m) minutes")
+        }
+        now = minutes(30)
+        session.watch()
+        XCTAssertNil(devices.setup.proxy?.paused, "the time is up")
+        XCTAssertTrue(session.sharing)
+    }
+
+    /// After a stop nobody is connected, also once a pause or a resume publishes the list again.
+    func testAResumeAfterAStopConnectsNobody() throws {
+        idleAfter = .tenMinutes
+        shareInTheBackground()
+        let ipad = try XCTUnwrap(devices.connectReady())
+        server.connected = [ipad.address]
+        session.pauseWireGuardDevice(ipad.id)
+        session.watch()
+        now = minutes(10)
+        session.watch()
+        XCTAssertFalse(session.sharing, "a device paused by you holds nothing off")
+        session.resumeWireGuardDevice(ipad.id)
+        XCTAssertEqual(session.connectedNow, [])
+        XCTAssertEqual(session.wireGuardConnected, [])
+    }
+
     /// A timed pause that ends in the round the idle time runs out: the device is back in that round,
     /// so nothing stops.
     func testATimedPauseEndingAtTheIdleDeadlineCountsInThatRound() throws {
