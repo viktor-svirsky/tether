@@ -23,7 +23,7 @@ final class SettingsResetDayTests: TetherUITestCase {
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
         XCTAssertTrue(menu.label.contains("Data counts start on"), menu.label)
         XCTAssertTrue(says(menu, "1st"), "the 1st at first: \(menu.label)")
-        XCTAssertEqual(label(of: "sharing.footer"), Self.footer)
+        XCTAssertEqual(showHelp("sharing", "sharing.footer").label, Self.footer)
         add(screenshot("settings-reset-day"))
         try audit()
         menu.tap()

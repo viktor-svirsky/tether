@@ -32,7 +32,7 @@ final class NotificationsTests: TetherUITestCase {
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
         XCTAssertTrue(menu.label.contains("Stop sharing when idle"), menu.label)
         XCTAssertTrue(menu.label.contains("Never") || value(of: menu) == "Never", "Never at first: \(menu.label)")
-        XCTAssertEqual(label(of: "sharing.footer"), SettingsResetDayTests.footer)
+        XCTAssertEqual(showHelp("sharing", "sharing.footer").label, SettingsResetDayTests.footer)
         try audit()
         menu.tap()
         for choice in ["Never", "After 10 min", "After 30 min", "After 1 hour"] {
@@ -55,7 +55,7 @@ final class NotificationsTests: TetherUITestCase {
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
         XCTAssertTrue(menu.label.contains("Stop sharing at low battery"), menu.label)
         XCTAssertTrue(menu.label.contains("Never") || value(of: menu) == "Never", "Never at first: \(menu.label)")
-        XCTAssertEqual(label(of: "sharing.footer"), SettingsResetDayTests.footer)
+        XCTAssertEqual(showHelp("sharing", "sharing.footer").label, SettingsResetDayTests.footer)
         try audit()
         menu.tap()
         for choice in ["Never", "At 10%", "At 20%", "At 30%"] {
@@ -80,7 +80,7 @@ final class NotificationsTests: TetherUITestCase {
         launch(.sharing)
         openSettings()
         // Below the Sharing, DNS and local networks sections, past the screen on a small iPhone.
-        reveal(toggle("connected")).switches.firstMatch.tap()
+        flip(reveal(toggle("connected")))
         XCTAssertEqual(value(of: toggle("connected")), "0")
         app.buttons["settings.done"].tap()
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5), "back on the main screen")
