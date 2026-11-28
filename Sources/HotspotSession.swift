@@ -384,7 +384,10 @@ final class HotspotSession {
         // Nor one the proxy refuses for want of a VPN.
         let proxyMoved = proxy?.paused == nil && !blockedWithoutVPN && (idleProxyTraffic.map { $0 != proxyStats.traffic } ?? false)
         idleProxyTraffic = proxyStats.traffic
-        let connected = !connectedNow.isEmpty || proxyMoved
+        // A device paused for a set time with its tunnel up comes back when the time is up (#312), so it
+        // counts as a connected one. Not one paused by you or at its limit.
+        let waiting = devices.setup.peers.contains { $0.paused?.until != nil && tunnelsUp.contains($0.address) }
+        let connected = !connectedNow.isEmpty || proxyMoved || waiting
         guard idleStop.check(sharing: sharing, connected: connected, onScreen: sceneActive, after: after, now: now) else {
             return
         }
@@ -662,10 +665,11 @@ final class HotspotSession {
     }
 
     /// Every saved device for List Tether Devices (#310), connected by the server's latest read,
-    /// like `shortcutState`, so a launch in the background for the action says it right too.
-    func shortcutDevices() -> [ShortcutReply.Device] {
-        var connected = wireGuardConnected
-        if running, server.running { connected = unpaused(server.snapshot().connected) }
+    /// so a launch in the background for the action says it right too, and none while not sharing.
+    /// Nil while the saved setup can't be read, before the first unlock after a restart, say.
+    func shortcutDevices() -> [ShortcutReply.Device]? {
+        guard devices.loaded else { return nil }
+        let connected = running && server.running ? unpaused(server.snapshot().connected) : []
         return devices.setup.peers.map {
             ShortcutReply.Device(id: $0.id, name: $0.name, status: DeviceStatus($0, connected: connected).label(now: now(), calendar: calendar))
         }
@@ -675,6 +679,7 @@ final class HotspotSession {
     /// paused takes the new length, whatever paused it: one at its limit is paused at it again at the
     /// end, see `checkLimits`. `name` is the shortcut's, for a device removed since it was picked.
     func shortcutPause(_ id: WireGuardSetup.Peer.ID, named name: String, for length: WireGuardSetup.PauseLength) -> String {
+        guard devices.loaded else { return ShortcutReply.unreadable }
         guard let peer = devices.setup.peers.first(where: { $0.id == id }) else { return ShortcutReply.gone(name) }
         let pause = length.pause(from: now(), calendar: calendar)
         guard self.pause(id, pause, problem: "The device couldn't be paused.") else { return ShortcutReply.notSaved }
@@ -684,6 +689,7 @@ final class HotspotSession {
 
     /// Resume Tether Device (#310): what Resume on its screen does, and what to say.
     func shortcutResume(_ id: WireGuardSetup.Peer.ID, named name: String) -> String {
+        guard devices.loaded else { return ShortcutReply.unreadable }
         guard let peer = devices.setup.peers.first(where: { $0.id == id }) else { return ShortcutReply.gone(name) }
         guard peer.paused != nil else { return ShortcutReply.notPaused(peer.name) }
         resumeWireGuardDevice(id)
@@ -912,6 +918,9 @@ final class HotspotSession {
     private func publishConnected() {
         let connected = unpaused(tunnelsUp)
         if connected != wireGuardConnected { wireGuardConnected = connected }
+        // Off screen the idle stop reads the watcher's list, so a pause that began or ended in this
+        // round counts in it now, not at the next read.
+        if !sceneActive { watchedConnected = connected }
     }
 
     /// It names its device, so another device's screen doesn't show it.
@@ -1219,10 +1228,11 @@ final class HotspotSession {
         readServer(onScreen: false)
     }
 
-    /// The one read of a running server, on screen (the sampler, every second) or off (the watcher):
+    /// The sampler's read of a running server (on screen, every second) and the watcher's (off screen):
     /// who is connected, the proxy's stats (for the idle stop too), what `absorb` does and this
     /// month's counts. On screen it also publishes what the screen shows, off screen only who is
-    /// connected, for the notifications.
+    /// connected, for the notifications. The add window, Shortcuts and the config page read the
+    /// server for their own needs.
     @discardableResult
     private func readServer(onScreen: Bool) -> ServerSnapshot {
         let snap = server.snapshot()
@@ -1331,17 +1341,20 @@ final class HotspotSession {
         followResetDay()
         let now = self.now()
         var changed = false
-        // A timed pause ends at the first round at or after its end (#312), and the limit below then
-        // counts in the same round. One that couldn't be saved is tried again at the next.
-        for id in LimitRules.timedPausesOver(limitDevices(at: now), at: now) where devices.pause(id, nil) {
-            changed = true
-            log("WireGuard: a timed pause ended")
-        }
-        for device in limitDevices(at: now) {
+        // A timed pause ends at the first round at or after its end (#312), and the limit below counts
+        // in the same round as if it weren't paused. Over its limit, it goes straight to paused at its
+        // limit in one save, so a save that fails leaves the timed pause, never the device let through.
+        // One that couldn't be saved is tried again at the next round.
+        let devicesNow = limitDevices(at: now)
+        let over = Set(LimitRules.timedPausesOver(devicesNow, at: now))
+        for var device in devicesNow {
+            var ended = over.contains(device.id)
+            if ended { device.paused = nil }
             switch LimitRules.action(for: device) {
             case .resume?:
                 changed = devices.pause(device.id, nil) || changed
             case .pauseAtLimit?:
+                ended = false // this save replaces the timed pause, or leaves it
                 guard let limit = device.limit, devices.pause(device.id, .atLimit) else { continue }
                 changed = true
                 log("WireGuard: a device reached its limit and is paused until the count resets")
@@ -1353,6 +1366,10 @@ final class HotspotSession {
                 alert(device.id, device.name, .near, used: device.used, limit: limit, now: now)
             case nil:
                 break
+            }
+            if ended, devices.pause(device.id, nil) {
+                changed = true
+                log("WireGuard: a timed pause ended")
             }
         }
         if changed {

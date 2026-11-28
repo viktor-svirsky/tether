@@ -430,7 +430,7 @@ final class Model: ObservableObject {
     }
 
     /// See `HotspotSession.shortcutDevices`.
-    func shortcutDevices() -> [ShortcutReply.Device] {
+    func shortcutDevices() -> [ShortcutReply.Device]? {
         session.shortcutDevices()
     }
 

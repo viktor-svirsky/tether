@@ -63,8 +63,10 @@ enum ShortcutReply {
         var status: String
     }
 
-    /// After List Tether Devices: one line each, in the words of the device rows.
-    static func devices(_ devices: [Device]) -> String {
+    /// After List Tether Devices: one line each, in the words of the device rows. Nil for a saved list
+    /// that can't be read now.
+    static func devices(_ devices: [Device]?) -> String {
+        guard let devices else { return unreadable }
         guard !devices.isEmpty else { return "Tether has no devices yet. Add one in Tether." }
         return devices.map { "\($0.name): \($0.status)" }.joined(separator: "\n")
     }
@@ -80,6 +82,10 @@ enum ShortcutReply {
     static func resumed(_ name: String) -> String { "\(name) can connect again." }
 
     static func notPaused(_ name: String) -> String { "\(name) isn't paused." }
+
+    /// The saved devices can't be read now: before the first unlock after a restart, or saved by a
+    /// version this one can't read. Tether's screen says which.
+    static let unreadable = "Tether can't read its devices right now. Open Tether to see why."
 
     /// Removed since the shortcut picked it, by the name the shortcut has for it.
     static func gone(_ name: String) -> String { "Tether has no device called \(name) any more." }

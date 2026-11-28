@@ -651,6 +651,8 @@ final class TrafficTotalsTests: XCTestCase {
 final class FlakySecrets: SecretStore {
     var failing = false
     var savesFail = false
+    /// That many more saves work, then every one fails.
+    var savesLeft: Int?
     var saves = 0
     var data: Data?
     struct Locked: Error {}
@@ -662,7 +664,8 @@ final class FlakySecrets: SecretStore {
         return data
     }
     func save(_ data: Data) throws {
-        if savesFail { throw saveError }
+        if savesFail || savesLeft == 0 { throw saveError }
+        if let left = savesLeft { savesLeft = left - 1 }
         saves += 1
         self.data = data
     }

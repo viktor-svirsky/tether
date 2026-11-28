@@ -5,7 +5,7 @@ import XCTest
 /// Resume change the device as its screen does, also for one removed since the shortcut picked it.
 @MainActor
 final class ShortcutDeviceTests: XCTestCase {
-    private let hotspot = "172.20.10.1"
+    private var hotspot: String? = "172.20.10.1"
     private var calendar: Calendar = {
         var c = Calendar(identifier: .gregorian)
         c.timeZone = TimeZone(identifier: "America/New_York")!
@@ -31,16 +31,21 @@ final class ShortcutDeviceTests: XCTestCase {
         now = at(15, 15)
         secrets = FlakySecrets()
         usageDefaults.removePersistentDomain(forName: "ShortcutDeviceTests")
+        makeSession()
+        let peer = try XCTUnwrap(devices.connectReady())
+        server.connected = [peer.address]
+        session.syncWithHotspot()
+        return peer
+    }
+
+    /// A launch in the background, as one for an action is, with the setup `secrets` holds.
+    private func makeSession() {
         server = FakeServer()
         devices = WireGuardDevices(secrets: secrets)
         session = HotspotSession(devices: devices, server: server, keepAlive: FakeSound(), page: FakePage(),
                                  sceneActive: false, hotspotAddress: { [unowned self] in hotspot },
                                  usageDefaults: usageDefaults, calendar: calendar, now: { [unowned self] in now })
         session.syncWithHotspot()
-        let peer = try XCTUnwrap(devices.connectReady())
-        server.connected = [peer.address]
-        session.syncWithHotspot()
-        return peer
     }
 
     /// The narrow space some versions put before PM, as a plain one, see FormatTests.
@@ -57,6 +62,7 @@ final class ShortcutDeviceTests: XCTestCase {
                        ShortcutReply.Device(id: UUID(), name: "Kids iPad", status: "Paused until 9:00 PM")]
         XCTAssertEqual(ShortcutReply.devices(devices), "iPad: Connected\nKids iPad: Paused until 9:00 PM")
         XCTAssertEqual(ShortcutReply.devices([]), "Tether has no devices yet. Add one in Tether.")
+        XCTAssertEqual(ShortcutReply.devices(nil), "Tether can't read its devices right now. Open Tether to see why.")
     }
 
     func testPauseSaysUntilWhen() {
@@ -80,11 +86,38 @@ final class ShortcutDeviceTests: XCTestCase {
     /// In the background, as a launch for the action is: connected by the server's read.
     func testTheListReadsWhoIsConnectedFromTheServer() throws {
         let peer = try iPad()
-        let listed = session.shortcutDevices()
+        let listed = try XCTUnwrap(session.shortcutDevices())
         XCTAssertEqual(listed.map(\.id), [peer.id])
         XCTAssertEqual(listed.first?.status, "Connected")
         server.connected = []
-        XCTAssertEqual(session.shortcutDevices().first?.status, "Not connected")
+        XCTAssertEqual(session.shortcutDevices()?.first?.status, "Not connected")
+    }
+
+    /// Sharing stopped while Tether was away from the screen: the list read on screen isn't who is
+    /// connected any more.
+    func testAfterSharingStopsNoDeviceIsConnected() throws {
+        _ = try iPad()
+        session.cameOnScreen()
+        session.sampleTraffic()
+        session.leftScreen()
+        hotspot = nil
+        session.syncWithHotspot()
+        XCTAssertFalse(session.running)
+        XCTAssertEqual(session.shortcutDevices()?.first?.status, "Not connected")
+    }
+
+    /// Before the first unlock after a restart, the saved setup can't be read yet: the actions say so,
+    /// not that there are no devices or that one was removed.
+    func testASetupThatCantBeReadIsSaidSo() throws {
+        let peer = try iPad()
+        secrets.failing = true
+        makeSession()
+        XCTAssertNil(session.shortcutDevices())
+        XCTAssertEqual(session.shortcutPause(peer.id, named: peer.name, for: .hour), ShortcutReply.unreadable)
+        XCTAssertEqual(session.shortcutResume(peer.id, named: peer.name), ShortcutReply.unreadable)
+        secrets.failing = false
+        session.syncWithHotspot()
+        XCTAssertEqual(session.shortcutDevices()?.map(\.id), [peer.id], "read once it can be")
     }
 
     func testPauseForAnHourPausesItAndSaysUntilWhen() throws {
@@ -92,7 +125,7 @@ final class ShortcutDeviceTests: XCTestCase {
         let reply = session.shortcutPause(peer.id, named: peer.name, for: .hour)
         XCTAssertEqual(pause(of: peer), .until(at(16, 15)))
         XCTAssertEqual(plain(reply), "\(peer.name) is paused until 4:15 PM.")
-        XCTAssertEqual(plain(session.shortcutDevices().first?.status ?? ""), "Paused until 4:15 PM")
+        XCTAssertEqual(plain(session.shortcutDevices()?.first?.status ?? ""), "Paused until 4:15 PM")
     }
 
     func testPauseUntilResumedSaysSo() throws {
