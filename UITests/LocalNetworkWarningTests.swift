@@ -34,7 +34,7 @@ final class LocalNetworkWarningTests: TetherUITestCase {
         XCTAssertEqual(label(of: "status.title"), "Sharing")
         assertNowhere(element("localNetwork.problem"), element("localNetwork.open"))
         openAddDevice()
-        reveal(element("add.step3"))
+        reveal(element("add.step4"))
         XCTAssertTrue(text(containing: "This ticks off by itself when it connects.").exists)
         assertNowhere(element("add.localNetwork.title"), element("add.localNetwork.open"))
     }

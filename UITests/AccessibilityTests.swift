@@ -121,9 +121,9 @@ final class AccessibilityTests: TetherUITestCase {
         }
     }
 
-    /// The filled buttons' white text keeps 4.5:1 on their blue in both appearances: Add a device
-    /// before any device, and Done once one connects. The accent is light in dark mode, too light
-    /// under white text (#68). Read from the pixels: the audit doesn't look at a button's own label.
+    /// The filled buttons' paper text keeps 4.5:1 on their ink in both appearances: Add a device
+    /// before any device, and Done once one connects. Read from the pixels: the audit doesn't look
+    /// at a button's own label.
     func testFilledButtonsKeepTheirContrastInBothAppearances() {
         for appearance in [XCUIDevice.Appearance.light, .dark] {
             XCUIDevice.shared.appearance = appearance
@@ -141,7 +141,7 @@ final class AccessibilityTests: TetherUITestCase {
     func testAddDeviceSheetPassesTheStructuralAudit() throws {
         launch(.noDevices)
         openAddDevice()
-        reveal(element("add.step3"))
+        reveal(element("add.step4"))
         try audit(types: structuralAudit)
     }
 
@@ -213,7 +213,7 @@ final class AccessibilityTests: TetherUITestCase {
         XCTAssertTrue(reveal(element("device.Windows PC"), maxSwipes: 30).isHittable)
         openAddDevice(maxSwipes: 30)
         XCTAssertTrue(reveal(element("add.qr"), maxSwipes: 30).isHittable)
-        XCTAssertTrue(reveal(element("add.step3"), maxSwipes: 30).exists)
+        XCTAssertTrue(reveal(element("add.step4"), maxSwipes: 30).exists)
         reveal(element("add.kind.computer"), maxSwipes: 30).tap()
         XCTAssertTrue(reveal(element("add.address"), maxSwipes: 30).isHittable)
         XCTAssertTrue(reveal(element("add.share"), maxSwipes: 30).isHittable)

@@ -18,7 +18,7 @@ final class RegionAndOrientationTests: TetherUITestCase {
         XCTAssertEqual(up.label, "Upload 400 kbit/s")
         XCTAssertTrue(screen.contains(down.frame) && screen.contains(up.frame), "the speeds fit the width: \(down.frame), \(up.frame)")
         let ipad = reveal(element("device.iPad"))
-        XCTAssertTrue(ipad.label.contains("3,12 GB this month"), ipad.label)
+        XCTAssertTrue(ipad.label.contains("3,12 GB of 10 GB this month"), ipad.label)
         XCTAssertTrue(screen.contains(ipad.frame), "the row fits the width: \(ipad.frame)")
     }
 

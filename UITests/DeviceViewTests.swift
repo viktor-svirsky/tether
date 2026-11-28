@@ -2,9 +2,10 @@ import XCTest
 
 /// One device's screen (status, rename, remove) and the WireGuard problem section on the main screen.
 final class DeviceViewTests: TetherUITestCase {
-    private let lockedText = "Tether can't read its keys yet. iOS opens them after the first unlock since a restart. Tether tries again by itself. If this stays for a minute, restart the iPhone."
-    private let resetText = "Tether can't read its saved keys. Start over with new keys. Every device has to be added again."
-    private let unsavedText = "Tether can't save its keys. It tries again by itself. If this stays, share the log in a GitHub issue."
+    // The status card's line under the problem's title (M9).
+    private let lockedText = "iOS opens them after the first unlock since a restart. Tether tries again by itself. If this stays for a minute, restart the iPhone."
+    private let resetText = "Start over with new keys. Every device has to be added again."
+    private let unsavedText = "It tries again by itself. If this stays, share the log in a GitHub issue."
 
     // MARK: one device
 
@@ -340,7 +341,7 @@ final class DeviceViewTests: TetherUITestCase {
         let banner = staticText("wireguard.problem") // the warning icon carries the identifier too
         XCTAssertTrue(reveal(banner).exists)
         XCTAssertEqual(banner.label, lockedText)
-        XCTAssertTrue(sectionHeader("WIREGUARD ISN'T RUNNING").exists)
+        XCTAssertEqual(label(of: "status.title"), "Tether can't read its keys yet")
         assertNowhere(element("wireguard.reset"), message: "a locked Keychain gets better by unlocking, not by starting over")
         assertNowhere(element("add.open"))
     }
@@ -351,14 +352,15 @@ final class DeviceViewTests: TetherUITestCase {
         let banner = staticText("wireguard.problem")
         XCTAssertTrue(reveal(banner).exists)
         XCTAssertEqual(banner.label, unsavedText)
-        XCTAssertEqual(label(of: "status.title"), "Tether can't share yet")
+        XCTAssertEqual(label(of: "status.title"), "Tether can't save its keys")
         assertNowhere(element("add.open"), element("add.problem"), element("wireguard.reset"))
     }
 
     /// Without the hotspot there's no QR code either, so a new user would have no way to add a device and no reason why.
+    /// The problem takes the card's title, ahead of waiting (`HomeStatus`).
     func testLockedKeysShowBeforeTheHotspotIsOn() {
         launch(.wireGuardLockedWaiting)
-        XCTAssertEqual(label(of: "status.title"), Copy.waitingForDevice)
+        XCTAssertEqual(label(of: "status.title"), "Tether can't read its keys yet")
         let banner = staticText("wireguard.problem")
         XCTAssertTrue(reveal(banner).exists)
         XCTAssertEqual(banner.label, lockedText)

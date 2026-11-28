@@ -39,7 +39,7 @@ final class SettingsResetDayTests: TetherUITestCase {
         XCTAssertTrue(says(menu, "15th"), "kept: \(menu.label)")
         app.buttons["settings.done"].tap()
         let ipad = reveal(element("device.iPad"))
-        XCTAssertTrue(ipad.label.contains("3.12 GB since Oct 1"), "not this month any more: \(ipad.label)")
+        XCTAssertTrue(ipad.label.contains("3.12 GB of 10 GB since Oct 1"), "not this month any more: \(ipad.label)")
         XCTAssertFalse(ipad.label.contains("since Oct 15"), "the running count started on October 1: \(ipad.label)")
         openDevice("iPad")
         let meter = reveal(element("device.thisMonth")).label
@@ -54,7 +54,7 @@ final class SettingsResetDayTests: TetherUITestCase {
     /// month before: September 30 for the demo's October 17.
     func testLastDayIs31() {
         launch(.sharing, arguments: ["-usage.resetDay", "31"])
-        XCTAssertTrue(reveal(element("device.iPad")).label.contains("3.12 GB since Sep 30"))
+        XCTAssertTrue(reveal(element("device.iPad")).label.contains("3.12 GB of 10 GB since Sep 30"))
         openSettings()
         let menu = app.buttons["sharing.resetDay"].firstMatch
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
@@ -66,7 +66,7 @@ final class SettingsResetDayTests: TetherUITestCase {
     func testAnotherDaySaysSinceItOnTheDevice() throws {
         launch(.sharing, arguments: onThe15th)
         let ipad = reveal(element("device.iPad"))
-        XCTAssertTrue(ipad.label.contains("3.12 GB since Oct 15"), ipad.label)
+        XCTAssertTrue(ipad.label.contains("3.12 GB of 10 GB since Oct 15"), ipad.label)
         XCTAssertTrue(reveal(element("device.Windows PC")).label.contains("Nothing used since Oct 15"))
         openDevice("iPad")
         let meter = reveal(element("device.thisMonth")).label
