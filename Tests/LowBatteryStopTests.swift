@@ -36,6 +36,6 @@ final class LowBatteryStopTests: XCTestCase {
 
     func testTheMainScreenLine() {
         XCTAssertEqual(BelowBatteryStop(percent: 15, level: .twenty).text,
-                       "Battery is at 15%, below your 20% stop level. Sharing stops when you leave Tether.")
+                       "Battery is at 15%, at or below your 20% stop level. Sharing stops when you leave Tether.")
     }
 }

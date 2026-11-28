@@ -703,6 +703,8 @@ final class Model: ObservableObject {
             model.sampler?.cancel()
             model.knocking?.cancel()
         }
+        observe(UIApplication.didEnterBackgroundNotification) { $0.session.enteredBackground() }
+        observe(UIApplication.willEnterForegroundNotification) { $0.session.enteringForeground() }
         observe(UIApplication.didReceiveMemoryWarningNotification) { $0.session.freeMemory() }
     }
 
