@@ -3,7 +3,7 @@ import Foundation
 /// How far adding one device has got, for the Add a device sheet. It follows the device behind the
 /// code that was ready when the sheet opened: that device keeps its id when it's claimed, by a
 /// download from the page or its first handshake, and is listed from then on. A scanned code is
-/// claimed only by the handshake, so its last two steps tick together.
+/// claimed only by the handshake, so its last steps tick together.
 struct AddDeviceProgress: Equatable {
     enum Step: Equatable {
         case toDo
@@ -20,22 +20,32 @@ struct AddDeviceProgress: Equatable {
     let tunnel: Step
 
     var finished: Bool { tunnel == .done }
+
+    /// The sheet's four steps in order (M12): join the hotspot, install WireGuard, get the config into
+    /// it, turn it on. Tether can't see the app installed, so the install step ticks with the config:
+    /// only WireGuard can use it.
+    var steps: [Step] { [joined, config, config, tunnel] }
+    /// The first step that isn't done, 1 to 4, the one the person is on. Nil once it connects.
+    var current: Int? { steps.firstIndex { $0 != .done }.map { $0 + 1 } }
+    /// Listed with its config but paused, so it can't connect until it's resumed: a device given a new
+    /// config keeps its pause (M1). The sheet ends there instead of waiting.
+    var heldByPause: Bool { !finished && device?.paused != nil }
     /// The sheet keeps the screen on until then: the page hands out the config only while Tether is
     /// on screen, and a locked iPhone isn't.
     var keepsScreenAwake: Bool { !finished }
 
     /// What VoiceOver says when steps tick off by themselves since `old`, nil when none did. Otherwise
-    /// a VoiceOver user doesn't hear the sheet move on (#175). A scan ticks the last two steps at
+    /// a VoiceOver user doesn't hear the sheet move on (#175). A scan ticks the last three steps at
     /// once, and the connection says it all.
     func announcement(after old: AddDeviceProgress) -> String? {
         if finished, !old.finished, let device { return "\(device.name) is connected" }
-        let before = [old.joined, old.config, old.tunnel], now = [joined, config, tunnel]
+        // The sheet ends there, so its pause says it all.
+        if heldByPause, !old.heldByPause, let device { return "\(device.name) is paused, so it can't connect yet" }
+        let before = old.steps, now = steps
         let ticked = now.indices.filter { now[$0] == .done && before[$0] != .done }.map { String($0 + 1) }
-        switch ticked.count {
-        case 0: return nil
-        case 1: return "Step \(ticked[0]) done"
-        default: return "Steps \(ticked.joined(separator: " and ")) done"
-        }
+        guard let last = ticked.last else { return nil }
+        if ticked.count == 1 { return "Step \(last) done" }
+        return "Steps \(ticked.dropLast().joined(separator: ", ")) and \(last) done"
     }
 
     init(ready: WireGuardSetup.Peer.ID?, peers: [WireGuardSetup.Peer], connected: Set<String>, hotspotOn: Bool) {

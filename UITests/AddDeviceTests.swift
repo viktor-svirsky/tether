@@ -1,6 +1,7 @@
 import XCTest
 
-/// Adding a device: the button on the main screen and the sheet with its three steps on a line.
+/// Adding a device: the button on the main screen, the sheet's first question, the WireGuard way's four
+/// steps on a line and the proxy's three.
 final class AddDeviceTests: TetherUITestCase {
     /// How long the code and the shared file work, under each.
     static let windowNote = "Works while this screen is open, and for 10 minutes after you close it or leave Tether."
@@ -18,19 +19,36 @@ final class AddDeviceTests: TetherUITestCase {
         assertNowhere(element("add.hint"))
     }
 
-    /// With the hotspot off or empty nothing is ticked, and a device can scan the code first.
+    /// The first question says WireGuard is free and recommended, and the proxy is for a device
+    /// that can't take an app (H4).
+    func testTheFirstQuestionRecommendsWireGuard() {
+        launch(.noDevices)
+        openAddDeviceQuestion()
+        XCTAssertEqual(label(of: "add.question"), "Can you install an app on the other device?")
+        XCTAssertEqual(label(of: "add.way.wireGuard"),
+                       "Yes, install WireGuard, Recommended. The app is free. Everything on it goes through Tether, games and calls too.")
+        XCTAssertEqual(label(of: "add.way.proxy"),
+                       "No, use the proxy, No app needed. For a TV, a console or a work laptop. Most apps go through Tether, some don't.")
+        assertNowhere(element("add.wayHint"), message: "said in the proxy's answer now")
+    }
+
+    /// With the hotspot off or empty nothing is ticked, and a device can scan the code first. Join
+    /// comes first: the hotspot gives the device the internet to install WireGuard (M12).
     func testTheSheetShowsTheStepsAndTheCode() {
         launch(.waiting)
         openAddDevice()
-        XCTAssertEqual(label(of: "add.install"), "Install the free WireGuard app on the other device: App Store, Google Play, or wireguard.com/install.")
         // Each step is one stop for VoiceOver: its number, its title and how far it is (#175).
-        XCTAssertEqual(label(of: "add.step1"), "Step 1 of 3, Join this iPhone's hotspot")
+        XCTAssertEqual(label(of: "add.step1"), "Step 1 of 4, Join this iPhone's hotspot")
         XCTAssertEqual(value(of: element("add.step1")), "Current")
         XCTAssertEqual(label(of: "add.hotspotHint"), "Turn on Personal Hotspot, then join it from the other device. Tether starts when the first device joins.")
-        XCTAssertEqual(label(of: "add.step2"), "Step 2 of 3, Give it the config")
+        XCTAssertEqual(label(of: "add.step2"), "Step 2 of 4, Install WireGuard on it")
         XCTAssertEqual(value(of: element("add.step2")), "")
-        XCTAssertEqual(label(of: "add.step3"), "Step 3 of 3, Turn its tunnel on")
+        XCTAssertEqual(label(of: "add.install"), "The app is free: App Store, Google Play, or wireguard.com/install.")
+        XCTAssertEqual(label(of: "add.step3"), "Step 3 of 4, Scan the code with WireGuard")
         XCTAssertEqual(value(of: element("add.step3")), "")
+        XCTAssertEqual(reveal(element("add.step4")).label, "Step 4 of 4, Turn it on in WireGuard")
+        XCTAssertEqual(value(of: element("add.step4")), "")
+        XCTAssertTrue(text(containing: "In WireGuard, turn on the tunnel you just added. This ticks off by itself when it connects.").exists)
         XCTAssertEqual(label(of: "add.hotspotPath"), Copy.hotspotPath)
         XCTAssertTrue(app.segmentedControls.buttons["Phone or tablet"].isSelected, "a phone or tablet first")
         XCTAssertTrue(app.segmentedControls.buttons["Computer or router"].exists)
@@ -48,6 +66,7 @@ final class AddDeviceTests: TetherUITestCase {
         launch(.waiting)
         openAddDevice()
         app.segmentedControls.buttons["Computer or router"].tap()
+        XCTAssertEqual(label(of: "add.step3"), "Step 3 of 4, Get the file into WireGuard")
         XCTAssertEqual(reveal(element("add.laptop")).label, "Open this in the computer's browser while Tether is on screen:")
         let address = reveal(element("add.address"))
         XCTAssertEqual(address.label, "Page address")
@@ -95,13 +114,16 @@ final class AddDeviceTests: TetherUITestCase {
         try audit(types: [.textClipped], only: "add.address")
     }
 
-    /// Copy says it worked for a moment: the icon turns into a tick, and VoiceOver hears "Copied" (#175).
-    /// The test reads the button's value, which goes with the tick.
+    /// Copy says it worked for a moment: the icon turns into a tick, the Copied capsule shows at the
+    /// bottom like on the other screens (L4), and VoiceOver hears "Copied" (#175). The test reads the
+    /// button's value, which goes with the tick.
     func testCopyingTheAddressSaysCopied() {
-        launch(.addDeviceComputer)
+        // The capsule stays long enough for a busy runner to see it.
+        launch(.addDeviceComputer, arguments: ["-diagnostics.copiedShownFor", "60"])
         let copy = reveal(element("add.copy"))
         copy.tap()
         XCTAssertEqual(value(of: copy), "Copied")
+        XCTAssertEqual(label(of: "add.copied"), "Copied")
         XCTAssertEqual(copy.label, "Copy the address")
         let cleared = expectation(for: NSPredicate(format: "value == ''"), evaluatedWith: copy)
         XCTAssertEqual(XCTWaiter().wait(for: [cleared], timeout: 10), .completed, "it goes back to the copy icon")
@@ -179,12 +201,12 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertTrue(element("add.qr").waitForExistence(timeout: 5))
         XCTAssertEqual(value(of: element("add.step1")), "Done")
         XCTAssertEqual(value(of: element("add.step3")), "")
+        XCTAssertEqual(value(of: element("add.step4")), "")
         XCTAssertFalse(element("add.result").exists, "not connected yet")
         XCTAssertFalse(app.textFields["add.name"].exists)
         XCTAssertTrue(element("add.result").waitForExistence(timeout: 45), "it connects after a moment")
         XCTAssertEqual(label(of: "add.result"), "Connected")
-        XCTAssertEqual(value(of: element("add.step2")), "Done")
-        XCTAssertEqual(value(of: element("add.step3")), "Done")
+        for step in 2...4 { XCTAssertEqual(value(of: element("add.step\(step)")), "Done", "step \(step)") }
         let field = app.textFields["add.name"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         XCTAssertFalse((field.value as? String ?? "").isEmpty, "it has the name it got")
@@ -195,9 +217,10 @@ final class AddDeviceTests: TetherUITestCase {
     func testADownloadedCodeWaitsForTheTunnel() {
         launch(.addDeviceWaiting)
         XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
-        XCTAssertEqual(value(of: element("add.step2")), "Done")
+        XCTAssertEqual(value(of: element("add.step2")), "Done", "the install ticks with the config")
+        XCTAssertEqual(value(of: element("add.step3")), "Done")
         XCTAssertTrue(text(containing: "Windows PC has it").exists)
-        XCTAssertEqual(value(of: element("add.step3")), "Waiting")
+        XCTAssertEqual(value(of: element("add.step4")), "Waiting")
         XCTAssertTrue(text(containing: "Waiting for Windows PC to connect").exists)
         assertNowhere(element("add.qr"), element("add.kind"), element("add.done"), element("add.result"), element("add.name"))
     }
@@ -207,7 +230,7 @@ final class AddDeviceTests: TetherUITestCase {
     func testOnceItConnectsDoneClosesTheSheet() throws {
         launch(.addDeviceDone)
         XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
-        XCTAssertEqual(value(of: element("add.step3")), "Done")
+        XCTAssertEqual(value(of: element("add.step4")), "Done")
         XCTAssertEqual(label(of: "add.result"), "Connected")
         let field = app.textFields["add.name"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
@@ -339,6 +362,74 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertTrue(sectionHeader("ADD ANOTHER DEVICE").exists)
         XCTAssertTrue(reveal(element("device.iPad")).exists)
         assertNowhere(element("add.open"), element("wireguard.problem"))
+    }
+
+    // MARK: a new config for a listed device (M1)
+
+    /// From a device's screen, the sheet opens on the WireGuard steps for that device: no question,
+    /// and its name in the title. It keeps its name, so the end has no name field.
+    func testANewConfigOpensOnTheStepsForThatDevice() throws {
+        launch(.replaceDevice)
+        XCTAssertTrue(element("add.step1").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["New config for Windows PC"].exists)
+        XCTAssertEqual(label(of: "add.step3"), "Step 3 of 4, Scan the code with WireGuard")
+        XCTAssertTrue(element("add.qr").exists, "a new code")
+        assertNowhere(element("add.question"), element("add.result"), element("add.name"), element("add.done"))
+        XCTAssertTrue(text(containing: "This ticks off by itself").exists, "the old config connecting is not the new one")
+        try audit(only: "add.")
+        element("add.close").tap()
+        waitUntilGone(element("add.step1"))
+        XCTAssertTrue(reveal(element("device.Windows PC")).exists, "closing changes nothing")
+    }
+
+    // MARK: the proxy (H5, L3)
+
+    /// Opening the proxy's steps turns nothing on: step 2 says it's off, with the button that does.
+    func testTheProxyStepsTurnNothingOnByThemselves() {
+        launch(.addDeviceProxyOff, screen: "add.proxy.step1")
+        XCTAssertEqual(label(of: "add.proxy.step2"), "Step 2 of 3, In its Wi-Fi settings, set the proxy")
+        XCTAssertEqual(reveal(element("add.proxy.blocked")).label,
+                       "The proxy has no password. While it's on, any device on the hotspot can use it.")
+        assertNowhere(element("add.proxy.server"), element("add.proxy.isOn"), element("add.proxy.result"), message: "the proxy is off")
+        element("add.close").tap()
+        waitUntilGone(element("add.proxy.step1"))
+        assertNowhere(element("proxy.row"), message: "looking at the steps didn't turn it on")
+    }
+
+    /// Turn on the proxy turns it on there: the server and port show, and the line that says it's on.
+    func testTurnOnTheProxyShowsWhereItIs() throws {
+        launch(.addDeviceProxyOff, screen: "add.proxy.step1")
+        let button = reveal(element("add.proxy.turnOn"))
+        XCTAssertEqual(button.label, "Turn on the proxy")
+        button.tap()
+        XCTAssertTrue(reveal(element("add.proxy.server")).exists)
+        XCTAssertEqual(reveal(element("add.proxy.isOn")).label, "The proxy is on. To turn it off, tap Proxy under Devices.")
+        XCTAssertEqual(reveal(element("add.proxy.result")).label, "Waiting for the first page")
+        assertNowhere(element("add.proxy.turnOn"), element("add.proxy.blocked"))
+        try audit(only: "add.proxy")
+        element("add.close").tap()
+        waitUntilGone(element("add.proxy.step1"))
+        XCTAssertTrue(reveal(element("proxy.row")).exists)
+    }
+
+    /// Once a page goes through, the steps end like the WireGuard ones, and Done closes them (L3).
+    func testTheProxyStepsEndWithDone() {
+        launch(.addDeviceProxyWorking, screen: "add.proxy.step1")
+        // A new device's page comes through each second, after the first 12 s, see `ProxyProgress`.
+        XCTAssertTrue(element("add.proxy.end").waitForExistence(timeout: 25), "it never said Working")
+        XCTAssertEqual(label(of: "add.proxy.end"), "Working")
+        XCTAssertEqual(reveal(element("add.proxy.endDetail")).label,
+                       "It uses this iPhone's data now. Other devices can use the same server and port.")
+        element("add.proxy.done").tap()
+        waitUntilGone(element("add.proxy.step1"))
+        XCTAssertTrue(reveal(element("proxy.row")).exists)
+    }
+
+    /// The proxy's copy buttons show the same Copied capsule (L4).
+    func testCopyingTheProxyServerShowsCopied() {
+        launch(.addDeviceProxy, arguments: ["-diagnostics.copiedShownFor", "60"], screen: "add.proxy.step1")
+        reveal(element("add.proxy.copyServer")).tap()
+        XCTAssertEqual(label(of: "add.copied"), "Copied")
     }
 
     func testNothingElseOffersToAddADevice() {
