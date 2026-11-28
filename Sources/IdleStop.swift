@@ -65,10 +65,12 @@ struct IdleStop {
 }
 
 /// Sharing stopped after `after` with no device connected, see `IdleStop`, until Tether is opened
-/// or Start Tether runs.
+/// or Start Tether runs. Also a stop from a widget, or at low battery, which wait the same way.
 struct IdleStopped: Equatable {
     let at: Date
     let after: IdleStop.After
     /// Stop on a widget or in Control Center, not the idle time. Nothing is told: the person asked for it.
     var byYou = false
+    /// Stopped at this battery level, not the idle time, see `LowBatteryStop` (#311).
+    var lowBattery: LowBatteryStop.Level? = nil
 }

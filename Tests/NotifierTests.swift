@@ -177,7 +177,7 @@ final class NotifierTests: XCTestCase {
     }
 
     func testTheSwitchesAreSavedUnderTheirOwnKeys() {
-        XCTAssertEqual(NoticeKind.allCases.map(\.key), ["notify.connected", "notify.disconnected", "notify.sharingStopped", "notify.idleStopped", "notify.limit", "notify.closed", "notify.expiring"])
+        XCTAssertEqual(NoticeKind.allCases.map(\.key), ["notify.connected", "notify.disconnected", "notify.sharingStopped", "notify.idleStopped", "notify.lowBattery", "notify.limit", "notify.closed", "notify.expiring"])
     }
 
     /// A device that's connected when Tether starts isn't news, on screen or off. The question
@@ -405,6 +405,31 @@ final class NotifierTests: XCTestCase {
         XCTAssertEqual(NoticeKind.idleStopped.label, "Sharing stops while idle")
         defaults.set(false, forKey: NoticeKind.idleStopped.key)
         XCTAssertEqual(round(at: 30, [], sharing: false, idleStopped: IdleStopped(at: minutes(30), after: .tenMinutes)), [])
+    }
+
+    // MARK: Stopping at low battery
+
+    /// Stopped at the battery level (#311): told once, with the level, and not as a problem.
+    func testSharingStoppedAtLowBatteryIsToldOnce() {
+        round(at: 0, [])
+        round(at: 1, [ipad.address])
+        round(at: 4, [ipad.address])
+        let stopped = IdleStopped(at: minutes(5), after: .never, lowBattery: .twenty)
+        XCTAssertEqual(round(at: 5, [], sharing: false, idleStopped: stopped),
+                       ["Sharing stopped at low battery: The battery reached 20%. Open Tether to share again."])
+        XCTAssertEqual(round(at: 5.25, [], sharing: false, idleStopped: stopped), [], "once")
+        XCTAssertEqual(round(at: 30, [], sharing: false, idleStopped: stopped), [],
+                       "the iPad that was connected isn't told as a problem: the notice said why")
+    }
+
+    func testSharingStoppedAtLowBatteryHasItsOwnSwitch() {
+        XCTAssertEqual(NoticeKind.lowBattery.label, "Sharing stops at low battery")
+        XCTAssertTrue(NoticeKind.lowBattery.isOn(in: defaults), "on until turned off")
+        defaults.set(false, forKey: NoticeKind.lowBattery.key)
+        XCTAssertEqual(round(at: 5, [], sharing: false, idleStopped: IdleStopped(at: minutes(5), after: .never, lowBattery: .ten)), [])
+        XCTAssertEqual(round(at: 6, [], sharing: false, idleStopped: IdleStopped(at: minutes(6), after: .tenMinutes)),
+                       ["Sharing stopped while idle: No device was connected for 10 minutes. Open Tether to share again."],
+                       "the idle stop keeps its own")
     }
 
     func testTheBuildExpiringIsToldOnceADay() {

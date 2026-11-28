@@ -11,14 +11,15 @@ final class NotificationsTests: TetherUITestCase {
     func testTheGearOpensASwitchForEachKindAllOn() {
         launch(.sharing)
         openSettings()
-        for kind in ["connected", "disconnected", "sharingStopped", "idleStopped", "limit", "closed", "expiring"] {
-            // Seven switches run past the screen, under Devices.
+        for kind in ["connected", "disconnected", "sharingStopped", "idleStopped", "lowBattery", "limit", "closed", "expiring"] {
+            // Eight switches run past the screen, under Devices.
             XCTAssertTrue(reveal(toggle(kind)).exists, kind)
             XCTAssertEqual(value(of: toggle(kind)), "1", kind)
         }
         XCTAssertEqual(toggle("connected").label, "A device connects")
         XCTAssertEqual(toggle("closed").label, "iOS stops Tether in the background")
         XCTAssertEqual(toggle("idleStopped").label, "Sharing stops while idle")
+        XCTAssertEqual(toggle("lowBattery").label, "Sharing stops at low battery")
         XCTAssertEqual(toggle("expiring").label, "Tether stops opening soon")
         XCTAssertEqual(toggle("limit").label, "A device nears or reaches its limit")
     }
@@ -44,6 +45,29 @@ final class NotificationsTests: TetherUITestCase {
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5))
         openSettings()
         XCTAssertTrue(menu.label.contains("After 30 min") || value(of: menu) == "After 30 min", "kept after closing: \(menu.label)")
+    }
+
+    /// Settings > Sharing (#311): Never at first, the four choices, the choice kept, and the footer says when.
+    func testSharingStopsAtLowBatteryIsAMenu() throws {
+        launch(.sharing)
+        openSettings()
+        let menu = app.buttons["sharing.lowBattery"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        XCTAssertTrue(menu.label.contains("Stop sharing at low battery"), menu.label)
+        XCTAssertTrue(menu.label.contains("Never") || value(of: menu) == "Never", "Never at first: \(menu.label)")
+        XCTAssertEqual(label(of: "sharing.footer"), SettingsResetDayTests.footer)
+        try audit()
+        menu.tap()
+        for choice in ["Never", "At 10%", "At 20%", "At 30%"] {
+            XCTAssertTrue(app.buttons[choice].waitForExistence(timeout: 3), choice)
+        }
+        app.buttons["At 20%"].tap()
+        waitUntilGone(app.buttons["At 30%"])
+        XCTAssertTrue(menu.label.contains("At 20%") || value(of: menu) == "At 20%", "kept: \(menu.label)")
+        app.buttons["settings.done"].tap()
+        XCTAssertTrue(element("status.title").waitForExistence(timeout: 5))
+        openSettings()
+        XCTAssertTrue(menu.label.contains("At 20%") || value(of: menu) == "At 20%", "kept after closing: \(menu.label)")
     }
 
     func testTheTitleIsNotAButton() {
