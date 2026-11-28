@@ -26,12 +26,22 @@ enum Theme {
     static let dotSpacing: CGFloat = 16
 }
 
-/// The dot grid. It's drawn once, one row of dots taller than the view, and `offset` (0 up to one
-/// spacing) only moves it, so scrolling redraws nothing. The columns are centred, so no dot is
-/// cut at an edge.
+/// The dot grid, one row of dots taller than the view. `offset` (0 up to one spacing) moves it.
+/// The dots themselves are `DotPattern`, which has no inputs, so a scroll changes only the
+/// offset around it. The columns are centred, so no dot is cut at an edge.
 struct DotGrid: View {
     var offset: CGFloat = 0
 
+    var body: some View {
+        DotPattern()
+            .padding(.bottom, -Theme.dotSpacing)
+            .offset(y: -offset)
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+    }
+}
+
+private struct DotPattern: View {
     var body: some View {
         let spacing = Theme.dotSpacing
         Canvas { context, size in
@@ -47,10 +57,6 @@ struct DotGrid: View {
             }
             context.fill(dots, with: .color(Theme.dot))
         }
-        .padding(.bottom, -spacing)
-        .offset(y: -offset)
-        .accessibilityHidden(true)
-        .allowsHitTesting(false)
     }
 }
 
@@ -98,8 +104,8 @@ extension View {
 
 private struct PaperList: ViewModifier {
     let dots: Bool
-    /// Only the scroll position within one dot row: it changes every frame, but `DotGrid` just
-    /// moves by it, so the grid is never redrawn.
+    /// Only the scroll position within one dot row, 0 up to one spacing. It changes while the list
+    /// scrolls, and `DotGrid` moves by it.
     @State private var shift: CGFloat = 0
 
     func body(content: Content) -> some View {
@@ -139,8 +145,9 @@ private struct LiveCard: ViewModifier {
 }
 
 /// A switch drawn in ink. On: an ink track with a paper knob, so the knob stays visible in dark
-/// mode, where ink is light. Off: a secondary edge and knob. Dimmed when disabled. The whole row
-/// is the tap target (at least 44 points tall), and VoiceOver and the UI tests see a plain switch.
+/// mode, where ink is light. Off: a secondary edge and knob. The whole row dims when disabled, like
+/// a system switch. Only the switch takes taps, padded to 44 by 44 points, so tapping the label
+/// does nothing. VoiceOver and the UI tests see a plain switch.
 struct InkToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         InkToggle(configuration: configuration)
@@ -164,12 +171,12 @@ private struct InkToggle: View {
                     .padding(3)
             }
             .frame(width: 46, height: 28)
-            .opacity(isEnabled ? 1 : 0.4)
             .animation(.snappy(duration: 0.2), value: configuration.isOn)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(.rect)
+            .onTapGesture { if isEnabled { configuration.isOn.toggle() } }
         }
-        .frame(minHeight: 44)
-        .contentShape(.rect)
-        .onTapGesture { if isEnabled { configuration.isOn.toggle() } }
+        .opacity(isEnabled ? 1 : 0.4)
         .accessibilityRepresentation {
             // The system style, so this inner Toggle doesn't draw itself with InkToggleStyle again.
             Toggle(isOn: configuration.$isOn) { configuration.label }
