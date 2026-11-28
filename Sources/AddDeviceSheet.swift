@@ -1,9 +1,10 @@
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 
-/// Adding one device. First it asks whether the device has the WireGuard app (#78): with it, three steps
-/// on a line that fills in ink as each one ticks off by itself: join the hotspot,
-/// give it the config, turn its tunnel on. Without it, the proxy's three steps, see `proxySteps`.
+/// Adding one device. First it asks whether an app can go on the device (#78, H4): WireGuard, four steps
+/// on a line that fills in ink as each one ticks off by itself: join the hotspot, install WireGuard,
+/// get the config into it, turn it on (M12). Without an app, the proxy's three steps, see `proxySteps`.
+/// Given a device to replace (M1), it opens on the WireGuard steps for that device's new config.
 /// The WireGuard way follows the code that
 /// was ready when it opened, see `AddDeviceFollow` and `AddDeviceProgress`. The page and the
 /// connected list keep up only while Tether is on screen, so in the background the steps wait, and
@@ -34,14 +35,24 @@ struct AddDeviceSheet: View {
     @State private var path: [AddDeviceWay]
     /// The proxy's last step, from when its screen opened.
     @State private var proxyProgress: ProxyProgress?
+    /// The device this gives a new config to (M1), as it was when the sheet opened. Nil to add one.
+    /// Kept as it was then, like `follow`, so the sheet doesn't change pages if the device goes.
+    @State private var replacing: WireGuardSetup.Peer?
+    /// The Copied capsule at the bottom, after a copy button's tap (L4).
+    @State private var copied = false
 
     enum Kind: Hashable { case phone, computer }
 
-    init(model: Model) {
+    /// `replacing`: the device to give a new config to, from its screen (M1). Its name, limit, pause and
+    /// use stay, see `HotspotSession.openAddWindow(replacing:)`.
+    init(model: Model, replacing: WireGuardSetup.Peer.ID? = nil) {
         self.model = model
-        _follow = State(initialValue: AddDeviceFollow(follows: model.addDeviceFollows, ready: model.wireGuardReady?.id))
+        let replaced = (replacing ?? model.addDeviceReplaces).flatMap { id in model.wireGuardPeers.first { $0.id == id } }
+        _replacing = State(initialValue: replaced)
+        _follow = State(initialValue: AddDeviceFollow(follows: model.addDeviceFollows, ready: model.wireGuardReady?.id, replacing: replaced))
         _kind = State(initialValue: model.addDeviceStartsOnComputer ? .computer : .phone)
-        _path = State(initialValue: model.addDeviceOpensOn.map { [$0] } ?? [])
+        // A new config is for a WireGuard device, so there's no question to come back to.
+        _path = State(initialValue: replaced == nil ? model.addDeviceOpensOn.map { [$0] } ?? [] : [])
     }
 
     private var progress: AddDeviceProgress {
@@ -51,23 +62,29 @@ struct AddDeviceSheet: View {
     var body: some View {
         let progress = progress
         NavigationStack(path: $path) {
-            choice
-                .navigationTitle("Add a device")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { closeButton }
-                .navigationDestination(for: AddDeviceWay.self) { way in
-                    switch way {
-                    case .wireGuard: wireGuardSteps
-                    case .proxy: proxySteps
-                    }
+            Group {
+                if replacing != nil {
+                    wireGuardSteps
+                } else {
+                    choice
+                        .navigationTitle("Add a device")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar { closeButton }
                 }
+            }
+            .navigationDestination(for: AddDeviceWay.self) { way in
+                switch way {
+                case .wireGuard: wireGuardSteps
+                case .proxy: proxySteps
+                }
+            }
         }
         // Links and the system buttons in ink, like the rest of the paper look (#349).
         .tint(Theme.ink)
         .onChange(of: model.wireGuardReady?.id) { _, new in follow.readyChanged(to: new, peers: model.wireGuardPeers) }
         // The demos that open on the sheet open the window the same way.
         .onAppear {
-            model.openAddWindow()
+            model.openAddWindow(replacing: replacing?.id)
             UIApplication.shared.isIdleTimerDisabled = keepsScreenAwake
         }
         .onChange(of: progress) { old, new in
@@ -75,11 +92,12 @@ struct AddDeviceSheet: View {
         }
         .onChange(of: keepsScreenAwake) { _, awake in UIApplication.shared.isIdleTimerDisabled = awake }
         // The first time it connects, the keyboard comes up with the name it got, selected, so
-        // typing replaces it. Its tunnel dropping after that leaves the step as it is.
+        // typing replaces it. Its tunnel dropping after that leaves the step as it is. A device given
+        // a new config keeps its name, so it has no field.
         .onChange(of: progress, initial: true) { _, progress in
             guard naming.device == nil else { return }
             naming.follow(progress)
-            if naming.device != nil {
+            if naming.device != nil, replacing == nil {
                 selectsName = true
                 nameFocused = true
             }
@@ -96,7 +114,10 @@ struct AddDeviceSheet: View {
         }
     }
 
-    private var keepsScreenAwake: Bool { AddDeviceFollow.keepsScreenAwake(on: path.last, progress) }
+    /// A new config opens on the WireGuard steps with nothing on the path.
+    private var keepsScreenAwake: Bool {
+        AddDeviceFollow.keepsScreenAwake(on: replacing == nil ? path.last : .wireGuard, progress)
+    }
 
     /// The same close button as Settings, on every page of the sheet.
     @ToolbarContentBuilder private var closeButton: some ToolbarContent {
@@ -111,26 +132,24 @@ struct AddDeviceSheet: View {
         }
     }
 
-    /// The first question: the WireGuard app, or the proxy for a device without it (#78).
+    /// The first question: an app on the device, WireGuard, or the proxy for a device that can't take
+    /// one (#78). WireGuard is said to be free and recommended up front (H4).
     private var choice: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Does the other device have the WireGuard app?")
+                Text("Can you install an app on the other device?")
                     .font(Self.titleFont)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("add.question")
                 VStack(spacing: 4) {
-                    wayButton(.wireGuard, title: "Yes, use WireGuard", detail: "Everything on it goes through Tether, games and calls too.",
+                    wayButton(.wireGuard, title: "Yes, install WireGuard",
+                              detail: "Recommended. The app is free. Everything on it goes through Tether, games and calls too.",
                               id: "add.way.wireGuard")
-                    wayButton(.proxy, title: "No, use the proxy", detail: "No app needed. Most apps go through Tether, some don't.",
+                    wayButton(.proxy, title: "No, use the proxy",
+                              detail: "No app needed. For a TV, a console or a work laptop. Most apps go through Tether, some don't.",
                               id: "add.way.proxy")
                 }
-                Text("Can't install apps? A TV, a console or a work laptop can use the proxy.")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("add.wayHint")
             }
             .foregroundStyle(Theme.ink)
             .padding(.horizontal, Self.margin)
@@ -169,13 +188,15 @@ struct AddDeviceSheet: View {
     /// The space at the sides of each page.
     private static let margin: CGFloat = 24
 
-    /// The WireGuard way's three steps, as they were before the question.
+    /// The WireGuard way's four steps (M12). Join comes first: the hotspot gives the device the
+    /// internet it needs to install the app.
     private var wireGuardSteps: some View {
         let progress = progress
-        let current = Self.current(progress)
+        let current = progress.current ?? 5
+        let steps = progress.steps
         return ScrollViewReader { scroll in ScrollView {
             VStack(spacing: 24) {
-                stepCount(current <= 3 ? current : nil)
+                stepCount(progress.heldByPause ? nil : progress.current, of: 4)
                 // Above the steps: a device scanned first would only learn after that it can't work.
                 if model.localNetworkDenied && !progress.finished {
                     localNetworkWarning
@@ -184,16 +205,8 @@ struct AddDeviceSheet: View {
                         .background(Self.box)
                         .transition(.opacity)
                 }
-                if progress.device == nil {
-                    // Every step after this assumes WireGuard is on the other device (#169).
-                    Text("Install the free WireGuard app on the other device: App Store, Google Play, or wireguard.com/install.")
-                        .font(.subheadline)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityIdentifier("add.install")
-                        .transition(.opacity)
-                }
                 VStack(spacing: 0) {
-                    StepRow(number: 1, mark: mark(progress.joined, step: 1, current: current), lineDone: progress.joined == .done,
+                    StepRow(number: 1, of: 4, mark: mark(steps[0], step: 1, current: current), lineDone: steps[0] == .done,
                             title: "Join this iPhone's hotspot", id: "add.step1") {
                         if progress.joined == .done {
                             note("The hotspot is on. Join it on the new device too.")
@@ -202,29 +215,41 @@ struct AddDeviceSheet: View {
                                 .font(.subheadline)
                         }
                     }
-                    StepRow(number: 2, mark: mark(progress.config, step: 2, current: current), lineDone: progress.config == .done,
-                            title: "Give it the config", id: "add.step2") {
+                    // Every step after this assumes WireGuard is on the other device (#169).
+                    StepRow(number: 2, of: 4, mark: mark(steps[1], step: 2, current: current), lineDone: steps[1] == .done,
+                            title: "Install WireGuard on it", id: "add.step2") {
+                        Text("The app is free: App Store, Google Play, or wireguard.com/install.")
+                            .font(.subheadline)
+                            .foregroundStyle(steps[1] == .done ? Theme.secondary : Theme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("add.install")
+                    }
+                    // The code shows while step 2 is the current one too: only WireGuard can use it.
+                    StepRow(number: 3, of: 4, mark: mark(steps[2], step: 3, current: current), lineDone: steps[2] == .done,
+                            title: kind == .phone ? "Scan the code with WireGuard" : "Get the file into WireGuard", id: "add.step3") {
                         config(progress)
                     }
-                    StepRow(number: 3, mark: mark(progress.tunnel, step: 3, current: current), lineDone: nil,
-                            title: "Turn its tunnel on", id: "add.step3") {
+                    StepRow(number: 4, of: 4, mark: mark(steps[3], step: 4, current: current), lineDone: nil,
+                            title: "Turn it on in WireGuard", id: "add.step4") {
                         switch (progress.tunnel, progress.device) {
                         case (.done, _): note("Connected")
+                        // Its pause keeps it out, so it won't tick off: the end below says so.
+                        case (_, let device?) where progress.heldByPause: note("\(device.name) is paused, so it can't connect yet.")
                         // It won't tick off by itself: the warning above says why.
                         case _ where model.localNetworkDenied: note("Waiting for Local Network to be on")
                         case _ where model.staleConfigShown:
-                            Text("A device is trying to connect with a config that no longer works. If it's this one, delete its tunnel in WireGuard and give it the config again.")
+                            Text("A device is trying to connect with a config that no longer works. If it's this one, delete its tunnel in WireGuard and scan the code or get the file again.")
                                 .font(.subheadline)
                                 .foregroundStyle(LocalNetworkWarning.text)
                                 .accessibilityIdentifier("add.stale")
                         case (.waiting, let device?): note("Waiting for \(device.name) to connect")
-                        default: note("This ticks off by itself when it connects.")
+                        default: note("In WireGuard, turn on the tunnel you just added. This ticks off by itself when it connects.")
                         }
                     }
                 }
 
-                if naming.device != nil {
-                    connected
+                if showsEnd(progress) {
+                    end(progress)
                         .transition(.opacity)
                 }
             }
@@ -240,6 +265,9 @@ struct AddDeviceSheet: View {
             .animation(motion, value: model.staleConfigShown)
         }
         .paperBackground()
+        // Under Done's inset, not over it. Gone when the page goes: its timer stops with the page.
+        .copiedToast($copied, id: "add.copied")
+        .onDisappear { copied = false }
         // Lowering the keyboard needs a way other than its Done, which saves and closes.
         .scrollDismissesKeyboard(.immediately)
         // iOS scrolls only the text of a focused field above the keyboard, not the box around
@@ -248,7 +276,7 @@ struct AddDeviceSheet: View {
         .safeAreaPadding(.bottom, Self.nameBoxRoom)
         .safeAreaInset(edge: .bottom) {
             // Its own animation: the inset is outside the page's VStack, so Done fades in with Connected.
-            VStack { if naming.device != nil {
+            VStack { if showsEnd(progress) {
                 Button(action: finish) {
                     Text("Done").frame(maxWidth: .infinity)
                 }
@@ -261,13 +289,13 @@ struct AddDeviceSheet: View {
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY.rounded() } action: { doneTop = $0 }
                 .accessibilityIdentifier("add.done")
             } }
-            .animation(motion, value: naming.device)
+            .animation(motion, value: showsEnd(progress))
         }
-        .navigationTitle("Use WireGuard")
+        .navigationTitle(replacing.map { "New config for \($0.name)" } ?? "Use WireGuard")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { closeButton }
         // It connected while another page showed: the keyboard comes up for its name here.
-        .onAppear { if naming.device != nil { nameFocused = true } }
+        .onAppear { if naming.device != nil, replacing == nil { nameFocused = true } }
         // iOS keeps the focused field's text above the keyboard, but on a slow device it can leave
         // the box around it under Done. Whenever the box is seen under Done while typing, or typing
         // starts with it there, it goes above Done (#173). This runs on the measured overlap, not on
@@ -278,55 +306,82 @@ struct AddDeviceSheet: View {
         } // ScrollViewReader
     }
 
-    /// Once it connects: that it did, and its name to type.
-    private var connected: some View {
-        VStack(spacing: 14) {
-            // The live dot says it in colour, and the word says it to everyone.
+    /// The end of the steps, with Done: connected once, or held by a pause it kept, which would
+    /// otherwise wait for ever.
+    private func showsEnd(_ progress: AddDeviceProgress) -> Bool { naming.device != nil || progress.heldByPause }
+
+    /// Once it connects: that it did, and its name to type. A device given a new config keeps its name,
+    /// and its old tunnel is still in WireGuard on it. A paused one ends at Paused instead.
+    private func end(_ progress: AddDeviceProgress) -> some View {
+        let paused = naming.device == nil && progress.heldByPause
+        return VStack(spacing: 14) {
+            // The live dot says it in colour, and the word says it to everyone. Paused has an empty ring.
             HStack(spacing: 12) {
-                Circle()
-                    .fill(Theme.live)
-                    .frame(width: 12, height: 12)
-                    .accessibilityHidden(true)
-                Text("Connected")
+                ZStack {
+                    if paused {
+                        Circle().strokeBorder(Theme.secondary, lineWidth: 1.5)
+                    } else {
+                        Circle().fill(Theme.live)
+                    }
+                }
+                .frame(width: 12, height: 12)
+                .accessibilityHidden(true)
+                Text(paused ? "Paused" : "Connected")
                     .accessibilityIdentifier("add.result")
             }
             .font(Self.titleFont)
-            Text("It uses this iPhone's data now.")
+            Text(paused ? "It has its \(replacing == nil ? "" : "new ")config. It connects once it's resumed: tap it under Devices, then Resume."
+                        : "It uses this iPhone's data now.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.secondary)
                 .multilineTextAlignment(.center)
-            // Above the field, so the keyboard doesn't cover it. The draft stays to try again.
-            if let problem = nameProblem {
-                WarningLabel(problem)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("add.resultDetail")
+            if replacing != nil {
+                Text("Delete the old tunnel in WireGuard on that device.")
                     .font(.subheadline)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("add.nameProblem")
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                // The field says Name to VoiceOver itself.
-                Text("Name")
-                    .font(.subheadline.weight(.semibold))
-                    .accessibilityHidden(true)
-                TextField("Name", text: $naming.draft)
-                    .textInputAutocapitalization(.words)
-                    .autocorrectionDisabled()
-                    .submitLabel(.done)
-                    .focused($nameFocused)
-                    .onSubmit(finish)
-                    // The prompt alone isn't the label once the field holds a name.
-                    .accessibilityLabel("Name")
-                    .accessibilityIdentifier("add.name")
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(Self.box)
-                    // The box, for the tests: the text field's own frame is only the text.
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("add.nameBox")
-                    .id(Self.nameBoxID)
-                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY.rounded() } action: { nameBoxBottom = $0 }
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("add.oldTunnel")
+            } else if !paused {
+                nameField
             }
         }
         .padding(.top, 12)
+    }
+
+    /// The name to type once it connects, with why it couldn't be saved above it.
+    @ViewBuilder private var nameField: some View {
+        // Above the field, so the keyboard doesn't cover it. The draft stays to try again.
+        if let problem = nameProblem {
+            WarningLabel(problem)
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("add.nameProblem")
+        }
+        VStack(alignment: .leading, spacing: 6) {
+            // The field says Name to VoiceOver itself.
+            Text("Name")
+                .font(.subheadline.weight(.semibold))
+                .accessibilityHidden(true)
+            TextField("Name", text: $naming.draft)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+                .submitLabel(.done)
+                .focused($nameFocused)
+                .onSubmit(finish)
+                // The prompt alone isn't the label once the field holds a name.
+                .accessibilityLabel("Name")
+                .accessibilityIdentifier("add.name")
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Self.box)
+                // The box, for the tests: the text field's own frame is only the text.
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("add.nameBox")
+                .id(Self.nameBoxID)
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY.rounded() } action: { nameBoxBottom = $0 }
+        }
     }
 
     /// The name box's padding under the text, and the space between the box and Done.
@@ -365,22 +420,17 @@ struct AddDeviceSheet: View {
     /// A short ease when a step's state changes. Nothing moves with Reduce Motion: it changes at once.
     private var motion: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.3) }
 
-    /// STEP 2 OF 3 above the steps, the digit rolling to the next one. VoiceOver reads the step with
+    /// STEP 2 OF 4 above the steps, the digit rolling to the next one. VoiceOver reads the step with
     /// each title instead, see `StepRow`. Gone once every step is done.
-    @ViewBuilder private func stepCount(_ step: Int?) -> some View {
+    @ViewBuilder private func stepCount(_ step: Int?, of total: Int) -> some View {
         if let step {
-            Text("Step \(step) of 3")
+            Text("Step \(step) of \(total)")
                 .monoCaps()
                 .contentTransition(.numericText(value: Double(step)))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityHidden(true)
                 .transition(.opacity)
         }
-    }
-
-    /// The first step that isn't done, the one the person is on.
-    static func current(_ progress: AddDeviceProgress) -> Int {
-        [progress.joined, progress.config, progress.tunnel].firstIndex { $0 != .done }.map { $0 + 1 } ?? 4
     }
 
     private func mark(_ step: AddDeviceProgress.Step, step number: Int, current: Int) -> StepMark.Look {
@@ -570,7 +620,7 @@ struct AddDeviceSheet: View {
                     .accessibilityValue(address)
                     .accessibilityIdentifier(id)
             }
-            CopyButton(text: address, label: copyLabel)
+            CopyButton(text: address, label: copyLabel, copied: $copied)
                 .accessibilityIdentifier(copyID)
         }
         .padding(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 6))
@@ -580,15 +630,17 @@ struct AddDeviceSheet: View {
     // MARK: The proxy (#78)
 
     /// The proxy's three steps: join the hotspot, set the proxy in the device's Wi-Fi settings, open a
-    /// page. The proxy turns on when this opens, and stays on: its own screen turns it off. The last
-    /// step ticks off once a page goes through it, see `ProxyProgress`.
+    /// page. Opening them turns nothing on (H5): while the proxy is off or paused, step 2 says so, with
+    /// the button that turns it on, and it stays on after: its own screen turns it off. The last step
+    /// ticks off once a page goes through it, see `ProxyProgress`, and the steps end like the WireGuard
+    /// ones, with Done (L3).
     private var proxySteps: some View {
         let working = proxyProgress?.working == true
         let hotspot = model.running
         let blocked = ProxyStatus.blocked(model.proxy)
         return ScrollView {
             VStack(spacing: 24) {
-                stepCount(working ? nil : hotspot ? 2 : 1)
+                stepCount(working ? nil : hotspot ? 2 : 1, of: 3)
                 if model.localNetworkDenied && !working {
                     localNetworkWarning
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -606,7 +658,7 @@ struct AddDeviceSheet: View {
                         .transition(.opacity)
                 }
                 VStack(spacing: 0) {
-                    StepRow(number: 1, mark: hotspot ? .done : .current, lineDone: hotspot,
+                    StepRow(number: 1, of: 3, mark: hotspot ? .done : .current, lineDone: hotspot,
                             title: "Join this iPhone's hotspot", id: "add.proxy.step1") {
                         if hotspot {
                             note("The hotspot is on. Join it on the new device too.")
@@ -615,23 +667,29 @@ struct AddDeviceSheet: View {
                                 .font(.subheadline)
                         }
                     }
-                    StepRow(number: 2, mark: working ? .done : hotspot ? .current : .later, lineDone: working,
+                    StepRow(number: 2, of: 3, mark: working ? .done : hotspot ? .current : .later, lineDone: working,
                             title: "In its Wi-Fi settings, set the proxy", id: "add.proxy.step2") {
-                        proxySettings(ProxyAddress.servers(model.proxyStats.addresses))
-                    }
-                    StepRow(number: 3, mark: working ? .done : hotspot && blocked == nil ? .waiting : .later, lineDone: nil,
-                            title: "Open a page on it", id: "add.proxy.step3") {
-                        Group {
-                            if working {
-                                note("Working")
-                            } else if let blocked {
-                                note(blocked.text)
-                            } else {
-                                note("Waiting for the first page")
-                            }
+                        if let blocked {
+                            proxyBlocked(blocked)
+                                .transition(.opacity)
+                        } else {
+                            proxySettings(ProxyAddress.servers(model.proxyStats.addresses))
+                                .transition(.opacity)
                         }
-                        .accessibilityIdentifier("add.proxy.result")
                     }
+                    StepRow(number: 3, of: 3, mark: working ? .done : hotspot && blocked == nil ? .waiting : .later, lineDone: nil,
+                            title: "Open a page on it", id: "add.proxy.step3") {
+                        // Nothing while it's off or paused: step 2 says why.
+                        if working || blocked == nil {
+                            note(working ? "Working" : "Waiting for the first page")
+                                .accessibilityIdentifier("add.proxy.result")
+                        }
+                    }
+                }
+
+                if working {
+                    proxyEnd
+                        .transition(.opacity)
                 }
             }
             .foregroundStyle(Theme.ink)
@@ -644,18 +702,71 @@ struct AddDeviceSheet: View {
             .animation(motion, value: model.proxyProblem)
         }
         .paperBackground()
+        .copiedToast($copied, id: "add.copied")
+        .onDisappear { copied = false }
+        .safeAreaInset(edge: .bottom) {
+            VStack { if working {
+                Button { dismiss() } label: {
+                    Text("Done").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(InkCapsuleButtonStyle())
+                .padding(.horizontal, Self.margin)
+                .padding(.vertical, 8)
+                .background(Theme.paper)
+                .transition(.opacity)
+                .accessibilityIdentifier("add.proxy.done")
+            } }
+            .animation(motion, value: working)
+        }
         .navigationTitle("Use the proxy")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { closeButton }
-        .onAppear {
-            if !model.proxyOn || model.proxy?.paused?.byPerson == true { model.setProxy(on: true) }
-            proxyProgress = ProxyProgress(at: model.proxyStats)
-        }
+        .onAppear { proxyProgress = ProxyProgress(at: model.proxyStats) }
         .onChange(of: model.proxyStats) { _, stats in
             let was = proxyProgress?.working
             proxyProgress?.follow(stats)
             if was == false, proxyProgress?.working == true { AccessibilityNotification.Announcement("The proxy is working").post() }
         }
+    }
+
+    /// Why the proxy can't carry a page yet, and the button that turns it on or resumes it. At its data
+    /// limit there's no button: Resume is on its screen, where its use shows.
+    private func proxyBlocked(_ blocked: ProxyStatus.Blocked) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(blocked.text)
+                .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("add.proxy.blocked")
+            if let button = blocked.button {
+                Button(button) { model.setProxy(on: true) }
+                    .buttonStyle(InkCapsuleButtonStyle())
+                    .accessibilityIdentifier("add.proxy.turnOn")
+            }
+        }
+    }
+
+    /// Once a page went through: the end of the proxy's steps, like Connected on the WireGuard ones.
+    /// No name: the proxy's devices can't be told apart.
+    private var proxyEnd: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(Theme.live)
+                    .frame(width: 12, height: 12)
+                    .accessibilityHidden(true)
+                Text("Working")
+                    .accessibilityIdentifier("add.proxy.end")
+            }
+            .font(Self.titleFont)
+            Text("It uses this iPhone's data now. Other devices can use the same server and port.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("add.proxy.endDetail")
+        }
+        .padding(.top, 12)
     }
 
     /// Where the proxy is, to type into the device, and where each kind of device takes it. Two servers
@@ -674,6 +785,11 @@ struct AddDeviceSheet: View {
             }
             addressRow(ProxyAddress.port, caption: "Port", name: "Port", copyLabel: "Copy the port", id: "add.proxy.port",
                        copyID: "add.proxy.copyPort")
+            Text(Copy.proxyIsOn)
+                .font(.subheadline)
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("add.proxy.isOn")
             ProxyPlaces()
             // A Mac sets it for its Wi-Fi, not for one network, and Windows for every network.
             Text("A Mac or a Windows PC keeps the proxy on other networks too. Turn it off on that device when you leave this hotspot.")
@@ -691,9 +807,12 @@ struct AddDeviceSheet: View {
     }
 
     /// How long the code and the shared file work, see `AddWindow`. Not under the
-    /// page's address: a download from the page is listed at once, so it works on after that.
+    /// page's address: a download from the page is listed at once, so it works on after that. A new
+    /// config's code ends when the sheet closes, see `HotspotSession.closeAddWindow`.
     private func windowNote(id: String) -> some View {
-        Text("Works while this screen is open, and for \(Int(AddWindow.afterClose / 60)) minutes after you close it or leave Tether.")
+        let minutes = Int(AddWindow.afterClose / 60)
+        return Text(replacing == nil ? "Works while this screen is open, and for \(minutes) minutes after you close it or leave Tether."
+                                     : "Works while this screen is open, and for \(minutes) minutes after you leave Tether. Closing this screen ends it.")
             // Secondary on paper passes the contrast audit, where grey on the old card didn't.
             .font(.subheadline)
             .foregroundStyle(Theme.secondary)
@@ -720,39 +839,47 @@ struct AddressText: View {
 }
 
 /// Copies `text`, and says it worked for a moment: the icon turns into a tick, and VoiceOver hears
-/// "Copied" (#175). A second tap starts the moment again.
+/// "Copied" (#175). A second tap starts the tick again. Given `copied`, the screen's Copied capsule
+/// shows too, see `CopiedToast` (L4), and says it to VoiceOver instead. A tap while it shows still
+/// says it, since the capsule doesn't come again.
 struct CopyButton: View {
     let text: String
     /// What VoiceOver calls it, "Copy the address".
     let label: String
     /// Behind the icon: the card's colour on the sheet's paper, a fill on a list row.
     var fill = Theme.card
-    @State private var copied = false
+    /// The screen's `copiedToast`, nil for none.
+    var copied: Binding<Bool>?
+    @State private var ticked = false
     @State private var reset: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button {
             UIPasteboard.general.string = text
-            copied = true
-            AccessibilityNotification.Announcement("Copied").post()
+            ticked = true
+            if let copied, !copied.wrappedValue {
+                withAnimation(PaperMotion.change(reduceMotion: reduceMotion)) { copied.wrappedValue = true }
+            } else {
+                AccessibilityNotification.Announcement(Copy.copied).post()
+            }
             reset?.cancel()
             reset = Task {
                 guard (try? await Task.sleep(for: .seconds(2))) != nil else { return }
-                copied = false
+                ticked = false
             }
         } label: {
-            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+            Image(systemName: ticked ? "checkmark" : "doc.on.doc")
                 .font(.body.weight(.semibold))
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: 44, height: 44)
                 .background(fill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: copied)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: ticked)
         }
         .buttonStyle(.plain)
         .foregroundStyle(Theme.ink)
         .accessibilityLabel(label)
-        .accessibilityValue(copied ? "Copied" : "")
+        .accessibilityValue(ticked ? Copy.copied : "")
     }
 }
 
@@ -829,6 +956,8 @@ struct InkCapsuleButtonStyle: ButtonStyle {
 /// in ink once this step is done. The last step has no line.
 private struct StepRow<Content: View>: View {
     let number: Int
+    /// How many steps the page has: four on the WireGuard way, three on the proxy's.
+    let total: Int
     let mark: StepMark.Look
     /// Nil for the last step.
     let lineDone: Bool?
@@ -836,6 +965,17 @@ private struct StepRow<Content: View>: View {
     let id: String
     @ViewBuilder let content: Content
     @ScaledMetric(relativeTo: .headline) private var markSize: CGFloat = 30
+
+    init(number: Int, of total: Int, mark: StepMark.Look, lineDone: Bool?, title: String, id: String,
+         @ViewBuilder content: () -> Content) {
+        self.number = number
+        self.total = total
+        self.mark = mark
+        self.lineDone = lineDone
+        self.title = title
+        self.id = id
+        self.content = content()
+    }
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -865,7 +1005,7 @@ private struct StepRow<Content: View>: View {
                 // A step not reached yet is in the secondary colour.
                 .foregroundStyle(mark == .later ? Theme.secondary : Theme.ink)
                 // The step's number and state are read with its title, as one stop (#175).
-                .accessibilityLabel("Step \(number) of 3, \(title)")
+                .accessibilityLabel("Step \(number) of \(total), \(title)")
                 .accessibilityValue(mark.spoken)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier(id)
