@@ -348,6 +348,7 @@ final class HotspotSession {
         countUsage(server.snapshot())
         saveUsage()
         running = false
+        tunnelsUp = [] // or a pause or resume before the next read publishes them again
         startProblem = nil // the next hotspot gets a new try
         showProblem()
         followHostName() // now, not next round: after an idle stop iOS may suspend Tether first
@@ -366,10 +367,12 @@ final class HotspotSession {
         let proxyMoved = proxy?.paused == nil && !blockedWithoutVPN && (idleProxyTraffic.map { $0 != proxyStats.traffic } ?? false)
         idleProxyTraffic = proxyStats.traffic
         // A device paused for a set time with its tunnel up comes back when the time is up (#312), so it
-        // counts as a connected one, and so does the proxy paused for a set time: a paused proxy shows
-        // no data, so who waits for it can't be told. Not one paused by you or at its limit.
-        let waiting = devices.setup.peers.contains { $0.paused?.until != nil && tunnelsUp.contains($0.address) }
-            || devices.setup.proxy?.paused?.until != nil
+        // counts as a connected one, and so does the proxy, on and paused for a set time: a paused proxy
+        // shows no data, so who waits for it can't be told. Not one paused by you or at its limit, nor
+        // a pause past its end that couldn't be saved as ended, which would hold sharing on for ever.
+        let pending = { (pause: WireGuardSetup.Pause?) in pause?.until.map { $0 > now } ?? false }
+        let waiting = devices.setup.peers.contains { pending($0.paused) && tunnelsUp.contains($0.address) }
+            || devices.setup.proxy.map { $0.on && pending($0.paused) } ?? false
         let connected = !connectedNow.isEmpty || proxyMoved || waiting
         guard idleStop.check(sharing: sharing, connected: connected, onScreen: sceneActive, after: after, now: now) else {
             return
@@ -689,7 +692,6 @@ final class HotspotSession {
         // Nobody is connected to a stopped server, and no later round may get to say so: iOS suspends
         // Tether once the sound stops, and the widgets are told right after this.
         watchedConnected = []
-        tunnelsUp = [] // or a pause or resume before the next round publishes them again
         if !wireGuardConnected.isEmpty { wireGuardConnected = [] }
         waitingSince = .distantPast // so the next rounds don't start the sound again, see keepAliveWhileSharing
         keepAlive.stop()
