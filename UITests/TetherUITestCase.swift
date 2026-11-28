@@ -310,7 +310,6 @@ class TetherUITestCase: XCTestCase {
                 if let prefix, !(element?.identifier.hasPrefix(prefix) ?? false) { return true }
                 let systemText = element?.elementType == .staticText && element?.identifier.isEmpty == true
                 let systemStyled = Self.systemStyled.contains(element?.identifier ?? "")
-                    || Self.filledButtons.contains(element?.identifier ?? "")
                     || (element?.elementType == .button && Self.systemButtons.contains(element?.label ?? ""))
                 let offScreen = issue.auditType == .contrast
                     && element.map { !self.app.windows.firstMatch.frame.contains($0.frame) || self.underBar($0) || self.underKeyboard($0) } ?? false
@@ -390,11 +389,8 @@ class TetherUITestCase: XCTestCase {
 
     /// Toolbar buttons, drawn by the system in its own tint.
     static let systemButtons: Set<String> = ["Cancel", "Done"]
-    /// Filled buttons over the bottom bar's material, which the audit's contrast estimate gets just short of.
-    /// Their tests read the real contrast from the pixels instead, see `textContrast`.
-    static let filledButtons: Set<String> = ["intro.continue"]
     /// Tether's elements that use only `.secondary` text, the plain button tint or the system's red for a destructive button.
-    static let systemStyled: Set<String> = ["wireguard.reset", "device.remove", "add.hint", "add.airdrop", "add.router", "notices.footer", "sharing.footer", "vpn.footer", "settings.logFooter", "add.proxy.result", "proxy.off"]
+    static let systemStyled: Set<String> = ["device.remove", "add.hint", "add.airdrop", "add.router", "notices.footer", "sharing.footer", "data.footer", "vpn.footer", "settings.logFooter", "add.proxy.result", "proxy.off"]
 
     /// The audit without contrast, for a screen that is scrolled (see `audit`).
     var structuralAudit: XCUIAccessibilityAuditType {
