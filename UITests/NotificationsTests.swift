@@ -222,9 +222,9 @@ final class NotificationsTests: TetherUITestCase {
                 } else {
                     // The switches are dimmed until iOS allows them, and inactive controls are
                     // exempt from contrast (WCAG 1.4.3): contrast for the permission rows only.
-                    try audit(only: "notices.allow")
-                    try audit(only: "notices.denied")
-                    try audit(only: "notices.settings")
+                    for prefix in scenario == .askNotifications ? ["notices.allow"] : ["notices.denied", "notices.settings"] {
+                        try audit(only: prefix)
+                    }
                     try audit(types: structuralAudit)
                 }
                 app.terminate()
