@@ -373,7 +373,10 @@ final class ProxyTests: XCTestCase {
         XCTAssertEqual(keptOut.label, "Kept out, no VPN")
         XCTAssertEqual(keptOut.title, "Kept out")
         XCTAssertEqual(keptOut.detail(resets: "", period: ""), "No VPN is on, so nothing gets through. It works again when a VPN is on.")
-        XCTAssertEqual(keptOut.look, .keptOut)
+        XCTAssertEqual(keptOut.look, .keptOut(onlyFamily: nil))
+        let oneFamily = ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(open: 2), hotspotOn: true, keptOut: true, onlyFamily: .ipv6)
+        XCTAssertEqual(oneFamily.label, "Kept out, VPN for IPv6 only")
+        XCTAssertEqual(oneFamily.detail(resets: "", period: ""), "Your VPN carries only IPv6, so nothing gets through. It works again when it carries IPv4 too.")
         XCTAssertFalse(keptOut.inUse)
         XCTAssertEqual(ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(), hotspotOn: false, keptOut: true).title, "Waiting for a device on the hotspot")
     }

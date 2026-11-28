@@ -18,10 +18,6 @@ enum Copy {
     /// proxy's screen.
     static let keptOut = "Devices kept out"
     static let keptOutTitle = "Kept out"
-    /// The same on a device's row and the proxy's.
-    static let keptOutRow = "Kept out, no VPN"
-    /// Under "Kept out" on a device's screen and the proxy's.
-    static let keptOutDetail = "No VPN is on, so nothing gets through. It works again when a VPN is on."
     /// The status card's link while devices are kept out, to the Settings sheet.
     static let openTetherSettings = "Open Tether's Settings"
 

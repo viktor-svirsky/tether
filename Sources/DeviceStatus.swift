@@ -6,19 +6,20 @@ enum DeviceStatus: Equatable {
     case connected
     case notConnected
     case paused(WireGuardSetup.Pause)
-    /// Its tunnel is up, but Only share through a VPN keeps it out while no VPN is on (H1). No live
-    /// dot: nothing gets through.
-    case keptOut
+    /// Its tunnel is up, but Only share through a VPN keeps it out while no VPN is on (H1), or while
+    /// the VPN carries only this family. No live dot: nothing gets through.
+    case keptOut(onlyFamily: Interfaces.Family?)
 
     /// Paused comes first: a paused device's tunnel can still be up, but nothing gets through. A
-    /// connected one is kept out while `keptOut`, see `HotspotSession.blockedWithoutVPN`.
-    init(_ peer: WireGuardSetup.Peer, connected: Set<String>, keptOut: Bool) {
+    /// connected one is kept out while `keptOut`, see `HotspotSession.blockedWithoutVPN`. Pass
+    /// `onlyFamily` (`Model.vpnOnlyFamily`) with it, so the words say which VPN is missing.
+    init(_ peer: WireGuardSetup.Peer, connected: Set<String>, keptOut: Bool, onlyFamily: Interfaces.Family? = nil) {
         if let pause = peer.paused {
             self = .paused(pause)
         } else if !connected.contains(peer.address) {
             self = .notConnected
         } else {
-            self = keptOut ? .keptOut : .connected
+            self = keptOut ? .keptOut(onlyFamily: onlyFamily) : .connected
         }
     }
 
@@ -35,7 +36,7 @@ enum DeviceStatus: Equatable {
             }
         case .notConnected: Copy.notConnected
         case let .paused(pause): pause.title(now: now, calendar: calendar, locale: locale)
-        case .keptOut: Copy.keptOutRow
+        case let .keptOut(family): VPNText.keptOutRow(onlyFamily: family)
         }
     }
 
@@ -57,7 +58,7 @@ enum DeviceStatus: Equatable {
     func detail(resets: String, period: String) -> String? {
         switch self {
         case let .paused(pause): pause.detail(resets: resets, period: period)
-        case .keptOut: Copy.keptOutDetail
+        case let .keptOut(family): VPNText.keptOutDetail(onlyFamily: family)
         default: nil
         }
     }
@@ -115,19 +116,20 @@ struct ProxyStatus: Equatable {
         /// It has an address to listen on and can't, so no device gets through.
         case cantListen
         /// Only share through a VPN keeps its devices out while no VPN is on (H1).
-        case keptOut
+        case keptOut(onlyFamily: Interfaces.Family?)
     }
 
     let state: State
 
     /// Paused comes first, as for a device: its devices' connections are closed.
-    init(_ proxy: WireGuardSetup.Proxy, stats: ProxyStats, hotspotOn: Bool, keptOut: Bool) {
+    /// Pass `onlyFamily` (`Model.vpnOnlyFamily`) with `keptOut`, as for a device.
+    init(_ proxy: WireGuardSetup.Proxy, stats: ProxyStats, hotspotOn: Bool, keptOut: Bool, onlyFamily: Interfaces.Family? = nil) {
         if let pause = proxy.paused {
             state = .paused(pause)
         } else if !hotspotOn {
             state = .waiting
         } else if keptOut {
-            state = .keptOut
+            state = .keptOut(onlyFamily: onlyFamily)
         } else if stats.cantListen {
             state = .cantListen
         } else {
@@ -139,7 +141,7 @@ struct ProxyStatus: Equatable {
     func label(now: Date = Date(), calendar: Calendar = .autoupdatingCurrent, locale: Locale = .current) -> String {
         switch state {
         case let .paused(pause): DeviceStatus.paused(pause).label(now: now, calendar: calendar, locale: locale)
-        case .keptOut: Copy.keptOutRow
+        case let .keptOut(family): VPNText.keptOutRow(onlyFamily: family)
         case .cantListen: "Not listening"
         // Home's row says what the proxy does, not the hotspot: the status card says that.
         case .waiting: Copy.notInUse
@@ -169,7 +171,7 @@ struct ProxyStatus: Equatable {
         switch state {
         case let .paused(pause): .paused(pause)
         case let .open(n) where n > 0: .connected
-        case .keptOut: .keptOut
+        case let .keptOut(family): .keptOut(onlyFamily: family)
         default: .notConnected
         }
     }
@@ -222,7 +224,7 @@ struct ProxyStatus: Equatable {
         case .paused(.until): "It works again then, or when you resume it."
         case .paused(.atLimit): "It used its data \(period). It works again on \(resets), or when you resume it."
         case .cantListen: "Devices on it can't load anything. Tether tries again by itself."
-        case .keptOut: Copy.keptOutDetail
+        case let .keptOut(family): VPNText.keptOutDetail(onlyFamily: family)
         default: nil
         }
     }

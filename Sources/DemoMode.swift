@@ -258,7 +258,7 @@ struct DemoState {
         let at = DemoScenario.now.addingTimeInterval(-2 * 3600)
         return switch scenario {
         case .stoppedIdle, .manyWarnings: LastStop(at: at, reason: .idle(.thirtyMinutes))
-        case .stoppedBattery: LastStop(at: at, reason: .lowBattery(.twenty))
+        case .stoppedBattery: LastStop(at: at, reason: .lowBattery(percent: 19))
         default: nil
         }
     }
