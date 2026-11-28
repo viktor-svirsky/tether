@@ -13,7 +13,7 @@ final class SettingsHelpTests: TetherUITestCase {
         XCTAssertEqual(share.elementType, .button)
         let help = reveal(element("settings.help"))
         XCTAssertLessThan(share.frame.maxY, help.frame.minY + 1, "Share the log is above Help and source code")
-        XCTAssertEqual(label(of: "settings.logFooter"), Self.footer)
+        XCTAssertEqual(showHelp("help", "settings.logFooter").label, Self.footer)
         XCTAssertTrue(sectionHeader("Help").exists)
     }
 
@@ -35,7 +35,7 @@ final class SettingsHelpTests: TetherUITestCase {
             XCUIDevice.shared.appearance = appearance
             launch(.sharing)
             openSettings()
-            reveal(element("settings.logFooter"))
+            reveal(showHelp("help", "settings.logFooter"))
             // Only the Help section: scrolled down to it, the list runs under the bar, and the system's
             // Done button over it is no part of this.
             try audit(only: "settings.log")
