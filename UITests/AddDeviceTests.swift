@@ -374,6 +374,9 @@ final class AddDeviceTests: TetherUITestCase {
         XCTAssertTrue(app.navigationBars["New config for Windows PC"].exists)
         XCTAssertEqual(label(of: "add.step3"), "Step 3 of 4, Scan the code with WireGuard")
         XCTAssertTrue(element("add.qr").exists, "a new code")
+        // Closing kills a new config's code: claimed later, it would be a second device.
+        XCTAssertEqual(reveal(element("add.codeWindow")).label,
+                       "Works while this screen is open, and for 10 minutes after you leave Tether. Closing this screen ends it.")
         assertNowhere(element("add.question"), element("add.result"), element("add.name"), element("add.done"))
         XCTAssertTrue(text(containing: "This ticks off by itself").exists, "the old config connecting is not the new one")
         try audit(only: "add.")

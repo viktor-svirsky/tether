@@ -807,9 +807,12 @@ struct AddDeviceSheet: View {
     }
 
     /// How long the code and the shared file work, see `AddWindow`. Not under the
-    /// page's address: a download from the page is listed at once, so it works on after that.
+    /// page's address: a download from the page is listed at once, so it works on after that. A new
+    /// config's code ends when the sheet closes, see `HotspotSession.closeAddWindow`.
     private func windowNote(id: String) -> some View {
-        Text("Works while this screen is open, and for \(Int(AddWindow.afterClose / 60)) minutes after you close it or leave Tether.")
+        let minutes = Int(AddWindow.afterClose / 60)
+        return Text(replacing == nil ? "Works while this screen is open, and for \(minutes) minutes after you close it or leave Tether."
+                                     : "Works while this screen is open, and for \(minutes) minutes after you leave Tether. Closing this screen ends it.")
             // Secondary on paper passes the contrast audit, where grey on the old card didn't.
             .font(.subheadline)
             .foregroundStyle(Theme.secondary)
