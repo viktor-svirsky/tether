@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 /// One address's answer to one TCP knock, see `HotspotKnocker` (#109).
 struct HotspotKnock: Equatable, Sendable {
@@ -18,7 +19,7 @@ struct HotspotKnock: Equatable, Sendable {
 /// The devices on the hotspot that don't use Tether (#109). iOS hides the ARP table from apps, so
 /// what's there comes from a TCP knock on each client address every `every` seconds. Each address that
 /// answers is listed, unless a device with a recent WireGuard handshake or a recent proxy request
-/// comes from it. Foundation only, so `swift test` covers it.
+/// comes from it. No sockets here, so `swift test` covers it.
 struct HotspotNeighbors {
     /// The hotspot's clients: 172.20.10.2 to .14 of its /28, without the iPhone's own 172.20.10.1.
     static let addresses = (2...14).map { "172.20.10.\($0)" }
@@ -52,13 +53,15 @@ struct HotspotNeighbors {
 
     /// The addresses on the hotspot that aren't using Tether, in address order. `wireGuard` is the
     /// server's peers as `HotspotSession` has them, and `proxyClients` the address of each device the
-    /// proxy served with when it last served it.
+    /// proxy served with when it last served it. Empty while a device uses Tether over IPv6 (#324): the
+    /// knock finds 172.20.10.x addresses, and nothing says which of them that device is.
     func notUsingTether(wireGuard: [String: PeerStats], proxyClients: [String: Date], now: Date) -> [String] {
         func recent(_ at: Date?) -> Bool { at.map { now.timeIntervalSince($0) < Self.usingWithin } ?? false }
         var using = Set(proxyClients.filter { recent($0.value) }.keys)
         for stats in wireGuard.values where recent(stats.lastHandshake) {
             if let address = PeerStats.address(stats.endpoint) { using.insert(address) }
         }
+        if using.contains(where: { IPv6Address($0) != nil }) { return [] }
         return lastAnswer
             .filter { now.timeIntervalSince($0.value) < Self.holdFor && !using.contains($0.key) }
             .keys
