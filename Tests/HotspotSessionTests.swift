@@ -1975,6 +1975,44 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertFalse(session.startRefusedAtLowBattery)
     }
 
+    /// Siri or Control Center over a visible, sharing Tether makes it inactive, not backgrounded:
+    /// Start Tether isn't refused, since nothing would stop it.
+    func testStartTetherIsNotRefusedWhileInactiveOnScreen() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 10, charging: false)
+        makeSession(sceneActive: true)
+        address = hotspot
+        session.watch()
+        session.leftScreen()
+        XCTAssertFalse(session.startRefusedAtLowBattery)
+        session.enteredBackground()
+        XCTAssertTrue(session.startRefusedAtLowBattery, "in the background it is")
+    }
+
+    /// A launch straight into the background, by a Shortcut or a widget, already counts as the
+    /// background: the first round below the level stops.
+    func testABackgroundLaunchStopsOnTheFirstRound() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 15, charging: false)
+        shareInTheBackground()
+        XCTAssertFalse(session.sharing)
+        XCTAssertEqual(session.idleStopped?.lowBattery, .twenty)
+    }
+
+    /// Coming back to the foreground ends the background before Tether is active again, so a round
+    /// then doesn't stop.
+    func testEnteringTheForegroundStopsNothing() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 25, charging: false)
+        shareInTheBackground()
+        battery.percent = 15
+        session.enteringForeground()
+        now = minutes(1)
+        session.watch()
+        XCTAssertTrue(session.sharing)
+        XCTAssertNil(session.idleStopped)
+    }
+
     /// Start Tether would share and the next round stop again, so it doesn't start (#311).
     func testStartTetherIsRefusedBelowTheLevel() {
         batteryLevel = .twenty
