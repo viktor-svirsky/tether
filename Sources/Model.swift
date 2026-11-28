@@ -402,6 +402,21 @@ final class Model: ObservableObject {
         session.shortcutState()
     }
 
+    /// See `HotspotSession.shortcutDevices`.
+    func shortcutDevices() -> [ShortcutReply.Device]? {
+        session.shortcutDevices()
+    }
+
+    /// See `HotspotSession.shortcutPause`.
+    func shortcutPause(_ id: WireGuardSetup.Peer.ID, named name: String, for length: WireGuardSetup.PauseLength) -> String {
+        session.shortcutPause(id, named: name, for: length)
+    }
+
+    /// See `HotspotSession.shortcutResume`.
+    func shortcutResume(_ id: WireGuardSetup.Peer.ID, named name: String) -> String {
+        session.shortcutResume(id, named: name)
+    }
+
     /// See `HotspotSession.stopNow`. Only from the background: with Control Center over the open app
     /// Tether is inactive, not gone, and closing Control Center would start it again.
     @discardableResult

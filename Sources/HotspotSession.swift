@@ -619,6 +619,38 @@ final class HotspotSession {
                                    keptAlive: !running || keepAlive.sounding, blockedWithoutVPN: blockedWithoutVPN)
     }
 
+    /// Every saved device for List Tether Devices (#310), connected by the server's latest read,
+    /// so a launch in the background for the action says it right too, and none while not sharing.
+    /// Nil while the saved setup can't be read, before the first unlock after a restart, say.
+    func shortcutDevices() -> [ShortcutReply.Device]? {
+        guard devices.loaded else { return nil }
+        let connected = running && server.running ? unpaused(server.snapshot().connected) : []
+        return devices.setup.peers.map {
+            ShortcutReply.Device(id: $0.id, name: $0.name, status: DeviceStatus($0, connected: connected).label(now: now(), calendar: calendar))
+        }
+    }
+
+    /// Pause Tether Device (#310): the pause the Pause menu makes, and what to say. A device already
+    /// paused takes the new length, whatever paused it: one at its limit is paused at it again at the
+    /// end, see `checkLimits`. `name` is the shortcut's, for a device removed since it was picked.
+    func shortcutPause(_ id: WireGuardSetup.Peer.ID, named name: String, for length: WireGuardSetup.PauseLength) -> String {
+        guard devices.loaded else { return ShortcutReply.unreadable }
+        guard let peer = devices.setup.peers.first(where: { $0.id == id }) else { return ShortcutReply.gone(name) }
+        let pause = length.pause(from: now(), calendar: calendar)
+        guard self.pause(id, pause, problem: "The device couldn't be paused.") else { return ShortcutReply.notSaved }
+        let until = pause.until.map { Format.until($0, now: now(), calendar: calendar) }
+        return ShortcutReply.paused(peer.name, until: until, wasPaused: peer.paused != nil)
+    }
+
+    /// Resume Tether Device (#310): what Resume on its screen does, and what to say.
+    func shortcutResume(_ id: WireGuardSetup.Peer.ID, named name: String) -> String {
+        guard devices.loaded else { return ShortcutReply.unreadable }
+        guard let peer = devices.setup.peers.first(where: { $0.id == id }) else { return ShortcutReply.gone(name) }
+        guard peer.paused != nil else { return ShortcutReply.notPaused(peer.name) }
+        resumeWireGuardDevice(id)
+        return devices.setup.pause(of: id) == nil ? ShortcutReply.resumed(peer.name) : ShortcutReply.notSaved
+    }
+
     /// On screen, or the sound sounds while the hotspot is on: without it iOS suspends Tether soon,
     /// so it isn't sharing for long (#164), and the widgets mustn't say it is.
     var staysRunning: Bool { !running || heldAwake }
