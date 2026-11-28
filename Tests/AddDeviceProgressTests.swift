@@ -36,7 +36,7 @@ final class AddDeviceProgressTests: XCTestCase {
         XCTAssertTrue(p.finished)
     }
 
-    /// A scanned code is listed only by its first handshake, so the last two steps tick together.
+    /// A scanned code is listed only by its first handshake, so the last three steps tick together.
     func testAScanTicksEverythingAtItsFirstHandshake() {
         let p = progress(peers: [laptop], connected: [laptop.address], hotspotOn: false)
         XCTAssertEqual([p.joined, p.config, p.tunnel], [.done, .done, .done], "a connection means it joined")
@@ -143,12 +143,42 @@ final class AddDeviceProgressTests: XCTestCase {
         XCTAssertNil(naming.change(in: [ipad]), "removed meanwhile")
     }
 
+    // MARK: the four steps (M12)
+
+    /// Tether can't see WireGuard installed, so step 2 ticks with step 3: only WireGuard can use the config.
+    func testInstallingWireGuardTicksWithTheConfig() {
+        XCTAssertEqual(progress().steps, [.toDo, .toDo, .toDo, .toDo])
+        XCTAssertEqual(progress(hotspotOn: true).steps, [.done, .toDo, .toDo, .toDo])
+        XCTAssertEqual(progress(peers: [laptop], hotspotOn: true).steps, [.done, .done, .done, .waiting])
+        XCTAssertEqual(progress(peers: [laptop], connected: [laptop.address], hotspotOn: true).steps, [.done, .done, .done, .done])
+    }
+
+    /// The step the person is on, so the count goes from "Step 2 of 4" to "Step 4 of 4", and none once it connects.
+    func testTheCurrentStepIsTheFirstNotDone() {
+        XCTAssertEqual(progress().current, 1)
+        XCTAssertEqual(progress(hotspotOn: true).current, 2)
+        XCTAssertEqual(progress(peers: [laptop], hotspotOn: true).current, 4)
+        XCTAssertNil(progress(peers: [laptop], connected: [laptop.address], hotspotOn: true).current)
+    }
+
+    /// A paused device that got its config can't connect until it's resumed, so the sheet ends there
+    /// instead of waiting for ever (M1: a device given a new config keeps its pause).
+    func testAPausedDeviceWithItsConfigIsHeldByItsPause() {
+        var paused = laptop
+        paused.paused = .byYou
+        XCTAssertTrue(progress(peers: [paused], hotspotOn: true).heldByPause)
+        XCTAssertFalse(progress(peers: [laptop], hotspotOn: true).heldByPause, "not paused")
+        XCTAssertFalse(progress(hotspotOn: true).heldByPause, "not listed yet")
+        XCTAssertFalse(progress(peers: [paused], connected: [paused.address], hotspotOn: true).heldByPause, "it connected")
+    }
+
     // MARK: what VoiceOver hears (#175)
 
     /// The steps tick off by themselves, so VoiceOver says so without the person moving focus.
     func testEachStepThatTicksOffIsAnnounced() {
         XCTAssertEqual(progress(hotspotOn: true).announcement(after: progress()), "Step 1 done")
-        XCTAssertEqual(progress(peers: [laptop], hotspotOn: true).announcement(after: progress(hotspotOn: true)), "Step 2 done")
+        // Installing WireGuard (step 2) ticks with getting the config into it (step 3), see `steps`.
+        XCTAssertEqual(progress(peers: [laptop], hotspotOn: true).announcement(after: progress(hotspotOn: true)), "Steps 2 and 3 done")
     }
 
     func testTheConnectionIsAnnouncedByTheDevicesName() {
@@ -156,14 +186,23 @@ final class AddDeviceProgressTests: XCTestCase {
         XCTAssertEqual(progress(peers: [laptop], connected: [laptop.address], hotspotOn: true).announcement(after: waiting), "Device is connected")
     }
 
-    /// A scan ticks the last two steps at once: the connection says it all.
+    /// A scan ticks the last three steps at once: the connection says it all.
     func testAScanIsAnnouncedOnceAsConnected() {
         let scanned = progress(peers: [laptop], connected: [laptop.address], hotspotOn: true)
         XCTAssertEqual(scanned.announcement(after: progress(hotspotOn: true)), "Device is connected")
     }
 
-    func testTwoStepsAtOnceAreAnnouncedTogether() {
-        XCTAssertEqual(progress(peers: [laptop], hotspotOn: true).announcement(after: progress()), "Steps 1 and 2 done")
+    /// A paused device that gets its config ends the sheet: that's what VoiceOver hears.
+    func testAPausedDeviceIsAnnouncedAsPaused() {
+        var paused = laptop
+        paused.paused = .byYou
+        XCTAssertEqual(progress(peers: [paused], hotspotOn: true).announcement(after: progress(hotspotOn: true)),
+                       "Device is paused, so it can't connect yet")
+        XCTAssertNil(progress(peers: [paused], hotspotOn: true).announcement(after: progress(peers: [paused], hotspotOn: true)))
+    }
+
+    func testStepsAtOnceAreAnnouncedTogether() {
+        XCTAssertEqual(progress(peers: [laptop], hotspotOn: true).announcement(after: progress()), "Steps 1, 2 and 3 done")
     }
 
     /// Nothing ticked off: a step going back, the speeds redrawing, or no change at all.
