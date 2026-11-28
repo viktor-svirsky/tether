@@ -97,6 +97,30 @@ final class HotspotNeighborsTests: XCTestCase {
         XCTAssertEqual(listed(n, at: 180, proxy: ["172.20.10.4": seconds(0)]), ["172.20.10.4"])
     }
 
+    /// On a carrier that gives the iPhone IPv6 only, a device can reach WireGuard or the proxy over
+    /// IPv6 (#324). Nothing ties that address to the 172.20.10.x one the knock found, so the list
+    /// can't tell who it is and says nothing rather than list a device that is using Tether.
+    func testAnIPv6WireGuardDeviceEmptiesTheList() {
+        var n = HotspotNeighbors()
+        n.record(knock(["172.20.10.2": .open, "172.20.10.3": .refused]), at: seconds(0))
+        let peers = ["10.7.0.2": peer(from: "[2607:fb91:88a2:e822::5]:51820", handshakeAt: 0)]
+        XCTAssertEqual(listed(n, at: 0, wireGuard: peers), [])
+    }
+
+    func testAnIPv6ProxyClientEmptiesTheList() {
+        var n = HotspotNeighbors()
+        n.record(knock(["172.20.10.2": .open]), at: seconds(0))
+        XCTAssertEqual(listed(n, at: 0, proxy: ["2607:fb91:88a2:e822::5": seconds(0)]), [])
+    }
+
+    /// Once the IPv6 device's handshake is old, it no longer counts, and the list comes back.
+    func testAnOldIPv6HandshakeLeavesTheListAlone() {
+        var n = HotspotNeighbors()
+        n.record(knock(["172.20.10.2": .open]), at: seconds(170))
+        let peers = ["10.7.0.2": peer(from: "[2607:fb91:88a2:e822::5]:51820", handshakeAt: 0)]
+        XCTAssertEqual(listed(n, at: 180, wireGuard: peers), ["172.20.10.2"])
+    }
+
     /// Sorted by the address as a number, so .10 comes after .9.
     func testTheListIsInAddressOrder() {
         var n = HotspotNeighbors()
