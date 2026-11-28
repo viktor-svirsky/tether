@@ -420,6 +420,15 @@ final class HotspotSession {
     /// action has had no round.
     var startRefusedAtLowBattery: Bool { inBackground && readBelowBatteryStop() != nil }
 
+    /// Start Tether, refused as `startRefusedAtLowBattery` says. A session still sharing, the battery
+    /// gone below the level since the last round, stops now as that round would, so the action's
+    /// reply that sharing stopped is true. Says whether it was refused.
+    func refuseStartAtLowBattery() -> Bool {
+        guard startRefusedAtLowBattery else { return false }
+        stopAtLowBattery()
+        return true
+    }
+
     /// Plays the silent sound while the hotspot is on, and for a while after it goes, see
     /// `KeepAlivePolicy`. Once it stops, iOS suspends Tether, and it starts again when opened.
     private func keepAliveWhileSharing(hotspot: Bool) {

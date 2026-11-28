@@ -417,12 +417,16 @@ final class Model: ObservableObject {
         return session.wake()
     }
 
-    /// See `HotspotSession.startRefusedAtLowBattery`.
-    var startRefusedAtLowBattery: Bool {
+    /// See `HotspotSession.refuseStartAtLowBattery`. A stop it makes is told and shown now, as a
+    /// round's is: iOS can suspend Tether before the next round.
+    func refuseStartAtLowBattery() -> Bool {
         #if DEBUG
         if demo != nil { return false }
         #endif
-        return session.startRefusedAtLowBattery
+        guard session.refuseStartAtLowBattery() else { return false }
+        publishWidgets()
+        _ = notify()
+        return true
     }
 
     func shortcutState() -> ShortcutReply.State {

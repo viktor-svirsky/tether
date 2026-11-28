@@ -2013,6 +2013,23 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertNil(session.idleStopped)
     }
 
+    /// Already sharing in the background when the battery drops between rounds: the refusal stops it
+    /// now, not at the next round, so Start Tether's reply that sharing stopped is true.
+    func testARefusedStartStopsASessionStillSharing() {
+        batteryLevel = .twenty
+        battery = LowBatteryStop.Battery(percent: 25, charging: false)
+        shareInTheBackground()
+        XCTAssertTrue(session.sharing)
+        battery.percent = 15
+        XCTAssertTrue(session.refuseStartAtLowBattery())
+        XCTAssertFalse(session.sharing)
+        XCTAssertFalse(server.running)
+        XCTAssertFalse(sound.playing)
+        XCTAssertEqual(session.idleStopped?.lowBattery, .twenty)
+        battery.charging = true
+        XCTAssertFalse(session.refuseStartAtLowBattery(), "charging, it isn't refused")
+    }
+
     /// Start Tether would share and the next round stop again, so it doesn't start (#311).
     func testStartTetherIsRefusedBelowTheLevel() {
         batteryLevel = .twenty
