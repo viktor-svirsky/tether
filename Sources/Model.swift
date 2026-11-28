@@ -188,12 +188,16 @@ final class Model: ObservableObject {
 
     /// The log to share, as a file: what this build, iOS and iPhone are, then the lines.
     nonisolated static func writeLog() throws -> URL {
+        try debugLog.writeExport(header: logHeader, to: FileManager.default.temporaryDirectory)
+    }
+
+    /// The log's first line, also on top of Diagnostics' Copy all: this build, iOS and the iPhone's model.
+    nonisolated static var logHeader: String {
         let os = ProcessInfo.processInfo.operatingSystemVersion
         var system = utsname()
         uname(&system)
         let model = withUnsafeBytes(of: system.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
-        let header = "Tether \(version), iOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion), \(model)"
-        return try debugLog.writeExport(header: header, to: FileManager.default.temporaryDirectory)
+        return "Tether \(version), iOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion), \(model)"
     }
 
     #if DEBUG

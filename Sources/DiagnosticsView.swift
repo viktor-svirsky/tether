@@ -16,7 +16,7 @@ struct DiagnosticsView: View {
             List {
                 PaperTitle("Diagnostics")
                 Section {
-                    Button { copy(Diagnostics.all(sections, header: Self.header)) } label: {
+                    Button { copy(Diagnostics.all(sections, header: Model.logHeader)) } label: {
                         DashLabel("Copy all")
                     }
                     .foregroundStyle(Theme.ink)
@@ -49,15 +49,6 @@ struct DiagnosticsView: View {
         }
         .copiedToast($copied, id: "diagnostics.copied")
         .paperNavigationBar("Diagnostics")
-    }
-
-    /// The log's first line: this build, iOS and the iPhone's model, as `Model.writeLog` writes it.
-    private static var header: String {
-        let os = ProcessInfo.processInfo.operatingSystemVersion
-        var system = utsname()
-        uname(&system)
-        let machine = withUnsafeBytes(of: system.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
-        return "Tether \(Model.version), iOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion), \(machine)"
     }
 
     private func copy(_ text: String) {
