@@ -158,21 +158,29 @@ final class ProxyTests: TetherUITestCase {
         XCTAssertEqual(label(of: "status.headline"), "1 device connected and the proxy in use")
     }
 
+    /// Built like a device's screen (M4): Pause after the status, the data card with last month and
+    /// the Data limit, then where it is.
     func testTheProxysScreenShowsWhatADevicesDoes() {
         launch(.proxy)
         openProxy()
         XCTAssertEqual(label(of: "proxy.status"), "Status, 2 connections open")
-        XCTAssertEqual(label(of: "proxy.thisMonth"), "This month, 85 MB")
+        let pause = reveal(element("proxy.pause"))
+        XCTAssertEqual(pause.label, "Pause")
+        XCTAssertGreaterThan(pause.frame.minY, element("proxy.status").frame.maxY, "under the status")
+        XCTAssertTrue(app.staticTexts[Copy.proxyPauseFooter].exists)
+        XCTAssertTrue(sectionHeader("Data through Tether").exists)
+        XCTAssertEqual(label(of: "proxy.thisMonth"), "85 MB this month, 80 MB down, 5 MB up")
+        let lastMonth = reveal(element("proxy.lastMonth"))
+        XCTAssertTrue(lastMonth.label.contains("Last month") && lastMonth.label.contains("0 bytes"), lastMonth.label)
+        let limit = reveal(app.buttons["proxy.limit"].firstMatch)
+        XCTAssertTrue(limit.label.contains(Copy.dataLimit) && (limit.label.contains("None") || value(of: limit) == "None"), limit.label)
         XCTAssertEqual(reveal(element("proxy.server")).value as? String, "172.20.10.1")
         XCTAssertEqual(element("proxy.server.copy").label, "Copy the server")
         XCTAssertEqual(reveal(element("proxy.port")).value as? String, "8118")
         XCTAssertEqual(element("proxy.port.copy").label, "Copy the port")
-        XCTAssertEqual(value(of: reveal(app.switches["proxy.pause"].firstMatch)), "0")
-        let limit = reveal(app.buttons["proxy.limit"].firstMatch)
-        XCTAssertTrue(limit.label.contains("Data limit") && (limit.label.contains("None") || value(of: limit) == "None"), limit.label)
         XCTAssertEqual(reveal(element("proxy.note")).label, note)
         XCTAssertEqual(reveal(element("proxy.off")).label, "Turn off the proxy")
-        assertNowhere(element("proxy.serverIPv6"), element("proxy.problem"), element("proxy.statusDetail"))
+        assertNowhere(element("proxy.serverIPv6"), element("proxy.problem"), element("proxy.statusDetail"), element("proxy.resume"))
     }
 
     func testOnAnIPv6HotspotItsScreenShowsBothServers() {
@@ -184,36 +192,59 @@ final class ProxyTests: TetherUITestCase {
         XCTAssertEqual(ipv6.value as? String, "2001:db8:9e74:4eaa:459:5cd0:7ec7:f792")
     }
 
-    /// Taps the switch itself, at the row's right end: the paper look's ink switch (#349) takes taps
-    /// only there, not on its label.
-    private func tapSwitch(_ row: XCUIElement) {
-        row.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: -25, dy: 0)).tap()
+    /// Copy says so the one way every screen does (L4): "Copied" at the bottom for a moment.
+    func testCopyingTheServerSaysCopiedAtTheBottom() {
+        launch(.proxy, arguments: ["-diagnostics.copiedShownFor", "10"])
+        openProxy()
+        let button = reveal(element("proxy.server.copy"))
+        button.tap()
+        // The button's tick lasts 2 s, so it's read first.
+        XCTAssertEqual(value(of: button), "Copied", "the button keeps its tick")
+        let copied = element("proxy.copied")
+        XCTAssertTrue(copied.waitForExistence(timeout: 5))
+        XCTAssertEqual(copied.label, Copy.copied)
+    }
+
+    /// Pause, then how long from its menu, as for a device (M4).
+    private func pause(for length: String) {
+        let pause = reveal(element("proxy.pause"))
+        waitUntilStill(pause)
+        pause.tap()
+        XCTAssertTrue(app.buttons[length].waitForExistence(timeout: 5), length)
+        app.buttons[length].tap()
+        waitUntilGone(app.buttons[length])
     }
 
     func testPauseStopsItAndTheRowSaysSo() {
         launch(.proxy)
         openProxy()
-        let pause = reveal(app.switches["proxy.pause"].firstMatch)
-        tapSwitch(pause)
-        XCTAssertTrue(app.buttons[Copy.untilResumed].waitForExistence(timeout: 5), "how long, as for a device")
-        app.buttons[Copy.untilResumed].tap()
-        waitUntilGone(app.buttons[Copy.untilResumed])
-        XCTAssertEqual(value(of: pause), "1")
+        let place = reveal(element("proxy.pause")).frame.minY
+        pause(for: Copy.untilResumed)
         XCTAssertEqual(label(of: "proxy.status"), "Status, Paused")
         XCTAssertEqual(label(of: "proxy.statusDetail"), "Nothing goes through it until you resume it.")
+        let resume = element("proxy.resume")
+        XCTAssertTrue(resume.waitForExistence(timeout: 5))
+        XCTAssertEqual(resume.label, "Resume")
+        XCTAssertEqual(resume.frame.minY, place, accuracy: 30, "the same spot")
+        assertNowhere(element("proxy.pause"), app.staticTexts[Copy.proxyPauseFooter])
         goBack(to: "Tether")
         XCTAssertTrue(reveal(element("proxy.row")).label.contains("Paused"))
+    }
+
+    func testResumeLetsItWorkAgain() {
+        launch(.proxy)
+        openProxy()
+        pause(for: Copy.untilResumed)
+        reveal(element("proxy.resume")).tap()
+        waitUntilGone(element("proxy.resume"))
+        XCTAssertEqual(label(of: "proxy.status"), "Status, 2 connections open")
+        XCTAssertTrue(reveal(element("proxy.pause")).exists)
     }
 
     func testAPauseForATimeSaysUntilWhen() {
         launch(.proxy)
         openProxy()
-        let pause = reveal(app.switches["proxy.pause"].firstMatch)
-        tapSwitch(pause)
-        XCTAssertTrue(app.buttons["For 1 hour"].waitForExistence(timeout: 5))
-        app.buttons["For 1 hour"].tap()
-        waitUntilGone(app.buttons["For 1 hour"])
-        XCTAssertEqual(value(of: pause), "1")
+        pause(for: "For 1 hour")
         XCTAssertTrue(label(of: "proxy.status").hasPrefix("Status, Paused until "), label(of: "proxy.status"))
         XCTAssertEqual(label(of: "proxy.statusDetail"), "It works again then, or when you resume it.")
         goBack(to: "Tether")
@@ -226,13 +257,50 @@ final class ProxyTests: TetherUITestCase {
         reveal(app.buttons["proxy.limit"].firstMatch).tap()
         XCTAssertTrue(app.buttons["5 GB"].waitForExistence(timeout: 3))
         app.buttons["5 GB"].tap()
-        XCTAssertEqual(label(of: "proxy.thisMonth"), "This month, 85 MB of 5 GB")
+        XCTAssertEqual(label(of: "proxy.thisMonth"), "85 MB of 5 GB this month, 80 MB down, 5 MB up, Resets on November 1")
+    }
+
+    /// A typed limit under its 85 MB would pause it at once, so it asks first (L1).
+    func testALimitUnderWhatItUsedAsksFirst() {
+        launch(.proxy)
+        openProxy()
+        reveal(app.buttons["proxy.limit"].firstMatch).tap()
+        XCTAssertTrue(app.buttons["Other amount"].waitForExistence(timeout: 3))
+        app.buttons["Other amount"].tap()
+        let typing = app.alerts["Data limit"]
+        XCTAssertTrue(typing.waitForExistence(timeout: 3))
+        let amount = typing.textFields.firstMatch
+        amount.tap()
+        amount.typeText("0.05")
+        typing.buttons["Set"].tap()
+        let alert = app.alerts["Proxy already used 85 MB"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        XCTAssertTrue(alert.staticTexts["With a 50 MB limit it pauses now, until the count resets on November 1."].exists)
+        alert.buttons["Set the limit and pause it"].tap()
+        let paused = expectation(for: NSPredicate(format: "label == 'Status, Paused at its limit'"), evaluatedWith: element("proxy.status"))
+        XCTAssertEqual(XCTWaiter().wait(for: [paused], timeout: 10), .completed, label(of: "proxy.status"))
+        XCTAssertTrue(reveal(element("proxy.resume")).exists)
+    }
+
+    /// Turn off asks first (M4), and says what's kept.
+    func testTurningItOffAsksFirst() {
+        launch(.proxy)
+        openProxy()
+        reveal(element("proxy.off")).tap()
+        XCTAssertTrue(app.staticTexts[Copy.turnOffProxyTitle].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts[Copy.turnOffProxyMessage].exists)
+        cancelDialog()
+        waitUntilGone(app.buttons[Copy.turnOffProxyButton].firstMatch)
+        XCTAssertTrue(app.navigationBars["Proxy"].exists, "still on its screen")
     }
 
     func testTurningItOffTakesItsRowAway() {
         launch(.proxy)
         openProxy()
         reveal(element("proxy.off")).tap()
+        let turnOff = app.buttons[Copy.turnOffProxyButton].firstMatch
+        XCTAssertTrue(turnOff.waitForExistence(timeout: 5))
+        turnOff.tap()
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5), "back on the main screen")
         assertNowhere(element("proxy.row"))
         XCTAssertTrue(reveal(element("device.iPad")).exists, "the devices stay")
@@ -257,13 +325,13 @@ final class ProxyTests: TetherUITestCase {
         XCTAssertTrue(row.label.contains("2 connections open"), row.label)
         try audit(types: [.textClipped], only: "proxy.")
         openProxy(maxSwipes: 30)
-        for id in ["proxy.status", "proxy.thisMonth", "proxy.server", "proxy.serverIPv6", "proxy.port", "proxy.note", "proxy.off"] {
+        for id in ["proxy.status", "proxy.pause", "proxy.thisMonth", "proxy.lastMonth", "proxy.server", "proxy.serverIPv6", "proxy.port", "proxy.note", "proxy.off"] {
             XCTAssertTrue(reveal(element(id), maxSwipes: 30).exists, id)
         }
         let window = app.windows.firstMatch.frame
         let ipv6 = reveal(element("proxy.serverIPv6"), maxSwipes: 30)
         XCTAssertTrue(ipv6.frame.minX >= window.minX && ipv6.frame.maxX <= window.maxX, "\(ipv6.frame) outside \(window)")
-        XCTAssertTrue(reveal(app.switches["proxy.pause"].firstMatch, maxSwipes: 30).isHittable)
+        XCTAssertTrue(reveal(element("proxy.pause"), maxSwipes: 30).isHittable)
         try audit(types: [.textClipped], only: "proxy.")
     }
 }

@@ -53,4 +53,25 @@ enum LimitRules {
             return nil
         }
     }
+
+    /// A limit picked on a device's or the proxy's screen pauses it at once (L1): it isn't paused, the
+    /// limit is a new one, and it already used that much this period. Its screen asks first then.
+    /// The same limit again changes nothing, see `HotspotSession.setLimit`, and a paused one stays as it is.
+    static func pausesNow(_ limit: UInt64?, current: UInt64?, used: UInt64, paused: WireGuardSetup.Pause?) -> Bool {
+        guard let limit, limit != current, paused == nil else { return false }
+        return used >= limit
+    }
+
+    /// What the screen asks before such a limit (L1).
+    struct PausesNowQuestion: Equatable {
+        static let confirm = "Set the limit and pause it"
+        let title: String
+        let message: String
+
+        /// `resets` is the day the count starts over, like "December 1".
+        init(name: String, used: UInt64, limit: UInt64, resets: String) {
+            title = "\(name) already used \(Format.bytes(used))"
+            message = "With a \(Format.bytes(limit)) limit it pauses now, until the count resets on \(resets)."
+        }
+    }
 }
