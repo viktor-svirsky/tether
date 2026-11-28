@@ -1,7 +1,7 @@
 import Foundation
 
 /// When sharing stops at a low battery (#311). Sharing keeps the cellular radio and the silent sound
-/// busy, so a phone left sharing away from its owner can run flat. Below the chosen level, and only
+/// busy, so a phone left sharing away from its owner can run flat. At or below the chosen level, and only
 /// while it isn't charging, Tether stops sharing in the background, like the idle stop (`IdleStop`),
 /// and lets iOS suspend it until it's opened again. Foundation only, so `swift test` covers it.
 enum LowBatteryStop {

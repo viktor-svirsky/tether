@@ -411,9 +411,11 @@ final class HotspotSession {
         return BelowBatteryStop(percent: percent, level: level)
     }
 
-    /// Start Tether below the battery level, not charging: it would share, and the next round stop
-    /// again, so the action says why instead (#311). Read now: a launch for the action has had no round.
-    var startRefusedAtLowBattery: Bool { !sceneActive && readBelowBatteryStop() != nil }
+    /// Start Tether below the battery level, not charging, with Tether in the background: it would
+    /// share, and the next round stop again, so the action says why instead (#311). On screen, even
+    /// behind Siri or Control Center, nothing stops, so it isn't refused. Read now: a launch for the
+    /// action has had no round.
+    var startRefusedAtLowBattery: Bool { inBackground && readBelowBatteryStop() != nil }
 
     /// Plays the silent sound while the hotspot is on, and for a while after it goes, see
     /// `KeepAlivePolicy`. Once it stops, iOS suspends Tether, and it starts again when opened.
