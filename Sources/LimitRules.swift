@@ -18,8 +18,9 @@ enum LimitRules {
         var nearTold = false
     }
 
-    /// The devices whose timed pause is over: they connect again at the first round at or after its end
-    /// (#312), and the limits are checked after that, in the same round.
+    /// The devices whose timed pause is over at the first round at or after its end (#312). In that
+    /// round `action` reads each as not paused: one over its limit goes straight to paused at it, the
+    /// others connect again.
     static func timedPausesOver(_ devices: [Device], at now: Date) -> [WireGuardSetup.Peer.ID] {
         devices.compactMap { device in
             guard case .until(let end)? = device.paused, now >= end else { return nil }
