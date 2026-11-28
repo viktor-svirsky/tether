@@ -1875,6 +1875,21 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertFalse(sound.playing)
     }
 
+    /// Control Center or an alert over Tether makes it inactive, not backgrounded: it stays on
+    /// screen, so the idle time doesn't run out (#364).
+    func testIdleTimeInactiveButNotInTheBackgroundDoesNotStop() {
+        idleAfter = .tenMinutes
+        makeSession()
+        address = hotspot
+        session.watch()
+        session.leftScreen()
+        session.watch()
+        now = minutes(10)
+        session.watch()
+        XCTAssertTrue(session.sharing, "still visible behind Control Center")
+        XCTAssertNil(session.idleStopped)
+    }
+
     // MARK: Stopping at low battery (#311)
 
     func testSharingStopsAtLowBatteryInTheBackground() {

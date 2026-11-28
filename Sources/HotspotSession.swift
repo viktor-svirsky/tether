@@ -123,7 +123,7 @@ final class HotspotSession {
     /// False in a launch from a Shortcuts action, which happens in the background.
     var sceneActive: Bool
     /// In the background, not only off screen: Control Center or an alert makes Tether inactive
-    /// while it's still visible. The low battery stop waits for this (#311).
+    /// while it is still visible. The idle and low battery stops wait for this (#311, #364).
     private(set) var inBackground: Bool
     /// CallKit has a call on. The keep-alive sound plays again right after a call starts, so it can't
     /// say so itself (#191).
@@ -395,7 +395,7 @@ final class HotspotSession {
         let waiting = devices.setup.peers.contains { pending($0.paused) && tunnelsUp.contains($0.address) }
             || devices.setup.proxy.map { $0.on && pending($0.paused) } ?? false
         let connected = !connectedNow.isEmpty || proxyMoved || waiting
-        guard idleStop.check(sharing: sharing, connected: connected, onScreen: sceneActive, after: after, now: now) else {
+        guard idleStop.check(sharing: sharing, connected: connected, onScreen: !inBackground, after: after, now: now) else {
             return
         }
         log("no device connected for \(after.spelledOut), stopping until Tether is opened")
