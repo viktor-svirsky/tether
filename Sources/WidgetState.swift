@@ -77,7 +77,7 @@ struct WidgetState: Codable, Equatable {
     /// not when WireGuard couldn't start.
     static func activityHeadline(sharing: Bool, count: Int, blockedWithoutVPN: Bool, problem: String?) -> String {
         if !sharing, problem != nil { return "Not running" }
-        guard sharing else { return "Waiting for a device on the hotspot" }
+        guard sharing else { return Copy.waitingForDevice }
         if blockedWithoutVPN { return "No VPN, devices kept out" }
         switch count {
         case 0: return "Sharing, no device yet"
