@@ -330,18 +330,20 @@ final class ProxyTests: XCTestCase {
 
     func testWhatTheProxysRowAndScreenSay() {
         var proxy = WireGuardSetup.Proxy()
-        func status(_ open: Int, hotspot: Bool = true) -> ProxyStatus {
-            ProxyStatus(proxy, stats: ProxyStats(addresses: hotspot ? ["172.20.10.1:8118"] : [], open: open), hotspotOn: hotspot)
+        func status(_ open: Int, hotspot: Bool = true, keptOut: Bool = false) -> ProxyStatus {
+            ProxyStatus(proxy, stats: ProxyStats(addresses: hotspot ? ["172.20.10.1:8118"] : [], open: open), hotspotOn: hotspot, keptOut: keptOut)
         }
-        XCTAssertEqual(status(2).label, "2 open")
+        // One wording on the row and the screen (M4).
+        XCTAssertEqual(status(2).label, "2 connections open")
         XCTAssertEqual(status(2).title, "2 connections open")
+        XCTAssertEqual(status(1).label, "1 connection open")
         XCTAssertEqual(status(1).title, "1 connection open")
-        XCTAssertEqual(status(0).label, "Idle")
-        XCTAssertEqual(status(0).title, "No connections open")
-        XCTAssertEqual(status(0, hotspot: false).label, "Idle")
+        XCTAssertEqual(status(0).label, "Not in use")
+        XCTAssertEqual(status(0).title, "Not in use")
+        XCTAssertEqual(status(0, hotspot: false).label, "Not in use")
         // The hotspot's network is there only while a device is on it, so off and on with nobody look
         // the same, see `ShortcutReply.status`.
-        XCTAssertEqual(status(0, hotspot: false).title, "Waiting for a device to join Personal Hotspot")
+        XCTAssertEqual(status(0, hotspot: false).title, "Waiting for a device on the hotspot")
         XCTAssertEqual(status(2).look, .connected)
         XCTAssertEqual(status(0).look, .notConnected)
         proxy.paused = .byYou
@@ -350,48 +352,90 @@ final class ProxyTests: XCTestCase {
         XCTAssertEqual(status(2).title, "Paused")
         XCTAssertEqual(status(2).detail(resets: "December 1", period: "this month"), "Nothing goes through it until you resume it.")
         proxy.paused = .atLimit
+        XCTAssertEqual(status(0).label, "Paused at its limit", "the row says why too (M2)")
         XCTAssertEqual(status(0).title, "Paused at its limit")
         XCTAssertEqual(status(0).detail(resets: "December 1", period: "this month"),
                        "It used its data this month. It works again on December 1, or when you resume it.")
-        XCTAssertNil(ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(), hotspotOn: true).detail(resets: "", period: ""))
-        // Go has an address to listen on and can't: the screen says so, not "No connections open".
-        let cantListen = ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(cantListen: true), hotspotOn: true)
+        XCTAssertNil(ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(), hotspotOn: true, keptOut: false).detail(resets: "", period: ""))
+        // Go has an address to listen on and can't: the screen says so, not "Not in use".
+        let cantListen = ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(cantListen: true), hotspotOn: true, keptOut: false)
         XCTAssertEqual(cantListen.label, "Not listening")
         XCTAssertEqual(cantListen.title, "Not listening")
         XCTAssertEqual(cantListen.look, .notConnected)
         XCTAssertEqual(cantListen.detail(resets: "", period: ""), "Devices on it can't load anything. Tether tries again by itself.")
-        XCTAssertEqual(ProxyStatus(.init(paused: .byYou), stats: ProxyStats(cantListen: true), hotspotOn: true).title, "Paused", "a pause comes first")
+        XCTAssertEqual(ProxyStatus(.init(paused: .byYou), stats: ProxyStats(cantListen: true), hotspotOn: true, keptOut: true).title, "Paused", "a pause comes first")
     }
 
-    /// Add a device's last step when the proxy can't carry a page. Opening the steps turns it on and
-    /// resumes a pause by you, but either can fail to be saved, so each case says what's wrong.
+    /// Only share through a VPN keeps the proxy's devices out while no VPN is on (H1): it says so, with
+    /// no live dot and not as in use. A pause still comes first, and with the hotspot off it waits.
+    func testTheProxySaysItsDevicesAreKeptOut() {
+        let keptOut = ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(open: 2), hotspotOn: true, keptOut: true)
+        XCTAssertEqual(keptOut.label, "Kept out, no VPN")
+        XCTAssertEqual(keptOut.title, "Kept out")
+        XCTAssertEqual(keptOut.detail(resets: "", period: ""), "No VPN is on, so nothing gets through. It works again when a VPN is on.")
+        XCTAssertEqual(keptOut.look, .keptOut(onlyFamily: nil))
+        let oneFamily = ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(open: 2), hotspotOn: true, keptOut: true, onlyFamily: .ipv6)
+        XCTAssertEqual(oneFamily.label, "Kept out, VPN for IPv6 only")
+        XCTAssertEqual(oneFamily.detail(resets: "", period: ""), "Your VPN carries only IPv6, so nothing gets through. It works again when it carries IPv4 too.")
+        XCTAssertFalse(keptOut.inUse)
+        XCTAssertEqual(ProxyStatus(WireGuardSetup.Proxy(), stats: ProxyStats(), hotspotOn: false, keptOut: true).title, "Waiting for a device on the hotspot")
+    }
+
+    /// Add a device's last step when the proxy can't carry a page (H5): opening the steps turns
+    /// nothing on, so off and paused come with a button, and at its limit it says where to resume.
     func testWhatTheLastStepSaysWhenTheProxyCantCarryAPage() {
         XCTAssertNil(ProxyStatus.blocked(WireGuardSetup.Proxy()), "on and not paused")
-        XCTAssertEqual(ProxyStatus.blocked(nil), "The proxy is off. Close this and pick No, use the proxy again to turn it on.")
-        XCTAssertEqual(ProxyStatus.blocked(WireGuardSetup.Proxy(on: false, paused: .atLimit)),
-                       "The proxy is off. Close this and pick No, use the proxy again to turn it on.", "off comes first: there's no row")
-        XCTAssertEqual(ProxyStatus.blocked(WireGuardSetup.Proxy(paused: .byYou)),
-                       "The proxy is paused. To resume it, close this, tap Proxy under Devices and turn off Pause.")
-        XCTAssertEqual(ProxyStatus.blocked(WireGuardSetup.Proxy(paused: .atLimit)),
-                       "The proxy is paused at its data limit. To use it anyway, close this, tap Proxy under Devices and turn off Pause.")
+        XCTAssertEqual(ProxyStatus.blocked(nil), .off)
+        XCTAssertEqual(ProxyStatus.blocked(WireGuardSetup.Proxy(on: false, paused: .atLimit)), .off, "off comes first: there's no row")
+        XCTAssertEqual(ProxyStatus.blocked(WireGuardSetup.Proxy(paused: .byYou)), .paused)
+        XCTAssertEqual(ProxyStatus.blocked(WireGuardSetup.Proxy(paused: .until(Date(timeIntervalSince1970: 0)))), .paused)
+        XCTAssertEqual(ProxyStatus.blocked(WireGuardSetup.Proxy(paused: .atLimit)), .atLimit)
+
+        XCTAssertEqual(ProxyStatus.Blocked.off.text, "The proxy has no password. While it's on, any device on the hotspot can use it.")
+        XCTAssertEqual(ProxyStatus.Blocked.off.button, "Turn on the proxy")
+        XCTAssertEqual(ProxyStatus.Blocked.paused.text, "The proxy is paused.")
+        XCTAssertEqual(ProxyStatus.Blocked.paused.button, "Resume the proxy")
+        XCTAssertEqual(ProxyStatus.Blocked.atLimit.text,
+                       "The proxy is paused at its data limit. To use it anyway, close this, tap Proxy under Devices and tap Resume.")
+        XCTAssertNil(ProxyStatus.Blocked.atLimit.button)
+    }
+
+    /// Both buttons do what `setProxy(on: true)` does: on, and a pause by you resumed. One at its limit stays.
+    func testTheLastStepsButtonsTurnTheProxyOnAndResumeIt() {
+        var setup = WireGuardSetup.new()
+        setup.turnProxy(on: true)
+        setup.turnProxy(on: false)
+        XCTAssertEqual(ProxyStatus.blocked(setup.proxy), .off)
+        setup.turnProxy(on: true)
+        XCTAssertNil(ProxyStatus.blocked(setup.proxy))
+        setup.proxy?.paused = .byYou
+        setup.turnProxy(on: true)
+        XCTAssertNil(ProxyStatus.blocked(setup.proxy))
+        setup.proxy?.paused = .atLimit
+        setup.turnProxy(on: true)
+        XCTAssertEqual(ProxyStatus.blocked(setup.proxy), .atLimit)
     }
 
     /// The status card counts the WireGuard devices, and names the proxy while a connection is open on it.
+    /// With none, it counts the paused devices, or says none is connected once one is added (M2).
     func testTheStatusCardCountsTheProxyToo() {
         var proxy = WireGuardSetup.Proxy()
         func inUse(_ open: Int, hotspot: Bool = true) -> Bool {
-            ProxyStatus(proxy, stats: ProxyStats(open: open), hotspotOn: hotspot).inUse
+            ProxyStatus(proxy, stats: ProxyStats(open: open), hotspotOn: hotspot, keptOut: false).inUse
         }
         XCTAssertTrue(inUse(1))
         XCTAssertFalse(inUse(0))
         XCTAssertFalse(inUse(1, hotspot: false))
         proxy.paused = .byYou
         XCTAssertFalse(inUse(1), "paused, its connections are ended")
-        XCTAssertEqual(UsingTether.headline(devices: 0, proxy: false), "No device is using Tether yet")
-        XCTAssertEqual(UsingTether.headline(devices: 0, proxy: true), "The proxy is in use")
-        XCTAssertEqual(UsingTether.headline(devices: 1, proxy: false), "1 device connected")
-        XCTAssertEqual(UsingTether.headline(devices: 1, proxy: true), "1 device connected and the proxy in use")
-        XCTAssertEqual(UsingTether.headline(devices: 3, proxy: true), "3 devices connected and the proxy in use")
+        XCTAssertEqual(UsingTether.headline(devices: 0, proxy: false, paused: 0, added: false), "No device is using Tether yet")
+        XCTAssertEqual(UsingTether.headline(devices: 0, proxy: false, paused: 0, added: true), "No device connected")
+        XCTAssertEqual(UsingTether.headline(devices: 0, proxy: false, paused: 1, added: true), "1 device paused")
+        XCTAssertEqual(UsingTether.headline(devices: 0, proxy: false, paused: 2, added: true), "2 devices paused")
+        XCTAssertEqual(UsingTether.headline(devices: 0, proxy: true, paused: 1, added: true), "The proxy is in use")
+        XCTAssertEqual(UsingTether.headline(devices: 1, proxy: false, paused: 1, added: true), "1 device connected", "a connected one says it, not the paused")
+        XCTAssertEqual(UsingTether.headline(devices: 1, proxy: true, paused: 0, added: true), "1 device connected and the proxy in use")
+        XCTAssertEqual(UsingTether.headline(devices: 3, proxy: true, paused: 0, added: true), "3 devices connected and the proxy in use")
     }
 
     /// Add a device's last step ticks off once the far end answers a device through the proxy that

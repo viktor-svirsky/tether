@@ -25,15 +25,16 @@ final class WidgetStateTests: XCTestCase {
         }
     }
 
-    /// The line under the title never repeats it, and names the VPN only while Tether is awake.
+    /// The line under the title never repeats it, and names the VPN only while Tether is awake, and
+    /// only while one is on: most people run none, so "No VPN" told nearly everyone something wrong (M10).
     func testTheDetailSaysWhatTheTitleDoesNot() {
         XCTAssertEqual(sharing.detail, "Through a VPN")
-        XCTAssertEqual(WidgetState(sharing: true, awake: true).detail, "No VPN")
+        XCTAssertEqual(WidgetState(sharing: true, awake: true).detail, "")
         XCTAssertEqual(WidgetState(sharing: true, awake: true, blockedWithoutVPN: true).detail, "Devices kept out")
         XCTAssertEqual(WidgetState(awake: true, vpn: true).detail, "Through a VPN")
         XCTAssertEqual(WidgetState(awake: true).detail, "")
         XCTAssertEqual(WidgetState(vpn: true).detail, "", "stopped: the VPN was last looked at who knows when")
-        XCTAssertEqual(WidgetState(problem: "Its keys can't be read yet.").detail, "Its keys can't be read yet.")
+        XCTAssertEqual(WidgetState(problem: WireGuardProblem.keysLocked.title).detail, "Tether can't read its keys yet")
     }
 
     /// Signed without the app group, a widget says so, not Stopped.
@@ -78,7 +79,7 @@ final class WidgetStateTests: XCTestCase {
     /// The Live Activity says waiting only while Tether really waits for a device on the hotspot.
     func testTheLiveActivitySaysWhereTetherStands() {
         XCTAssertEqual(WidgetState.activityHeadline(sharing: false, count: 0, blockedWithoutVPN: false, problem: nil), "Waiting for a device on the hotspot")
-        XCTAssertEqual(WidgetState.activityHeadline(sharing: true, count: 0, blockedWithoutVPN: false, problem: nil), "Sharing, no device yet")
+        XCTAssertEqual(WidgetState.activityHeadline(sharing: true, count: 0, blockedWithoutVPN: false, problem: nil), "Sharing, no device connected")
         XCTAssertEqual(WidgetState.activityHeadline(sharing: true, count: 1, blockedWithoutVPN: false, problem: nil), "Sharing with 1 device")
         XCTAssertEqual(WidgetState.activityHeadline(sharing: true, count: 3, blockedWithoutVPN: false, problem: nil), "Sharing with 3 devices")
         XCTAssertEqual(WidgetState.activityHeadline(sharing: true, count: 2, blockedWithoutVPN: true, problem: nil), "No VPN, devices kept out")

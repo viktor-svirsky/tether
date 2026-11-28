@@ -210,6 +210,56 @@ final class WireGuardSetupTests: XCTestCase {
         XCTAssertTrue(devices.setup.peers.isEmpty)
     }
 
+    /// A new config for a listed device (M1): the code's key and address take its place in the list,
+    /// with its id, name, limit and pause, and the old key is gone in the same save.
+    func testAClaimCanGiveADeviceANewConfig() throws {
+        let secrets = InMemorySecrets()
+        let devices = WireGuardDevices(secrets: secrets)
+        let pc = try XCTUnwrap(devices.connectReady())
+        devices.rename(pc.id, to: "Windows PC")
+        let ipad = try XCTUnwrap(devices.connectReady())
+        XCTAssertTrue(devices.limit(pc.id, 5_000_000_000))
+        XCTAssertTrue(devices.pause(pc.id, .byYou))
+        let ready = try XCTUnwrap(devices.setup.ready)
+        XCTAssertTrue(devices.claimReady(address: ready.address, host: "172.20.10.1", replacing: pc.id))
+        let reloaded = WireGuardDevices(secrets: secrets).setup
+        XCTAssertEqual(reloaded.peers.map(\.id), [pc.id, ipad.id], "in its place, no new device")
+        let peer = try XCTUnwrap(reloaded.peers.first)
+        XCTAssertEqual(peer.name, "Windows PC")
+        XCTAssertEqual(peer.limit, 5_000_000_000)
+        XCTAssertEqual(peer.paused, .byYou)
+        XCTAssertEqual(peer.publicKey, ready.publicKey)
+        XCTAssertEqual(peer.address, ready.address)
+        XCTAssertEqual(peer.host, "172.20.10.1")
+        XCTAssertFalse(reloaded.serverPeers.contains { $0.publicKey == pc.publicKey }, "the old key")
+        XCTAssertNotNil(reloaded.ready, "a new code for the next one")
+        XCTAssertNotEqual(reloaded.ready?.address, pc.address,
+                          "not at the old config's address, where the server still carries what it counted")
+    }
+
+    /// A device removed while its new config waited isn't there to replace: the code is a new device.
+    func testAClaimForARemovedDeviceAddsANewOne() throws {
+        let devices = WireGuardDevices(secrets: InMemorySecrets())
+        let pc = try XCTUnwrap(devices.connectReady())
+        XCTAssertTrue(devices.remove(pc.id))
+        let ready = try XCTUnwrap(devices.setup.ready)
+        XCTAssertTrue(devices.claimReady(address: ready.address, host: Hotspot.host, replacing: pc.id))
+        XCTAssertEqual(devices.setup.peers.map(\.id), [ready.id])
+        XCTAssertEqual(devices.setup.peers.map(\.name), ["Device"])
+    }
+
+    func testANewConfigThatCantBeSavedChangesNothing() throws {
+        let secrets = FlakySecrets()
+        let devices = WireGuardDevices(secrets: secrets)
+        let pc = try XCTUnwrap(devices.connectReady())
+        let before = devices.setup
+        let ready = try XCTUnwrap(before.ready)
+        secrets.savesFail = true
+        XCTAssertFalse(devices.claimReady(address: ready.address, host: Hotspot.host, replacing: pc.id))
+        XCTAssertEqual(devices.setup, before)
+        XCTAssertEqual(devices.setup.peers.first?.publicKey, pc.publicKey, "the old config still works")
+    }
+
     func testReplacingTheReadyDeviceSavesANewKey() throws {
         let secrets = InMemorySecrets()
         let devices = WireGuardDevices(secrets: secrets)

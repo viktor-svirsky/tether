@@ -41,7 +41,7 @@ final class StatusCardTests: TetherUITestCase {
     /// A sideloaded build stops opening when its 7-day profile runs out, so the main screen says so first.
     func testAnExpiringBuildSaysToRefreshIt() {
         launch(.expiring)
-        XCTAssertEqual(label(of: "app.expiry"), "Tether stops opening in 2 days. Refresh or reinstall it before then.")
+        XCTAssertEqual(label(of: "app.expiry"), "Tether stops opening in 2 days. Refresh it in SideStore or AltStore, or reinstall it, before then.")
     }
 
     func testNoExpiryWarningWithDaysToGo() {

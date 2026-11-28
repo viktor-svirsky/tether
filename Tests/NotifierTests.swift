@@ -436,12 +436,12 @@ final class NotifierTests: XCTestCase {
         let expires = day(26, 9)
         XCTAssertEqual(expiryRound(at: day(22), expires: expires), [], "more than 3 days left")
         XCTAssertEqual(expiryRound(at: day(23, 10), expires: expires),
-                       ["Tether stops opening in 3 days: Refresh or reinstall it before then."])
+                       ["Tether stops opening in 3 days: Refresh it in SideStore or AltStore, or reinstall it, before then."])
         XCTAssertEqual(expiryRound(at: day(23, 22), expires: expires), [], "once a day")
         XCTAssertEqual(expiryRound(at: day(25, 1), expires: expires),
-                       ["Tether stops opening tomorrow: Refresh or reinstall it before then."])
+                       ["Tether stops opening tomorrow: Refresh it in SideStore or AltStore, or reinstall it, before then."])
         XCTAssertEqual(expiryRound(at: day(26, 7), expires: expires),
-                       ["Tether stops opening today: Refresh or reinstall it before then."])
+                       ["Tether stops opening today: Refresh it in SideStore or AltStore, or reinstall it, before then."])
     }
 
     /// Built without a calendar, as the app does, the notifier follows a time zone change made after
@@ -456,7 +456,7 @@ final class NotifierTests: XCTestCase {
         london.timeZone = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
         let now = try XCTUnwrap(london.date(from: DateComponents(year: 2026, month: 11, day: 25, hour: 0, minute: 30)))
         let expires = try XCTUnwrap(london.date(from: DateComponents(year: 2026, month: 11, day: 25, hour: 20)))
-        XCTAssertEqual(expiryRound(at: now, expires: expires), ["Tether stops opening today: Refresh or reinstall it before then."])
+        XCTAssertEqual(expiryRound(at: now, expires: expires), ["Tether stops opening today: Refresh it in SideStore or AltStore, or reinstall it, before then."])
     }
 
     func testTheDayToldIsSavedForTheNextLaunch() {
@@ -650,6 +650,37 @@ final class ClosedAlarmPostingTests: XCTestCase {
         XCTAssertEqual(ClosedAlarm.notice.title, "Tether stopped sharing")
         XCTAssertEqual(ClosedAlarm.notice.body, "Connections through Tether stop until it runs again.")
         XCTAssertEqual(NoticeKind.closed.label, "iOS stops Tether in the background")
+    }
+}
+
+/// Settings' Notifications row (M6), and Home's note that offers notifications instead of iOS asking
+/// by itself (M7).
+final class NoticeOfferTests: XCTestCase {
+    private var defaults: UserDefaults!
+
+    override func setUp() {
+        defaults = UserDefaults(suiteName: "NoticeOfferTests")
+        defaults.removePersistentDomain(forName: "NoticeOfferTests")
+    }
+
+    func testTheRowSaysHowManyAreOnOrWhyNone() {
+        XCTAssertEqual(NoticeKind.allCases.count, 8)
+        XCTAssertEqual(NoticeKind.summary(.allowed, defaults: defaults), "8 on")
+        defaults.set(false, forKey: NoticeKind.connected.key)
+        defaults.set(false, forKey: NoticeKind.closed.key)
+        XCTAssertEqual(NoticeKind.summary(.allowed, defaults: defaults), "6 on")
+        XCTAssertEqual(NoticeKind.summary(.notAsked, defaults: defaults), "Not allowed yet")
+        XCTAssertEqual(NoticeKind.summary(.denied, defaults: defaults), "Off in iOS Settings")
+    }
+
+    /// Only when there's something to tell and iOS never asked, and never again after Not now.
+    func testTheNoteShowsOnlyWhenItCanBeAnswered() {
+        XCTAssertTrue(NoticeOffer.shows(wouldTell: true, permission: .notAsked, defaults: defaults))
+        XCTAssertFalse(NoticeOffer.shows(wouldTell: false, permission: .notAsked, defaults: defaults), "nothing to tell yet")
+        XCTAssertFalse(NoticeOffer.shows(wouldTell: true, permission: .allowed, defaults: defaults))
+        XCTAssertFalse(NoticeOffer.shows(wouldTell: true, permission: .denied, defaults: defaults), "iOS never asks twice")
+        NoticeOffer.decline(in: defaults)
+        XCTAssertFalse(NoticeOffer.shows(wouldTell: true, permission: .notAsked, defaults: defaults), "Not now is for good")
     }
 }
 

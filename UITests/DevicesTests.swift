@@ -40,7 +40,7 @@ final class DevicesTests: TetherUITestCase {
     func testADeviceNotUsingTetherOpensAddADevice() {
         launch(.notUsingTether)
         let line = reveal(element("devices.notUsingTether"))
-        XCTAssertEqual(line.label, "On your hotspot, not using Tether: 172.20.10.3")
+        XCTAssertEqual(line.label, "1 device on the hotspot isn't using Tether (172.20.10.3). Set it up.")
         line.tap()
         XCTAssertTrue(element("add.question").waitForExistence(timeout: 5), "the sheet did not open")
     }

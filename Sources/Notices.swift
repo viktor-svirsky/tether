@@ -136,8 +136,8 @@ struct Notifier {
     private var toldIdleStop: IdleStopped?
     /// The limit alerts told, or seen on screen, by `LimitAlert.id`.
     private var toldLimits: Set<String> = []
-    /// The last round was on screen and saw something it would have told in the background. iOS
-    /// shows the permission question only while Tether is on screen, so `Model` asks then.
+    /// The last round was on screen and saw something it would have told in the background. `Model`
+    /// offers notifications on Home then, see `NoticeOffer`.
     private(set) var wouldTell = false
 
     init(defaults: UserDefaults, calendar: Calendar = .autoupdatingCurrent) { // see HotspotSession.calendar
@@ -309,7 +309,7 @@ struct Notifier {
         guard NoticeKind.expiring.isOn(in: defaults) else { return [] }
         defaults.set(today, forKey: Self.expiryKey)
         return [Notice(kind: .expiring, id: "expiry", title: "Tether stops opening \(when)",
-                       body: "Refresh or reinstall it before then.")]
+                       body: AppExpiry.refresh)]
     }
 }
 
@@ -359,6 +359,34 @@ enum NoticePermission {
     case notAsked, allowed, denied
 }
 
+extension NoticeKind {
+    /// Settings' Notifications row (M6): how many switches are on once iOS allows them, or why none
+    /// can be delivered.
+    static func summary(_ permission: NoticePermission, defaults: UserDefaults) -> String {
+        switch permission {
+        case .notAsked: "Not allowed yet"
+        case .denied: "Off in iOS Settings"
+        case .allowed: "\(allCases.filter { $0.isOn(in: defaults) }.count) on"
+        }
+    }
+}
+
+/// The note on Home that offers notifications (M7). iOS never asks by itself any more: when Tether
+/// has something it would tell and iOS was never asked, Home offers it, and "Allow notifications"
+/// shows the question. "Not now" hides it for good. Settings keeps its own Allow.
+enum NoticeOffer {
+    /// Saved by "Not now".
+    static let declinedKey = "notify.offerDeclined"
+
+    static func shows(wouldTell: Bool, permission: NoticePermission, defaults: UserDefaults) -> Bool {
+        wouldTell && permission == .notAsked && !defaults.bool(forKey: declinedKey)
+    }
+
+    static func decline(in defaults: UserDefaults) {
+        defaults.set(true, forKey: declinedKey)
+    }
+}
+
 /// The system's notification center as `NoticePoster` uses it. The app passes the real one
 /// (SettingsView.swift), the tests a fake.
 @MainActor
@@ -373,10 +401,9 @@ protocol NoticeCenter: AnyObject {
     func remove(_ id: String)
 }
 
-/// Posts what `Notifier` decided, and asks for permission the first time something happens that it
-/// would tell, not at launch. Notices post in the background, but iOS shows the question only while
-/// Tether is on screen, so it's asked there, when `Notifier.wouldTell` says so: a device connecting
-/// while it's added, say. Until then, and after a no, nothing posts. iOS never asks twice.
+/// Posts what `Notifier` decided, and asks for permission when the person taps Allow, on Home's note
+/// (`NoticeOffer`) or in Settings. iOS shows the question only while Tether is on screen. Until then,
+/// and after a no, nothing posts. iOS never asks twice.
 @MainActor
 final class NoticePoster {
     private let center: NoticeCenter

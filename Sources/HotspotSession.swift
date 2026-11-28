@@ -87,7 +87,7 @@ final class HotspotSession {
     private(set) var wireGuardDeviceProblem: DeviceProblem? { willSet { willChange() } }
     /// Why WireGuard isn't running, shown on the main screen: the saved setup's problem from launch on,
     /// hotspot or not, or why the server didn't start on the hotspot.
-    private(set) var wireGuardProblem: String? { willSet { willChange() } }
+    private(set) var wireGuardProblem: WireGuardProblem? { willSet { willChange() } }
     /// The tunnel addresses of the WireGuard devices that are connected. Read with every sample
     /// while the app is on screen. A paused device isn't, even with its tunnel up, see `unpaused`.
     private(set) var wireGuardConnected: Set<String> = [] { willSet { willChange() } }
@@ -98,6 +98,15 @@ final class HotspotSession {
     /// Sharing stopped after a time with no device connected, from a widget, or at low battery, until
     /// Tether is opened or Start Tether runs.
     private(set) var idleStopped: IdleStopped? { willSet { willChange() } }
+    /// The last stop, for a note on Home until "Got it" (H3). It outlives `idleStopped`, which opening
+    /// Tether clears, and a relaunch, see `LastStop`.
+    private(set) var lastStop: LastStop? { willSet { willChange() } }
+    /// Stop on a widget or in Control Center was pressed while Tether was open, where it does nothing
+    /// (M11), for a note on Home until "Got it".
+    private(set) var stopIgnored = false { willSet { willChange() } }
+    /// The device Add a device gives a new config to (M1), from `openAddWindow(replacing:)` until the
+    /// sheet closes: the code claimed meanwhile takes its place, see `WireGuardSetup.claimReady`.
+    private(set) var replacing: WireGuardSetup.Peer.ID?
     /// The battery is at or below the stop level and not charging, as the last watcher round read it,
     /// for the main screen's line, see `stopAtLowBattery`.
     private(set) var belowBatteryStop: BelowBatteryStop? { willSet { willChange() } }
@@ -152,6 +161,8 @@ final class HotspotSession {
     private let blockLocal: () -> Bool
     /// Where each device's data per month is saved, see `MonthlyUsage`. Nil keeps it in memory only.
     private let usageDefaults: UserDefaults?
+    /// Where `lastStop` is saved. Nil keeps it in memory only.
+    private let noteDefaults: UserDefaults?
     /// The day the counts and the limits start over (#187), read each time they're used, so a change
     /// in Settings counts at once.
     private let resetDay: () -> ResetDay
@@ -202,9 +213,9 @@ final class HotspotSession {
     /// The carrier gives this iPhone IPv6 only, see `deviceHost`.
     private var onIPv6OnlyCarrier: Bool { willSet { willChange() } }
     /// Why the saved setup can't be used, see `checkSetup`.
-    private var setupProblem: String?
+    private var setupProblem: WireGuardProblem?
     /// Why the server didn't start on the hotspot. It goes with the hotspot.
-    private var startProblem: String?
+    private var startProblem: WireGuardProblem?
     /// What the config page answers, see `pageResponse`.
     private var pageHandler = ConfigPageHandler()
     /// Clients the page refused that are in the log already, see `pageRefused`.
@@ -239,7 +250,7 @@ final class HotspotSession {
          battery: @escaping (_ monitor: Bool) -> LowBatteryStop.Battery = { _ in .unknown },
          dns: @escaping () -> DNSChoice.Upstream = { DNSChoice.defaultUpstream },
          blockLocal: @escaping () -> Bool = { false },
-         usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
+         usageDefaults: UserDefaults? = nil, noteDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
          resetDay: @escaping () -> ResetDay = { .default }, hostName: HostNamePublishing? = nil, cellular: @escaping @MainActor () -> String = { "" },
          knocker: HotspotKnocker = NetworkKnocker(),
          internetVPN: @escaping () -> Interfaces.Reading = { Interfaces.Reading() }, onlyThroughVPN: @escaping () -> Bool = { false },
@@ -258,6 +269,8 @@ final class HotspotSession {
         self.battery = battery
         self.dns = dns
         self.usageDefaults = usageDefaults
+        self.noteDefaults = noteDefaults
+        lastStop = noteDefaults.flatMap(LastStop.load)
         self.calendar = calendar
         self.resetDay = resetDay
         self.internetVPN = internetVPN
@@ -410,7 +423,7 @@ final class HotspotSession {
         if below != belowBatteryStop { belowBatteryStop = below }
         guard let below, sharing, inBackground, idleStopped == nil else { return }
         log("battery at \(below.percent)%, at or below \(below.level.rawValue)%, stopping until Tether is opened")
-        stop(IdleStopped(at: now(), after: idleStopAfter(), lowBattery: below.level))
+        stop(IdleStopped(at: now(), after: idleStopAfter(), lowBattery: below.level, batteryPercent: below.percent))
     }
 
     /// The battery now, against the level. Nil at Never, while charging, or when iOS can't say.
@@ -497,20 +510,16 @@ final class HotspotSession {
 
     /// Why WireGuard can't start, for `wireGuardProblem`. Another socket on 51820 is the one reason a
     /// person can do something about: a WireGuard tunnel on this iPhone with ListenPort 51820, say.
-    static func problem(starting error: Error) -> String {
-        guard "\(error)".contains("address already in use") else {
-            return "It couldn't start. Tether tries again by itself. If this stays, share the log from Settings."
-        }
-        return "Something else on this iPhone is using port \(WireGuardSetup.port). Tether tries again by itself. "
-            + "If this stays, turn off other VPN or WireGuard tunnels on this iPhone, or restart it."
+    static func problem(starting error: Error) -> WireGuardProblem {
+        "\(error)".contains("address already in use") ? .portTaken : .couldNotStart
     }
 
     /// Why the saved setup can't be used, for `wireGuardProblem`.
-    private static func problem(with error: Error) -> String {
+    static func problem(with error: Error) -> WireGuardProblem {
         switch error {
-        case is WireGuardDevices.Unreadable: "Its saved keys can't be read. Start over with new keys to use it."
-        case is WireGuardDevices.Unsaved: "Its new keys can't be saved. If this stays, share the log from Settings."
-        default: "Its keys can't be read yet. Unlock this iPhone once."
+        case is WireGuardDevices.Unreadable: .keysUnreadable
+        case is WireGuardDevices.Unsaved: .keysUnsaved
+        default: .keysLocked
         }
     }
 
@@ -566,14 +575,33 @@ final class HotspotSession {
         watchedConnected = wireGuardConnected // not a list from an earlier time away, until the next round reads
     }
 
-    /// The Add a device sheet came on screen. Its code works from now on, see `addWindowOpen`.
-    func openAddWindow() {
+    /// The Add a device sheet came on screen. Its code works from now on, see `addWindowOpen`. With
+    /// `replacing`, it gives that device a new config (M1): the device that claims the code takes its
+    /// place, with its id, name, limit and pause, so its data count stays.
+    func openAddWindow(replacing: WireGuardSetup.Peer.ID? = nil) {
+        self.replacing = replacing
+        // A code still let in from a sheet closed less than 10 minutes ago may be on another device
+        // already, which would take this one's place: a new code for this one.
+        // Even when the new code can't be saved: the earlier one leaves the server all the same.
+        if replacing != nil, readyLetIn {
+            devices.replaceReady()
+            wireGuardPeersChanged()
+        }
         addWindow.sheetOpened()
         followAddWindow()
     }
 
-    /// The Add a device sheet went away. Its code works 10 more minutes, see `addWindowOpen`.
+    /// The Add a device sheet went away. Its code works 10 more minutes, see `addWindowOpen`. Not a
+    /// code for a new config: one scanned and claimed after the sheet closed would be a second device
+    /// next to the one it was for, with no limit or pause. Closing leaves that device as it was.
+    /// Leaving the screen doesn't come through here, so the code still works then.
     func closeAddWindow() {
+        if replacing != nil, devices.loaded {
+            replacing = nil
+            devices.replaceReady()
+            wireGuardPeersChanged()
+        }
+        replacing = nil
         addWindow.sheetClosed(now: now(), sceneActive: sceneActive)
         followAddWindow()
     }
@@ -673,7 +701,7 @@ final class HotspotSession {
             connected = unpaused(snapshot.connected)
             proxyStats = snapshot.proxy
         }
-        let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running).inUse } ?? false
+        let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running, keptOut: blockedWithoutVPN, onlyFamily: vpnOnlyFamily).inUse } ?? false
         return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem, proxyInUse: proxyInUse,
                                    idleStopped: idleStopped != nil, stoppedByYou: idleStopped?.byYou == true,
                                    lowBattery: idleStopped?.lowBattery != nil,
@@ -687,7 +715,9 @@ final class HotspotSession {
         guard devices.loaded else { return nil }
         let connected = running && server.running ? unpaused(server.snapshot().connected) : []
         return devices.setup.peers.map {
-            ShortcutReply.Device(id: $0.id, name: $0.name, status: DeviceStatus($0, connected: connected).label(now: now(), calendar: calendar))
+            let status = DeviceStatus($0, connected: connected, keptOut: blockedWithoutVPN, onlyFamily: vpnOnlyFamily)
+            return ShortcutReply.Device(id: $0.id, name: $0.name,
+                                        status: status.label(now: now(), calendar: calendar, standing: limitStanding(of: $0.id)))
         }
     }
 
@@ -741,6 +771,7 @@ final class HotspotSession {
     /// nothing stops it but the hotspot, like the idle stop: opening it is what starts it again.
     @discardableResult
     func stopNow() -> Bool {
+        if sceneActive { ignoreStop() }
         guard !sceneActive, idleStopped == nil else { return false }
         let was = running
         log("stopped from a widget, until Tether is opened or started")
@@ -748,9 +779,37 @@ final class HotspotSession {
         return was
     }
 
+    /// Stop pressed while Tether is open does nothing, and says so on Home until "Got it" (M11).
+    /// `Model` calls this for a Stop that came while Tether was on screen behind Control Center.
+    func ignoreStop() {
+        log("Stop pressed while Tether is open, nothing stopped")
+        if !stopIgnored { stopIgnored = true }
+    }
+
+    /// "Got it" on the note `stopIgnored` shows.
+    func dismissStopIgnored() {
+        if stopIgnored { stopIgnored = false }
+    }
+
+    /// "Got it" on the note `lastStop` shows. It stays gone after a relaunch.
+    func dismissLastStop() {
+        guard lastStop != nil else { return }
+        lastStop = nil
+        noteDefaults.map(LastStop.clear)
+    }
+
     /// Stops sharing and the sound, and stays stopped with the hotspot on until `wake`.
     private func stop(_ stopped: IdleStopped) {
         idleStopped = stopped
+        // Saved now: iOS suspends Tether once the sound stops, and may end it before anyone looks.
+        // Only a stop of sharing: a Stop with the hotspot off, or WireGuard not running, stopped
+        // nothing anyone used.
+        if sharing {
+            let last = LastStop(stopped)
+            lastStop = last
+            noteDefaults.map(last.save)
+        }
+        if stopIgnored { stopIgnored = false } // this Stop did something
         if running { stopSharing() }
         // Nobody is connected to a stopped server, and no later round may get to say so: iOS suspends
         // Tether once the sound stops, and the widgets are told right after this.
@@ -866,6 +925,12 @@ final class HotspotSession {
         var stats = stats
         stats.run = serverRuns
         if stats != proxyStats { proxyStats = stats }
+    }
+
+    /// Where the device's or the proxy's use this period stands against its limit, for its row (M2).
+    func limitStanding(of id: WireGuardSetup.Peer.ID) -> LimitStanding {
+        followResetDay()
+        return LimitStanding(used: monthlyUsage.of(id, at: now(), calendar: calendar).thisMonth.total, limit: devices.setup.limit(of: id))
     }
 
     /// Resumed at its limit this period, so it's over it until the count resets.
@@ -1085,13 +1150,16 @@ final class HotspotSession {
         case let .answer(response):
             return response
         case let .download(ready, host, config):
-            guard devices.claimReady(address: ready.address, host: host) else {
+            guard devices.claimReady(address: ready.address, host: host, replacing: replacing) else {
                 log("WireGuard: \(client) asked for the config, but the new device couldn't be saved")
                 return ConfigPage.page(.noConfig, status: .unavailable)
             }
             log("WireGuard: \(client) downloaded the config from the page")
+            if let id = replacing { monthlyUsage.newCounters(id) }
+            replacing = nil
             wireGuardPeersChanged()
-            let name = devices.setup.peers.first { $0.id == ready.id }?.name ?? ""
+            // By its address: a device given a new config keeps its own id, not the code's.
+            let name = devices.setup.peers.first { $0.address == ready.address }?.name ?? ""
             let response = ConfigPage.config(config, fileName: WireGuardSetup.fileName(for: name))
             pageHandler.downloaded(response, by: client, forMac: request == .macConfig, at: now)
             return response
@@ -1208,8 +1276,10 @@ final class HotspotSession {
               // from one just after it: only an earlier second counts.
               end == nil || reached.lastHandshake.map({ $0 < end!.wholeSecondsDown }) ?? true,
               let host = host(reachedFrom: reached.endpoint),
-              devices.claimReady(address: ready.address, host: host) else { return }
-        log("WireGuard: a new device connected with the QR code")
+              devices.claimReady(address: ready.address, host: host, replacing: replacing) else { return }
+        log(replacing == nil ? "WireGuard: a new device connected with the QR code" : "WireGuard: a device connected with its new config")
+        if let id = replacing { monthlyUsage.newCounters(id) }
+        replacing = nil
         wireGuardPeersChanged()
     }
 
@@ -1425,4 +1495,68 @@ final class HotspotSession {
 private extension Date {
     /// This time with the fraction of a second dropped.
     var wholeSecondsDown: Date { Date(timeIntervalSince1970: timeIntervalSince1970.rounded(.down)) }
+}
+
+/// Why WireGuard isn't running (M9), as the status card says it: the title is the reason, one line
+/// says what to do, and a button where there's something to tap. The widgets show the title, the
+/// Shortcuts replies the title and the line.
+enum WireGuardProblem: Equatable {
+    /// The Keychain is locked until the first unlock after a restart.
+    case keysLocked
+    /// The saved setup is there but this version can't decode it, see `WireGuardDevices.needsReset`.
+    case keysUnreadable
+    /// New keys couldn't be saved, see `WireGuardDevices.Unsaved`. `load()` tries again each round.
+    case keysUnsaved
+    /// Something else on this iPhone has UDP port 51820.
+    case portTaken
+    /// The server didn't start for another reason, which the log has.
+    case couldNotStart
+
+    /// What the status card's button does, see `action`.
+    enum Action: Equatable {
+        /// Start over with new keys, after the same question as before.
+        case startOver
+        /// Share the log, for a GitHub issue (`Copy.issuesLink`).
+        case shareLog
+
+        /// The button's words.
+        var title: String {
+            switch self {
+            case .startOver: "Start over with new keys"
+            case .shareLog: "Share the log"
+            }
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .keysLocked: "Tether can't read its keys yet"
+        case .keysUnreadable: "Tether can't read its saved keys"
+        case .keysUnsaved: "Tether can't save its keys"
+        case .portTaken: "Port \(WireGuardSetup.port) is taken"
+        case .couldNotStart: "Tether couldn't start"
+        }
+    }
+
+    var line: String {
+        switch self {
+        case .keysLocked:
+            "iOS opens them after the first unlock since a restart. Tether tries again by itself. If this stays for a minute, restart the iPhone."
+        case .keysUnreadable: "Start over with new keys. Every device has to be added again."
+        case .keysUnsaved, .couldNotStart: "It tries again by itself. If this stays, share the log in a GitHub issue."
+        case .portTaken:
+            "Something else on this iPhone uses it. Turn off other VPN or WireGuard tunnels here, or restart the iPhone. Tether tries again by itself."
+        }
+    }
+
+    var action: Action? {
+        switch self {
+        case .keysUnreadable: .startOver
+        case .keysUnsaved, .couldNotStart: .shareLog
+        case .keysLocked, .portTaken: nil
+        }
+    }
+
+    /// The title and the line as one text, for the Shortcuts replies.
+    var text: String { "\(title). \(line)" }
 }

@@ -38,13 +38,13 @@ final class AppExpiryTests: XCTestCase {
 
     func testTheWarningSaysWhenInDays() {
         XCTAssertEqual(AppExpiry.warning(expires: at(26), now: at(23, 12), calendar: utc),
-                       "Tether stops opening in 3 days. Refresh or reinstall it before then.")
+                       "Tether stops opening in 3 days. Refresh it in SideStore or AltStore, or reinstall it, before then.")
         XCTAssertEqual(AppExpiry.warning(expires: at(26, 9), now: at(24, 20), calendar: utc),
-                       "Tether stops opening in 2 days. Refresh or reinstall it before then.", "counted in calendar days")
+                       "Tether stops opening in 2 days. Refresh it in SideStore or AltStore, or reinstall it, before then.", "counted in calendar days")
         XCTAssertEqual(AppExpiry.warning(expires: at(26, 9), now: at(25, 22), calendar: utc),
-                       "Tether stops opening tomorrow. Refresh or reinstall it before then.")
+                       "Tether stops opening tomorrow. Refresh it in SideStore or AltStore, or reinstall it, before then.")
         XCTAssertEqual(AppExpiry.warning(expires: at(26, 20), now: at(26, 8), calendar: utc),
-                       "Tether stops opening today. Refresh or reinstall it before then.")
+                       "Tether stops opening today. Refresh it in SideStore or AltStore, or reinstall it, before then.")
     }
 
     func testWhenIsNilWhileMoreThanThreeDaysAreLeft() {
@@ -52,9 +52,16 @@ final class AppExpiryTests: XCTestCase {
         XCTAssertEqual(AppExpiry.when(expires: at(26, 9), now: at(24, 20), calendar: utc), "in 2 days")
     }
 
+    /// Home, the notification and Settings > About say the same thing to do (L8).
+    func testEveryPlaceSaysTheSameWayOut() {
+        XCTAssertEqual(AppExpiry.refresh, "Refresh it in SideStore or AltStore, or reinstall it, before then.")
+        XCTAssertEqual(AppExpiry.about,
+                       "With a free Apple ID, Tether stops opening after 7 days. Refresh it in SideStore or AltStore, or reinstall it, before then.")
+    }
+
     /// Still running after the moment it expired: it won't open again once closed.
     func testPastTheDateItSaysToday() {
         XCTAssertEqual(AppExpiry.warning(expires: at(26, 8), now: at(26, 9), calendar: utc),
-                       "Tether stops opening today. Refresh or reinstall it before then.")
+                       "Tether stops opening today. Refresh it in SideStore or AltStore, or reinstall it, before then.")
     }
 }

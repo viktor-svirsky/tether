@@ -625,7 +625,7 @@ struct AddDeviceSheet: View {
                             if working {
                                 note("Working")
                             } else if let blocked {
-                                note(blocked)
+                                note(blocked.text)
                             } else {
                                 note("Waiting for the first page")
                             }

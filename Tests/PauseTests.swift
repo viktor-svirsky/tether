@@ -256,16 +256,38 @@ final class PauseTests: XCTestCase {
         var paused = peer
         paused.paused = .byYou
         let cases: [(status: DeviceStatus, label: String, title: String, detail: String?, line: UInt)] = [
-            (DeviceStatus(peer, connected: ["10.7.0.2"]), "Connected", "Connected", nil, #line),
-            (DeviceStatus(peer, connected: []), "Not connected", "Not connected", nil, #line),
-            (DeviceStatus(paused, connected: []), "Paused", "Paused", "It can't connect until you resume it.", #line),
-            (DeviceStatus(paused, connected: ["10.7.0.2"]), "Paused", "Paused", "It can't connect until you resume it.", #line),
+            (DeviceStatus(peer, connected: ["10.7.0.2"], keptOut: false), "Connected", "Connected", nil, #line),
+            (DeviceStatus(peer, connected: [], keptOut: false), "Not connected", "Not connected", nil, #line),
+            (DeviceStatus(paused, connected: [], keptOut: false), "Paused", "Paused", "It can't connect until you resume it.", #line),
+            (DeviceStatus(paused, connected: ["10.7.0.2"], keptOut: false), "Paused", "Paused", "It can't connect until you resume it.", #line),
+            // Only share through a VPN with no VPN (H1): connected, but nothing gets through.
+            (DeviceStatus(peer, connected: ["10.7.0.2"], keptOut: true), "Kept out, no VPN", "Kept out",
+             "No VPN is on, so nothing gets through. It works again when a VPN is on.", #line),
+            (DeviceStatus(peer, connected: ["10.7.0.2"], keptOut: true, onlyFamily: .ipv4), "Kept out, VPN for IPv4 only", "Kept out",
+             "Your VPN carries only IPv4, so nothing gets through. It works again when it carries IPv6 too.", #line),
+            (DeviceStatus(peer, connected: [], keptOut: true), "Not connected", "Not connected", nil, #line),
+            (DeviceStatus(paused, connected: ["10.7.0.2"], keptOut: true), "Paused", "Paused", "It can't connect until you resume it.", #line),
         ]
         for c in cases {
             XCTAssertEqual(c.status.label, c.label, line: c.line)
             XCTAssertEqual(c.status.title, c.title, line: c.line)
             XCTAssertEqual(c.status.detail(resets: "December 1", period: "this month"), c.detail, line: c.line)
         }
+    }
+
+    /// A connected device's row says where it stands against its limit (M2), from 90% as `LimitRules` tells.
+    func testAConnectedRowSaysNearOrOverItsLimit() {
+        let peer = WireGuardSetup.Peer(name: "iPad", publicKey: Data(), address: "10.7.0.2")
+        let connected = DeviceStatus(peer, connected: ["10.7.0.2"], keptOut: false)
+        XCTAssertEqual(connected.label(standing: .under), "Connected")
+        XCTAssertEqual(connected.label(standing: .near), "Connected, near its limit")
+        XCTAssertEqual(connected.label(standing: .over), "Connected, over its limit")
+        XCTAssertEqual(DeviceStatus(peer, connected: [], keptOut: false).label(standing: .over), "Not connected")
+
+        XCTAssertEqual(LimitStanding(used: 9_000_000_000, limit: nil), .under, "no limit")
+        XCTAssertEqual(LimitStanding(used: 8_999_999_999, limit: 10_000_000_000), .under)
+        XCTAssertEqual(LimitStanding(used: 9_000_000_000, limit: 10_000_000_000), .near, "90%, where it's told")
+        XCTAssertEqual(LimitStanding(used: 10_000_000_000, limit: 10_000_000_000), .over)
     }
 
     // MARK: The demo

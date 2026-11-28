@@ -151,7 +151,7 @@ final class ProxyTests: TetherUITestCase {
         launch(.proxy)
         let row = reveal(element("proxy.row"))
         XCTAssertTrue(row.label.contains("Proxy"), row.label)
-        XCTAssertTrue(row.label.contains("2 open"), row.label)
+        XCTAssertTrue(row.label.contains("2 connections open"), row.label)
         XCTAssertTrue(row.label.contains("85 MB this month"), row.label)
         XCTAssertGreaterThan(row.frame.minY, element("device.Windows PC").frame.minY, "under the devices")
         // Its open connections count as using Tether, next to the iPad.
@@ -254,7 +254,7 @@ final class ProxyTests: TetherUITestCase {
     func testTheRowAndTheScreenWorkAtTheLargestTextSize() throws {
         launch(.proxyIPv6, arguments: largest)
         let row = reveal(element("proxy.row"), maxSwipes: 30)
-        XCTAssertTrue(row.label.contains("2 open"), row.label)
+        XCTAssertTrue(row.label.contains("2 connections open"), row.label)
         try audit(types: [.textClipped], only: "proxy.")
         openProxy(maxSwipes: 30)
         for id in ["proxy.status", "proxy.thisMonth", "proxy.server", "proxy.serverIPv6", "proxy.port", "proxy.note", "proxy.off"] {

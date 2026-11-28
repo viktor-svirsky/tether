@@ -2,9 +2,9 @@ import XCTest
 
 /// One device's screen (status, rename, remove) and the WireGuard problem section on the main screen.
 final class DeviceViewTests: TetherUITestCase {
-    private let lockedText = "Its keys can't be read yet. Unlock this iPhone once."
-    private let resetText = "Its saved keys can't be read. Start over with new keys to use it."
-    private let unsavedText = "Its new keys can't be saved. If this stays, share the log from Settings."
+    private let lockedText = "Tether can't read its keys yet. iOS opens them after the first unlock since a restart. Tether tries again by itself. If this stays for a minute, restart the iPhone."
+    private let resetText = "Tether can't read its saved keys. Start over with new keys. Every device has to be added again."
+    private let unsavedText = "Tether can't save its keys. It tries again by itself. If this stays, share the log in a GitHub issue."
 
     // MARK: one device
 

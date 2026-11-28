@@ -4,7 +4,7 @@ import XCTest
 /// counts as a VPN, is covered by HotspotSessionTests. A demo launch never has a VPN, so turning the
 /// switch on keeps its devices out, and the main screen says so.
 final class SettingsVPNTests: TetherUITestCase {
-    static let blocked = "No VPN is on, so no device gets through until one is. Turn your VPN on, or turn off Only share through a VPN in Settings."
+    static let blocked = "No device gets through until a VPN is on. Turn your VPN on, or turn off Only share through a VPN in Settings."
     static let footer = "When it's on and no VPN carries this iPhone's internet, no device gets through. Tether pauses the devices when it sees the VPN go, which can take a few seconds. Turn a VPN on in its app, or with Set VPN in Shortcuts: Tether can't pick one."
 
     func testOnlyShareThroughAVPNIsASwitchOffAtFirstAndKeptAfterClosing() throws {
@@ -41,7 +41,7 @@ final class SettingsVPNTests: TetherUITestCase {
         flip(toggle)
         app.buttons["settings.done"].tap()
         XCTAssertTrue(element("status.title").waitForExistence(timeout: 5))
-        XCTAssertEqual(label(of: "vpn.blocked"), "Your VPN carries only IPv4, and this iPhone's IPv6 goes around it, so no device gets through. Turn on IPv6 in your VPN, or turn off Only share through a VPN in Settings.")
+        XCTAssertEqual(label(of: "vpn.blocked"), "This iPhone's IPv6 goes around it, so no device gets through. Turn on IPv6 in your VPN, or turn off Only share through a VPN in Settings.")
         try audit(only: "vpn.")
     }
 }

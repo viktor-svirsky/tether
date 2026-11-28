@@ -8,7 +8,10 @@
 //   Traffic.swift       the server's byte counters, Foundation only
 //   Format.swift        bytes and speeds as text
 //   MainView.swift      MainView (the main screen), StatusCard, and the speeds
-//   DevicesView.swift   Add a device on the main screen, and a device's own screen
+//   HomeStatus.swift    what the status card says, and the warnings and notes under it, Foundation only
+//   LastStop.swift      the last stop, kept for a note on the main screen, Foundation only
+//   DevicesView.swift   a device's own screen
+//   HomeSections.swift  Add a device and why WireGuard isn't running, on the main screen
 //   ProxyView.swift     the HTTP proxy's own screen (#78)
 //   AddDeviceSheet.swift the steps to add a device, with the QR code for it
 //   AddDeviceProgress.swift  how far adding a device has got, for the sheet, Foundation only
@@ -23,6 +26,8 @@
 //     LocalNetworkIntroView.swift is that screen
 //   Notices.swift       what to tell in a notification and when, and asking for permission, Foundation only
 //   SettingsView.swift  the Settings sheet behind the gear, and the system's notification center
+//   LogFile.swift       the log Settings shares, as a file
+//   CopiedToast.swift   "Copied" for a moment after a copy, on every screen that copies
 //   DebugLog.swift      the log Settings shares, kept in a file, Foundation only
 //   LogRedaction.swift  what each line of that log leaves out, Foundation only
 //   DemoMode.swift      fake app state for the UI tests, Debug builds only
@@ -65,7 +70,7 @@ final class Model: ObservableObject {
     var wireGuardReady: WireGuardSetup.Ready? { session.wireGuardReady }
     var wireGuardReadyProblem: String? { session.wireGuardReadyProblem }
     var wireGuardDeviceProblem: HotspotSession.DeviceProblem? { session.wireGuardDeviceProblem }
-    var wireGuardProblem: String? { session.wireGuardProblem }
+    var wireGuardProblem: WireGuardProblem? { session.wireGuardProblem }
     var sharing: Bool { session.sharing }
     var wireGuardNeedsReset: Bool { session.wireGuardNeedsReset }
     /// The HTTP proxy (#78), see `HotspotSession.proxy`. Paused, limited and counted by its id, like a device.
@@ -83,6 +88,55 @@ final class Model: ObservableObject {
     var blockedWithoutVPN: Bool { session.blockedWithoutVPN }
     /// At or below the low battery level and not charging, see `HotspotSession.belowBatteryStop`.
     var belowBatteryStop: BelowBatteryStop? { session.belowBatteryStop }
+    /// The last stop, until "Got it", see `HotspotSession.lastStop`.
+    var lastStop: LastStop? { session.lastStop }
+    /// Stop was pressed while Tether was open, until "Got it", see `HotspotSession.stopIgnored`.
+    var stopIgnored: Bool { session.stopIgnored }
+
+    /// What the status card says (H1, M9), see `HomeStatus`.
+    var homeStatus: HomeStatus {
+        HomeStatus(localNetworkDenied: localNetworkDenied, problem: wireGuardProblem, sharing: sharing,
+                   blockedWithoutVPN: blockedWithoutVPN, onlyFamily: vpnOnlyFamily)
+    }
+
+    /// The warnings and notes between the status card and Devices, unsorted: `HomeNote.fold` orders them (M13).
+    var homeNotes: [HomeNote] {
+        var notes: [HomeNote] = []
+        if sharing, let below = belowBatteryStop { notes.append(.lowBattery(below.text)) }
+        if staleConfigShown { notes.append(.staleConfig) }
+        if let expiryWarning { notes.append(.expiry(expiryWarning)) }
+        if let lastStop { notes.append(.lastStop(lastStop)) }
+        if stopIgnored { notes.append(.stopIgnored) }
+        // Only while it can still be answered: Allow in Settings answers it too.
+        if offersNotifications, noticePermission == .notAsked { notes.append(.offerNotifications) }
+        return notes
+    }
+
+    /// A note's words, on the demo's clock in a demo, like `lastConnected`.
+    func text(of note: HomeNote) -> String {
+        note.text(now: screenNow, calendar: .current)
+    }
+
+    /// "Got it" on a note, or "Not now" on the one that offers notifications, which hides it for good.
+    func dismiss(_ note: HomeNote) {
+        switch note {
+        case .lastStop: session.dismissLastStop()
+        case .stopIgnored: session.dismissStopIgnored()
+        case .offerNotifications:
+            NoticeOffer.decline(in: settingsDefaults)
+            offersNotifications = false
+        case .lowBattery, .staleConfig, .expiry: break // they go once they're no longer true
+        }
+    }
+
+    /// "Allow notifications" on Home's note (M7): the system's question, and the note goes.
+    func allowNotificationsFromNote() {
+        offersNotifications = false
+        askForNotices()
+    }
+
+    /// See `HotspotSession.limitStanding(of:)`.
+    func limitStanding(of id: WireGuardSetup.Peer.ID) -> LimitStanding { session.limitStanding(of: id) }
 
     /// iOS blocks Tether's replies to the devices, see `LocalNetworkCheck`. Checked while on screen.
     @Published private(set) var localNetworkDenied = false
@@ -104,6 +158,8 @@ final class Model: ObservableObject {
 
     /// For the Settings sheet. Refreshed each time Tether comes on screen and when Settings opens, see `refreshNoticePermission`.
     @Published private(set) var noticePermission: NoticePermission = .notAsked
+    /// Home offers notifications in a note (M7), see `NoticeOffer`.
+    @Published private(set) var offersNotifications = false
     /// Where Settings saves the notification switches and the idle stop. A demo launch has its own, emptied at launch.
     let settingsDefaults: UserDefaults
     private var notifier: Notifier
@@ -144,12 +200,16 @@ final class Model: ObservableObject {
     private var demo: DemoState?
     /// The `notificationsScreen` demo opens on the Settings sheet.
     var opensSettings: Bool { demo?.scenario == .notificationsScreen }
+    /// The `replaceDevice` demo opens Add a device to give the Windows PC a new config (M1).
+    var addDeviceReplaces: WireGuardSetup.Peer.ID? {
+        demo?.scenario == .replaceDevice ? wireGuardPeers.first { $0.name == "Windows PC" }?.id : nil
+    }
     /// Some demos open on the Add a device sheet, past its first question.
     var opensAddDevice: Bool { addDeviceOpensOn != nil }
     var addDeviceOpensOn: AddDeviceWay? {
         switch demo?.scenario {
-        case .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved: .wireGuard
-        case .addDeviceProxy, .addDeviceProxyWorking: .proxy
+        case .addDeviceScreen, .addDeviceComputer, .addDeviceComputerIPv6, .addDeviceWaiting, .addDeviceDone, .addDeviceDoneUnsaved, .replaceDevice: .wireGuard
+        case .addDeviceProxy, .addDeviceProxyWorking, .addDeviceProxyOff: .proxy
         default: nil
         }
     }
@@ -168,6 +228,7 @@ final class Model: ObservableObject {
     }
     #else
     var opensSettings: Bool { false }
+    var addDeviceReplaces: WireGuardSetup.Peer.ID? { nil }
     var opensAddDevice: Bool { false }
     var addDeviceOpensOn: AddDeviceWay? { nil }
     var addDeviceFollows: WireGuardSetup.Peer.ID? { nil }
@@ -204,6 +265,7 @@ final class Model: ObservableObject {
             showsLocalNetworkIntro = demo.showsLocalNetworkIntro
             staleConfigShown = session.showsStaleConfig
             if demo.scenario == .notifying { postDemoNoticeInBackground() }
+            offersNotifications = demo.offersNotifications
             return // no watcher, sampler or scene observers
         }
         #endif
@@ -282,7 +344,7 @@ final class Model: ObservableObject {
                        blockLocal: {
                            settleLocalNetworks(settings, secrets: secrets) // once the Keychain can be read
                            return !LocalNetworks.allowed(in: settings)
-                       }, usageDefaults: settings,
+                       }, usageDefaults: settings, noteDefaults: settings,
                        resetDay: { ResetDay.saved(in: settings) }, hostName: MDNSHostName(log: Self.append),
                        cellular: { "\(Interfaces.pdpIp0(in: Interfaces.addresses())), \(cellular.dataLine())" },
                        internetVPN: { Interfaces.reading(nat64: WireGuardServer.nat64Prefix) },
@@ -346,7 +408,7 @@ final class Model: ObservableObject {
 
     /// After each watcher round: what to tell, see `Notifier`. In the background the round has just
     /// read who is connected, so this costs no more reads of the server. On screen, the first thing it
-    /// would have told asks for permission.
+    /// would have told offers notifications on Home, see `NoticeOffer`.
     /// Gives the task that posts, nil when there's nothing to post.
     @discardableResult
     private func notify() -> Task<Void, Never>? {
@@ -355,7 +417,7 @@ final class Model: ObservableObject {
                                                     connected: session.connectedNow, expires: expires,
                                                     idleStopped: session.idleStopped, limitAlerts: session.limitAlerts,
                                                     keptOut: session.blockedWithoutVPN))
-        if notifier.wouldTell { askForNotices() }
+        if notifier.wouldTell { offerNotices() }
         let alarm = closedAlarm.check(now: Date(), sharing: session.sharing, on: NoticeKind.closed.isOn(in: settingsDefaults))
         if alarm != .none { poster.queue(alarm) }
         for notice in notices { Self.append(notice.logLine) }
@@ -368,6 +430,16 @@ final class Model: ObservableObject {
             await poster.post(notices)
             await poster.alarmDone()
             background.end()
+        }
+    }
+
+    /// Home's note, once iOS was never asked and nobody said Not now. The permission is read again
+    /// first: it may have changed in iOS Settings since Tether came on screen.
+    private func offerNotices() {
+        guard !offersNotifications else { return }
+        Task {
+            await refreshNoticePermission()
+            if NoticeOffer.shows(wouldTell: true, permission: noticePermission, defaults: settingsDefaults) { offersNotifications = true }
         }
     }
 
@@ -385,9 +457,9 @@ final class Model: ObservableObject {
     }
 
     #if DEBUG
-    /// The `notifying` demo: it asks for permission on screen at launch, the way a device connecting
-    /// there does, and leaving the screen posts one notice through the real notification center. A
-    /// demo has no silent sound, so a background task keeps it running for that.
+    /// The `notifying` demo: it asks for permission on screen at launch, through the real notification
+    /// center, and leaving the screen posts one notice there. A demo has no silent sound, so a
+    /// background task keeps it running for that.
     private func postDemoNoticeInBackground() {
         askForNotices()
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
@@ -449,13 +521,17 @@ final class Model: ObservableObject {
     }
 
     /// See `HotspotSession.stopNow`. Only from the background: with Control Center over the open app
-    /// Tether is inactive, not gone, and closing Control Center would start it again.
+    /// Tether is inactive, not gone, and closing Control Center would start it again. Home says so
+    /// then (M11), see `HotspotSession.ignoreStop`.
     @discardableResult
     func stopNow() -> Bool {
         #if DEBUG
         if demo != nil { return false }
         #endif
-        guard UIApplication.shared.applicationState == .background else { return false }
+        guard UIApplication.shared.applicationState == .background else {
+            session.ignoreStop()
+            return false
+        }
         return session.stopNow()
     }
 
@@ -496,7 +572,7 @@ final class Model: ObservableObject {
         // Running, but not for long: what Start Tether says in Shortcuts then (#164), so a Start on a
         // widget that couldn't keep Tether running says why it shows Stopped again.
         let cantStay = session.running && !session.staysRunning ? "Tether couldn't keep running in the background. Open it once." : nil
-        return WidgetState(sharing: session.sharing && session.staysRunning, awake: session.awake, problem: session.wireGuardProblem ?? cantStay,
+        return WidgetState(sharing: session.sharing && session.staysRunning, awake: session.awake, problem: session.wireGuardProblem?.title ?? cantStay,
                            connected: session.connectedPeers.map { WidgetState.Device(id: $0.id, name: $0.name) },
                            vpn: session.vpnInterface != nil, blockedWithoutVPN: session.blockedWithoutVPN)
     }
@@ -583,9 +659,9 @@ final class Model: ObservableObject {
     /// See `HotspotSession.setProxy`.
     func setProxy(on: Bool) { session.setProxy(on: on) }
 
-    /// See `HotspotSession.openAddWindow`.
-    func openAddWindow() {
-        session.openAddWindow()
+    /// See `HotspotSession.openAddWindow`. With `replacing`, Add a device gives that device a new config (M1).
+    func openAddWindow(replacing: WireGuardSetup.Peer.ID? = nil) {
+        session.openAddWindow(replacing: replacing)
     }
 
     /// See `HotspotSession.closeAddWindow`.
@@ -602,11 +678,15 @@ final class Model: ObservableObject {
     /// "Today at 4:00 PM", or "Never": see `HotspotSession.lastConnected(of:)`. A demo goes by its own
     /// clock, like the expiry warning.
     func lastConnected(of id: WireGuardSetup.Peer.ID) -> String {
-        var now = Date()
+        Format.lastConnected(session.lastConnected(of: id), now: screenNow, calendar: .current)
+    }
+
+    /// Now, or the demo's clock in a demo.
+    private var screenNow: Date {
         #if DEBUG
-        if demo != nil { now = DemoScenario.now }
+        if demo != nil { return DemoScenario.now }
         #endif
-        return Format.lastConnected(session.lastConnected(of: id), now: now, calendar: .current)
+        return Date()
     }
 
     /// See `HotspotSession.connectsFrom(of:)`.
