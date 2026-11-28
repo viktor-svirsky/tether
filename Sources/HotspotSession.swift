@@ -423,7 +423,7 @@ final class HotspotSession {
         if below != belowBatteryStop { belowBatteryStop = below }
         guard let below, sharing, inBackground, idleStopped == nil else { return }
         log("battery at \(below.percent)%, at or below \(below.level.rawValue)%, stopping until Tether is opened")
-        stop(IdleStopped(at: now(), after: idleStopAfter(), lowBattery: below.level))
+        stop(IdleStopped(at: now(), after: idleStopAfter(), lowBattery: below.level, batteryPercent: below.percent))
     }
 
     /// The battery now, against the level. Nil at Never, while charging, or when iOS can't say.
@@ -582,14 +582,25 @@ final class HotspotSession {
         self.replacing = replacing
         // A code still let in from a sheet closed less than 10 minutes ago may be on another device
         // already, which would take this one's place: a new code for this one.
-        if replacing != nil, readyLetIn, devices.replaceReady() { wireGuardPeersChanged() }
+        // Even when the new code can't be saved: the earlier one leaves the server all the same.
+        if replacing != nil, readyLetIn {
+            devices.replaceReady()
+            wireGuardPeersChanged()
+        }
         addWindow.sheetOpened()
         followAddWindow()
     }
 
-    /// The Add a device sheet went away. Its code works 10 more minutes, see `addWindowOpen`, but a
-    /// device that claims it then is a new one: closing the sheet leaves the device it replaced as it was.
+    /// The Add a device sheet went away. Its code works 10 more minutes, see `addWindowOpen`. Not a
+    /// code for a new config: one scanned and claimed after the sheet closed would be a second device
+    /// next to the one it was for, with no limit or pause. Closing leaves that device as it was.
+    /// Leaving the screen doesn't come through here, so the code still works then.
     func closeAddWindow() {
+        if replacing != nil, devices.loaded {
+            replacing = nil
+            devices.replaceReady()
+            wireGuardPeersChanged()
+        }
         replacing = nil
         addWindow.sheetClosed(now: now(), sceneActive: sceneActive)
         followAddWindow()
@@ -690,7 +701,7 @@ final class HotspotSession {
             connected = unpaused(snapshot.connected)
             proxyStats = snapshot.proxy
         }
-        let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running, keptOut: blockedWithoutVPN).inUse } ?? false
+        let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running, keptOut: blockedWithoutVPN, onlyFamily: vpnOnlyFamily).inUse } ?? false
         return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem, proxyInUse: proxyInUse,
                                    idleStopped: idleStopped != nil, stoppedByYou: idleStopped?.byYou == true,
                                    lowBattery: idleStopped?.lowBattery != nil,
@@ -704,7 +715,7 @@ final class HotspotSession {
         guard devices.loaded else { return nil }
         let connected = running && server.running ? unpaused(server.snapshot().connected) : []
         return devices.setup.peers.map {
-            let status = DeviceStatus($0, connected: connected, keptOut: blockedWithoutVPN)
+            let status = DeviceStatus($0, connected: connected, keptOut: blockedWithoutVPN, onlyFamily: vpnOnlyFamily)
             return ShortcutReply.Device(id: $0.id, name: $0.name,
                                         status: status.label(now: now(), calendar: calendar, standing: limitStanding(of: $0.id)))
         }
@@ -791,8 +802,9 @@ final class HotspotSession {
     private func stop(_ stopped: IdleStopped) {
         idleStopped = stopped
         // Saved now: iOS suspends Tether once the sound stops, and may end it before anyone looks.
-        // Only a stop of sharing: a Stop with the hotspot off stopped nothing anyone used.
-        if running {
+        // Only a stop of sharing: a Stop with the hotspot off, or WireGuard not running, stopped
+        // nothing anyone used.
+        if sharing {
             let last = LastStop(stopped)
             lastStop = last
             noteDefaults.map(last.save)
@@ -1143,6 +1155,7 @@ final class HotspotSession {
                 return ConfigPage.page(.noConfig, status: .unavailable)
             }
             log("WireGuard: \(client) downloaded the config from the page")
+            if let id = replacing { monthlyUsage.newCounters(id) }
             replacing = nil
             wireGuardPeersChanged()
             // By its address: a device given a new config keeps its own id, not the code's.
@@ -1265,6 +1278,7 @@ final class HotspotSession {
               let host = host(reachedFrom: reached.endpoint),
               devices.claimReady(address: ready.address, host: host, replacing: replacing) else { return }
         log(replacing == nil ? "WireGuard: a new device connected with the QR code" : "WireGuard: a device connected with its new config")
+        if let id = replacing { monthlyUsage.newCounters(id) }
         replacing = nil
         wireGuardPeersChanged()
     }

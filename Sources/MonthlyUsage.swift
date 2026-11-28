@@ -158,6 +158,12 @@ struct MonthlyUsage: Codable, Equatable {
         }
     }
 
+    /// The device's counters start again from zero elsewhere: a new config gave it a new key and
+    /// address (M1). Its next read counts in full, whether it's bigger than the old counter or not.
+    mutating func newCounters(_ id: UUID) {
+        seen[id] = nil
+    }
+
     /// This period and the last as of `date`, so a period that ended with no read since shows right.
     func of(_ id: UUID, at date: Date, calendar: Calendar) -> Usage {
         guard let device = devices[id] else { return Usage() }
