@@ -95,8 +95,12 @@ final class HotspotSession {
     private(set) var wireGuardPeerStats: [String: PeerStats] = [:] { willSet { willChange() } }
     /// The last config that knocked but no longer works, read with every sample, see `showsStaleConfig`.
     private(set) var staleConfig: StaleConfig? { willSet { willChange() } }
-    /// Sharing stopped after a time with no device connected, until Tether is opened or Start Tether runs.
+    /// Sharing stopped after a time with no device connected, from a widget, or at low battery, until
+    /// Tether is opened or Start Tether runs.
     private(set) var idleStopped: IdleStopped? { willSet { willChange() } }
+    /// The battery is at or below the stop level and not charging, as the last watcher round read it,
+    /// for the main screen's line, see `stopAtLowBattery`.
+    private(set) var belowBatteryStop: BelowBatteryStop? { willSet { willChange() } }
     /// Devices that came near or reached their data limit, for the notifications, the latest last.
     private(set) var limitAlerts: [LimitAlert] = [] { willSet { willChange() } }
     /// The HTTP proxy as saved: on or off, paused, its limit (#78). Nil until it's first turned on.
@@ -133,6 +137,11 @@ final class HotspotSession {
     private let carrierIPv6Only: () -> Bool
     /// The setting in Settings > Sharing, read each round, so a change counts at once.
     private let idleStopAfter: () -> IdleStop.After
+    /// Settings > Sharing > Stop sharing at low battery, read each round, like `idleStopAfter`.
+    private let lowBatteryStop: () -> LowBatteryStop.Level
+    /// What iOS says about the battery. `true` asks for monitoring, which iOS needs before it says
+    /// anything, `false` turns it off again and reads nothing, so Never costs nothing.
+    private let battery: (_ monitor: Bool) -> LowBatteryStop.Battery
     /// Settings > Devices: where the server sends lookups to its own address, the DNS server every
     /// config names, read for each start and change, see `dnsChanged`.
     private let dns: () -> DNSChoice.Upstream
@@ -222,7 +231,10 @@ final class HotspotSession {
 
     init(devices: WireGuardDevices, server: WireGuardServing, keepAlive: KeepAliveSound, page: ConfigPageServing,
          sceneActive: Bool, hotspotAddress: @escaping () -> String?, carrierIPv6Only: @escaping () -> Bool = { false },
-         idleStopAfter: @escaping () -> IdleStop.After = { .never }, dns: @escaping () -> DNSChoice.Upstream = { DNSChoice.defaultUpstream },
+         idleStopAfter: @escaping () -> IdleStop.After = { .never },
+         lowBatteryStop: @escaping () -> LowBatteryStop.Level = { .never },
+         battery: @escaping (_ monitor: Bool) -> LowBatteryStop.Battery = { _ in .unknown },
+         dns: @escaping () -> DNSChoice.Upstream = { DNSChoice.defaultUpstream },
          blockLocal: @escaping () -> Bool = { false },
          usageDefaults: UserDefaults? = nil, calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init,
          resetDay: @escaping () -> ResetDay = { .default }, hostName: HostNamePublishing? = nil, cellular: @escaping @MainActor () -> String = { "" },
@@ -238,6 +250,8 @@ final class HotspotSession {
         self.carrierIPv6Only = carrierIPv6Only
         self.blockLocal = blockLocal
         self.idleStopAfter = idleStopAfter
+        self.lowBatteryStop = lowBatteryStop
+        self.battery = battery
         self.dns = dns
         self.usageDefaults = usageDefaults
         self.calendar = calendar
@@ -276,6 +290,7 @@ final class HotspotSession {
         // Also with the hotspot off, so a device paused at its limit connects again when the count resets.
         checkLimits()
         stopWhenIdle()
+        stopAtLowBattery()
     }
 
     /// The hotspot interface exists only while Personal Hotspot is on. This starts WireGuard when
@@ -372,6 +387,29 @@ final class HotspotSession {
         log("no device connected for \(after.spelledOut), stopping until Tether is opened")
         stop(IdleStopped(at: now, after: after))
     }
+
+    /// Stops sharing at or below the battery level while not charging, see `LowBatteryStop`. Only in
+    /// the background, like the idle stop: on screen the main screen says it will stop on leaving.
+    /// Opening Tether shares again, see `wake`.
+    private func stopAtLowBattery() {
+        let below = readBelowBatteryStop()
+        if below != belowBatteryStop { belowBatteryStop = below }
+        guard let below, sharing, !sceneActive, idleStopped == nil else { return }
+        log("battery at \(below.percent)%, at or below \(below.level.rawValue)%, stopping until Tether is opened")
+        stop(IdleStopped(at: now(), after: idleStopAfter(), lowBattery: below.level))
+    }
+
+    /// The battery now, against the level. Nil at Never, while charging, or when iOS can't say.
+    private func readBelowBatteryStop() -> BelowBatteryStop? {
+        let level = lowBatteryStop()
+        let reading = battery(level != .never)
+        guard LowBatteryStop.low(reading, at: level), let percent = reading.percent else { return nil }
+        return BelowBatteryStop(percent: percent, level: level)
+    }
+
+    /// Start Tether below the battery level, not charging: it would share, and the next round stop
+    /// again, so the action says why instead (#311). Read now: a launch for the action has had no round.
+    var startRefusedAtLowBattery: Bool { readBelowBatteryStop() != nil }
 
     /// Plays the silent sound while the hotspot is on, and for a while after it goes, see
     /// `KeepAlivePolicy`. Once it stops, iOS suspends Tether, and it starts again when opened.
@@ -606,6 +644,7 @@ final class HotspotSession {
         let proxyInUse = proxy.map { ProxyStatus($0, stats: proxyStats, hotspotOn: running).inUse } ?? false
         return ShortcutReply.State(running: running, connected: connected.count, problem: wireGuardProblem, proxyInUse: proxyInUse,
                                    idleStopped: idleStopped != nil, stoppedByYou: idleStopped?.byYou == true,
+                                   lowBattery: idleStopped?.lowBattery != nil,
                                    keptAlive: !running || keepAlive.sounding, blockedWithoutVPN: blockedWithoutVPN)
     }
 

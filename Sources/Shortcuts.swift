@@ -13,6 +13,8 @@ struct StartTetherIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> & ProvidesDialog {
         let model = Model.shared
+        // It would share, and the next round stop at the battery level again (#311).
+        if model.startRefusedAtLowBattery { return .result(value: false, dialog: "\(ShortcutReply.lowBatteryStart)") }
         let keptAlive = model.wake()
         let state = model.shortcutState()
         return .result(value: state.sharing, dialog: "\(ShortcutReply.start(state, keptAlive: keptAlive))")
