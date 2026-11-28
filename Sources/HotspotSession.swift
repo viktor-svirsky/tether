@@ -365,7 +365,10 @@ final class HotspotSession {
         // Nor one the proxy refuses for want of a VPN.
         let proxyMoved = proxy?.paused == nil && !blockedWithoutVPN && (idleProxyTraffic.map { $0 != proxyStats.traffic } ?? false)
         idleProxyTraffic = proxyStats.traffic
-        let connected = !connectedNow.isEmpty || proxyMoved
+        // A device paused for a set time with its tunnel up comes back when the time is up (#312), so it
+        // counts as a connected one. Not one paused by you or at its limit.
+        let waiting = devices.setup.peers.contains { $0.paused?.until != nil && tunnelsUp.contains($0.address) }
+        let connected = !connectedNow.isEmpty || proxyMoved || waiting
         guard idleStop.check(sharing: sharing, connected: connected, onScreen: sceneActive, after: after, now: now) else {
             return
         }
@@ -831,6 +834,9 @@ final class HotspotSession {
     private func publishConnected() {
         let connected = unpaused(tunnelsUp)
         if connected != wireGuardConnected { wireGuardConnected = connected }
+        // Off screen the idle stop reads the watcher's list, so a pause that began or ended in this
+        // round counts in it now, not at the next read.
+        if !sceneActive { watchedConnected = connected }
     }
 
     /// It names its device, so another device's screen doesn't show it.
@@ -1250,17 +1256,20 @@ final class HotspotSession {
         followResetDay()
         let now = self.now()
         var changed = false
-        // A timed pause ends at the first round at or after its end (#312), and the limit below then
-        // counts in the same round. One that couldn't be saved is tried again at the next.
-        for id in LimitRules.timedPausesOver(limitDevices(at: now), at: now) where devices.pause(id, nil) {
-            changed = true
-            log("WireGuard: a timed pause ended")
-        }
-        for device in limitDevices(at: now) {
+        // A timed pause ends at the first round at or after its end (#312), and the limit below counts
+        // in the same round as if it weren't paused. Over its limit, it goes straight to paused at its
+        // limit in one save, so a save that fails leaves the timed pause, never the device let through.
+        // One that couldn't be saved is tried again at the next round.
+        let devicesNow = limitDevices(at: now)
+        let over = Set(LimitRules.timedPausesOver(devicesNow, at: now))
+        for var device in devicesNow {
+            var ended = over.contains(device.id)
+            if ended { device.paused = nil }
             switch LimitRules.action(for: device) {
             case .resume?:
                 changed = devices.pause(device.id, nil) || changed
             case .pauseAtLimit?:
+                ended = false // this save replaces the timed pause, or leaves it
                 guard let limit = device.limit, devices.pause(device.id, .atLimit) else { continue }
                 changed = true
                 log("WireGuard: a device reached its limit and is paused until the count resets")
@@ -1272,6 +1281,10 @@ final class HotspotSession {
                 alert(device.id, device.name, .near, used: device.used, limit: limit, now: now)
             case nil:
                 break
+            }
+            if ended, devices.pause(device.id, nil) {
+                changed = true
+                log("WireGuard: a timed pause ended")
             }
         }
         if changed {
