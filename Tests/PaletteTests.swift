@@ -28,7 +28,6 @@ final class PaletteTests: XCTestCase {
             let marks: [(String, Palette.Role, Palette.Role)] = [
                 ("live dot on paper", .live, .paper),
                 ("live dot on the card", .live, .card),
-                ("switch on: knob on the ink track", .paper, .ink),
                 ("switch off: edge and knob on paper", .secondary, .paper),
             ]
             for (name, mark, background) in marks {
@@ -36,6 +35,35 @@ final class PaletteTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(ratio, 3, "\(name), \(dark ? "dark" : "light"): \(ratio)")
             }
             XCTAssertGreaterThanOrEqual(Palette.color(.ink, dark: dark).contrast(with: paper), 3, "switch on: track on paper")
+        }
+    }
+
+    /// Filled buttons are ink with paper text, and the switch's knob is paper on ink: text contrast.
+    func testPaperReadsOnInkInBothModes() {
+        for dark in [false, true] {
+            let ratio = Palette.color(.paper, dark: dark).contrast(with: Palette.color(.ink, dark: dark))
+            XCTAssertGreaterThanOrEqual(ratio, 4.5, "paper on ink, \(dark ? "dark" : "light"): \(ratio)")
+        }
+    }
+
+    /// With Increase Contrast on, secondary text reaches 7:1 on every background (WCAG AAA).
+    func testIncreaseContrastGivesSecondaryTextSevenToOne() {
+        for dark in [false, true] {
+            let secondary = Palette.color(.secondary, dark: dark, highContrast: true)
+            XCTAssertNotEqual(secondary, Palette.color(.secondary, dark: dark))
+            for background in Palette.backgroundRoles {
+                let ratio = secondary.contrast(with: Palette.color(background, dark: dark, highContrast: true))
+                XCTAssertGreaterThanOrEqual(ratio, 7, "secondary on \(background), \(dark ? "dark" : "light"), high contrast: \(ratio)")
+            }
+        }
+    }
+
+    /// Increase Contrast leaves the other colours as they are.
+    func testIncreaseContrastOnlyChangesSecondary() {
+        for dark in [false, true] {
+            for role in Palette.Role.allCases where role != .secondary {
+                XCTAssertEqual(Palette.color(role, dark: dark, highContrast: true), Palette.color(role, dark: dark), "\(role)")
+            }
         }
     }
 

@@ -47,8 +47,11 @@ enum Palette {
         case danger
     }
 
-    static func color(_ role: Role, dark: Bool) -> RGB {
-        dark ? darkValue(role) : lightValue(role)
+    /// `highContrast` is iOS's Increase Contrast setting. It only changes secondary text, which
+    /// has the least margin: there it reaches 7:1 on every background.
+    static func color(_ role: Role, dark: Bool, highContrast: Bool = false) -> RGB {
+        if highContrast, role == .secondary { return dark ? RGB(0xB8B7B1) : RGB(0x4A4945) }
+        return dark ? darkValue(role) : lightValue(role)
     }
 
     private static func lightValue(_ role: Role) -> RGB {

@@ -13,10 +13,11 @@ enum Theme {
     static let live = color(.live)
     static let danger = color(.danger)
 
-    /// A colour that follows the iPhone's appearance.
+    /// A colour that follows the iPhone's appearance and its Increase Contrast setting.
     static func color(_ role: Palette.Role) -> Color {
         Color(uiColor: UIColor { traits in
-            let rgb = Palette.color(role, dark: traits.userInterfaceStyle == .dark)
+            let rgb = Palette.color(role, dark: traits.userInterfaceStyle == .dark,
+                                    highContrast: traits.accessibilityContrast == .high)
             return UIColor(red: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
         })
     }
@@ -25,24 +26,29 @@ enum Theme {
     static let dotSpacing: CGFloat = 16
 }
 
-/// The dot grid, shifted by `offset` so it moves with the content of a scroll view behind it.
+/// The dot grid. It's drawn once, one row of dots taller than the view, and `offset` (0 up to one
+/// spacing) only moves it, so scrolling redraws nothing. The columns are centred, so no dot is
+/// cut at an edge.
 struct DotGrid: View {
     var offset: CGFloat = 0
 
     var body: some View {
+        let spacing = Theme.dotSpacing
         Canvas { context, size in
-            let spacing = Theme.dotSpacing
-            let shift = offset.truncatingRemainder(dividingBy: spacing)
-            var y = -shift
-            while y < size.height + spacing {
-                var x: CGFloat = spacing / 2
-                while x < size.width {
-                    context.fill(Path(ellipseIn: CGRect(x: x - 1, y: y - 1, width: 2, height: 2)), with: .color(Theme.dot))
-                    x += spacing
+            let columns = Int(size.width / spacing)
+            let left = (size.width - CGFloat(max(columns - 1, 0)) * spacing) / 2
+            var dots = Path()
+            var y = spacing / 2
+            while y < size.height {
+                for column in 0..<columns {
+                    dots.addEllipse(in: CGRect(x: left + CGFloat(column) * spacing - 1, y: y - 1, width: 2, height: 2))
                 }
                 y += spacing
             }
+            context.fill(dots, with: .color(Theme.dot))
         }
+        .padding(.bottom, -spacing)
+        .offset(y: -offset)
         .accessibilityHidden(true)
         .allowsHitTesting(false)
     }
@@ -60,9 +66,19 @@ extension View {
         }
     }
 
-    /// A `List` on paper: no grouped cells, no separators. The dot grid moves with the rows.
+    /// A `List` on paper: the list's own background goes, and the dot grid moves with the rows.
+    /// The cells still draw their grouped background and separators until each row or section
+    /// gets `paperRow()`: those are row modifiers, which do nothing on the `List` itself.
     func paperList(dots: Bool = true) -> some View {
         modifier(PaperList(dots: dots))
+    }
+
+    /// A row of a `paperList`: no cell background, no separators. Put it on each row, or on a
+    /// `Section`, which passes it to its rows.
+    func paperRow() -> some View {
+        listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listSectionSeparator(.hidden)
     }
 
     /// The floating card: a shadow in light mode, a thin edge in dark mode.
@@ -82,21 +98,25 @@ extension View {
 
 private struct PaperList: ViewModifier {
     let dots: Bool
-    @State private var offset: CGFloat = 0
+    /// Only the scroll position within one dot row: it changes every frame, but `DotGrid` just
+    /// moves by it, so the grid is never redrawn.
+    @State private var shift: CGFloat = 0
 
     func body(content: Content) -> some View {
         content
             .scrollContentBackground(.hidden)
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
-            .listSectionSeparator(.hidden)
-            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, new in
-                offset = new
+            .onScrollGeometryChange(for: CGFloat.self) {
+                // Always 0 up to one spacing, also while the list bounces past its top.
+                let spacing = Theme.dotSpacing
+                let remainder = ($0.contentOffset.y + $0.contentInsets.top).truncatingRemainder(dividingBy: spacing)
+                return remainder < 0 ? remainder + spacing : remainder
+            } action: { _, new in
+                shift = new
             }
             .background {
-                ZStack {
+                ZStack(alignment: .top) {
                     Theme.paper
-                    if dots { DotGrid(offset: offset) }
+                    if dots { DotGrid(offset: shift) }
                 }
                 .ignoresSafeArea()
             }
@@ -119,10 +139,19 @@ private struct LiveCard: ViewModifier {
 }
 
 /// A switch drawn in ink. On: an ink track with a paper knob, so the knob stays visible in dark
-/// mode, where ink is light. Off: a secondary edge and knob. VoiceOver and the UI tests see a
-/// plain switch.
+/// mode, where ink is light. Off: a secondary edge and knob. Dimmed when disabled. The whole row
+/// is the tap target (at least 44 points tall), and VoiceOver and the UI tests see a plain switch.
 struct InkToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
+        InkToggle(configuration: configuration)
+    }
+}
+
+private struct InkToggle: View {
+    let configuration: ToggleStyleConfiguration
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
         HStack {
             configuration.label
             Spacer()
@@ -135,12 +164,16 @@ struct InkToggleStyle: ToggleStyle {
                     .padding(3)
             }
             .frame(width: 46, height: 28)
+            .opacity(isEnabled ? 1 : 0.4)
             .animation(.snappy(duration: 0.2), value: configuration.isOn)
-            .contentShape(.rect)
-            .onTapGesture { configuration.isOn.toggle() }
         }
+        .frame(minHeight: 44)
+        .contentShape(.rect)
+        .onTapGesture { if isEnabled { configuration.isOn.toggle() } }
         .accessibilityRepresentation {
+            // The system style, so this inner Toggle doesn't draw itself with InkToggleStyle again.
             Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.switch)
         }
     }
 }
