@@ -130,6 +130,12 @@ final class HotspotNeighborsTests: XCTestCase {
         let peers = ["10.7.0.2": peer(from: "[::ffff:172.20.10.2]:51820", handshakeAt: 0)]
         XCTAssertEqual(listed(n, at: 0, wireGuard: peers), ["172.20.10.3"])
         XCTAssertEqual(listed(n, at: 0, proxy: ["::ffff:172.20.10.3": seconds(0)]), ["172.20.10.2"])
+        // The other ways the same address can be written: upper case, the hex form, and with a zone.
+        for endpoint in ["[::FFFF:172.20.10.2]:51820", "[::ffff:ac14:a02]:51820", "[::ffff:172.20.10.2%bridge100]:51820"] {
+            let peers = ["10.7.0.2": peer(from: endpoint, handshakeAt: 0)]
+            XCTAssertEqual(listed(n, at: 0, wireGuard: peers), ["172.20.10.3"], endpoint)
+        }
+        XCTAssertEqual(listed(n, at: 0, proxy: ["::ffff:172.20.10.3%bridge100": seconds(0)]), ["172.20.10.2"])
     }
 
     /// A mix: an IPv4 device on WireGuard, one on IPv6, and an address not on Tether. The IPv6 one could
