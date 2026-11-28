@@ -65,11 +65,12 @@ final class SettingsDNSTests: TetherUITestCase {
         let field = reveal(element("newDevices.controlD"))
         XCTAssertEqual(label(of: "newDevices.controlDProblem"),
                        "Your profile's resolver ID or DoH link, from Control D's dashboard. Until then, Tether asks 1.1.1.1.")
-        XCTAssertEqual(label(of: "newDevices.footer"), Self.footer, "nothing typed, so nothing changes yet")
-        field.tap()
+        // Below the field and its problem line, so off screen on a phone this size: brought into view first.
+        XCTAssertEqual(reveal(element("newDevices.footer")).label, Self.footer, "nothing typed, so nothing changes yet")
+        reveal(field).tap()
         field.typeText("https://dns.controld.com/abcd1234")
         waitUntilGone(element("newDevices.controlDProblem"))
-        XCTAssertEqual(label(of: "newDevices.footer"), Self.controlDFooter)
+        XCTAssertEqual(reveal(element("newDevices.footer")).label, Self.controlDFooter)
         try audit(only: "newDevices.")
     }
 
