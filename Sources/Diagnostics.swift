@@ -1,8 +1,8 @@
 import Foundation
 
 /// The Diagnostics screen in Settings (#256): the server's counters, in the order a device's traffic
-/// meets them, so the first one that stays at 0 says where it stops. A tap on a row copies its value.
-/// Foundation only, so `swift test` covers it. `DiagnosticsView` draws it.
+/// meets them, so the first one that stays at 0 says where it stops. A tap on a row copies its value,
+/// and Copy all copies every row for a bug report (L5). Foundation only, so `swift test` covers it. `DiagnosticsView` draws it.
 enum Diagnostics {
     struct Row: Equatable, Identifiable {
         /// Its accessibility identifier is "diagnostics.<id>".
@@ -25,7 +25,7 @@ enum Diagnostics {
     /// Not `sharing`, there's nothing to count: the first footer says so, and the others, which
     /// explain a 0, are left out. The rows stay, so the screen shows what it will count.
     static func sections(_ d: ServerDiagnostics, sharing: Bool) -> [Section] {
-        let port = sharing ? "UDP in stays at 0 when nothing from a device reaches this iPhone. Rejected messages often mean a config that no longer works. The counts start again each time sharing starts. Tap a row to copy its value."
+        let port = sharing ? "UDP in stays at 0 when nothing from a device reaches this iPhone. Rejected messages often mean a config that no longer works. The counts start again each time sharing starts. Tap a row to copy its value, or Copy all for a bug report."
             : "Tether isn't sharing, so there's nothing to count. Start sharing, then come back."
         let tunnel = sharing ? "Packets in stays at 0 when a device's tunnel sends nothing to Tether. Dropped packets come from an address the device's config doesn't give it, like a router's clients before Tether finds the router." : ""
         let out = sharing ? "The connections this iPhone makes for your devices." : ""
@@ -50,6 +50,15 @@ enum Diagnostics {
                 Row(id: "lastError", title: "Last connection error", value: text(d.lastError, none: "None"), wide: true),
             ]),
         ]
+    }
+
+    /// What Copy all copies: `header`, the log's first line (Tether's version, iOS and the iPhone), then
+    /// each section's title and its rows as "Title: value". Footers are left out: they explain the
+    /// screen, not this iPhone.
+    static func all(_ sections: [Section], header: String) -> String {
+        ([header] + sections.map { section in
+            ([section.title] + section.rows.map { "\($0.title): \($0.value)" }).joined(separator: "\n")
+        }).joined(separator: "\n\n")
     }
 
     private static func count(_ n: UInt64) -> String { n.formatted() }

@@ -1,11 +1,13 @@
 import SwiftUI
 import UserNotifications
 
-/// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle or at low battery, the
-/// DNS server Tether asks for the devices, whether they reach the iPhone's local networks, a switch for each kind of notification, a button for the permission before Tether asked for it
-/// itself, the way to Settings when iOS has Tether's notifications off, the log to share for a bug
-/// report, the server's counters (`DiagnosticsView`), and what this build is.
-/// Paper and ink (#349): plain rows on the paper, and each section's long help behind an (i).
+/// The Settings sheet, opened with the gear on the main screen: when sharing stops while idle or at
+/// low battery, the day the data counts reset, Only share through a VPN, the DNS server Tether asks
+/// for the devices and whether they reach the iPhone's own networks, the way to the notification
+/// switches (`NotificationsView`), the ways to wake Tether without opening it, the log to share for a
+/// bug report, the server's counters (`DiagnosticsView`), and what this build is.
+/// Paper and ink (#349): plain rows on the paper, one short line under a setting that needs it, and
+/// each section's long help behind an (i).
 struct SettingsView: View {
     @ObservedObject var model: Model
     @Environment(\.dismiss) private var dismiss
@@ -27,6 +29,12 @@ struct SettingsView: View {
     /// The sections whose help shows, by the id of their help text.
     @State private var helpShown: Set<String> = []
     @State private var showDiagnostics = false
+    @State private var showNotifications = false
+    /// Help > Start without opening Tether is open.
+    @State private var wakeShown = false
+    /// The Notifications row's value. The switches are saved where `Notifier` reads them, which
+    /// SwiftUI doesn't watch, so it's read again when their page closes and when iOS's answer changes.
+    @State private var noticeSummary: String
 
     init(model: Model) {
         self.model = model
@@ -38,17 +46,18 @@ struct SettingsView: View {
         _dnsControlD = AppStorage(wrappedValue: "", DNSChoice.controlDKey, store: model.settingsDefaults)
         _localNetworksAllowed = AppStorage(wrappedValue: false, LocalNetworks.key, store: model.settingsDefaults)
         _onlyThroughVPN = AppStorage(wrappedValue: false, HotspotSession.onlyThroughVPNKey, store: model.settingsDefaults)
+        _noticeSummary = State(initialValue: NoticeKind.summary(model.noticePermission, defaults: model.settingsDefaults))
     }
 
     var body: some View {
         NavigationStack {
             List {
                 PaperTitle("Settings")
-                sharing
+                whenToStop
+                data
                 vpn
-                newDevices
-                localNetworks
-                notices
+                yourDevices
+                notifications
                 help
                 about
             }
@@ -77,9 +86,16 @@ struct SettingsView: View {
                 }
             }
             .navigationDestination(isPresented: $showDiagnostics) { DiagnosticsView(model: model) }
+            .navigationDestination(isPresented: $showNotifications) { NotificationsView(model: model) }
         }
         // Settings may have changed it while Tether was away.
         .task { await model.refreshNoticePermission() }
+        .onChange(of: model.noticePermission) { readNoticeSummary() }
+        .onChange(of: showNotifications) { if !showNotifications { readNoticeSummary() } }
+    }
+
+    private func readNoticeSummary() {
+        noticeSummary = NoticeKind.summary(model.noticePermission, defaults: model.settingsDefaults)
     }
 
     /// A section's header. With `help`, the id of its help text, it has an (i) named `<info>.info`
@@ -92,8 +108,10 @@ struct SettingsView: View {
         return PaperHeader(title: title, help: shown, id: info)
     }
 
-    @ViewBuilder private func helpText(_ text: String, id: String) -> some View {
-        if helpShown.contains(id) {
+    /// The section's help, once its (i) is on. `shownBy` is the (i)'s help id, when one (i) shows more
+    /// than one text.
+    @ViewBuilder private func helpText(_ text: String, id: String, shownBy: String? = nil) -> some View {
+        if helpShown.contains(shownBy ?? id) {
             PaperHelp(text: text, id: id)
         }
     }
@@ -110,6 +128,7 @@ struct SettingsView: View {
         LabeledContent {
             Text(value)
                 .foregroundStyle(Theme.secondary)
+                .multilineTextAlignment(.trailing)
                 .contentTransition(.opacity)
                 .animation(PaperMotion.change(reduceMotion: reduceMotion), value: value)
         } label: {
@@ -118,86 +137,51 @@ struct SettingsView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var help: some View {
-        Section {
-            helpText(Self.logHelp, id: "settings.logFooter")
-            ShareLink(item: LogFile(), preview: SharePreview("Tether log")) {
-                DashLabel("Share the log")
-            }
-            .accessibilityIdentifier("settings.log")
-            Button { showDiagnostics = true } label: {
-                DashLabel("Diagnostics")
-            }
-            .accessibilityIdentifier("settings.diagnostics")
-            Link(destination: URL(string: "https://github.com/viktor-svirsky/tether")!) {
-                DashLabel("Help and source code")
-            }
-            .accessibilityIdentifier("settings.help")
-        } header: {
-            header("Help", help: "settings.logFooter", info: "help")
+    /// A menu of choices, with the line that says what the setting does under its title.
+    private func menu<Value: Hashable, Choices: View>(_ title: String, note: String, selection: Binding<Value>,
+                                                      @ViewBuilder choices: () -> Choices) -> some View {
+        Picker(selection: selection, content: choices) {
+            DashLabel(title, note: note)
         }
-        .paperRow()
+        .pickerStyle(.menu)
+        .tint(Theme.secondary)
     }
 
-    static let logHelp = "The log is a text file of what Tether did lately, for a bug report. Keys and full addresses are left out."
-
-    @ViewBuilder private var about: some View {
+    private var whenToStop: some View {
         Section {
-            row("Version", value: Model.version)
-                .accessibilityIdentifier("settings.version")
-            if let expires = model.expires {
-                row("Stops opening", value: expires.formatted(date: .abbreviated, time: .omitted))
-                    .accessibilityIdentifier("settings.expires")
-            }
-            row("License", value: "MIT")
-        } header: {
-            header("About")
-        } footer: {
-            // Not behind an (i): when the build stops opening is a status, not help.
-            if model.expires != nil {
-                note("With a free Apple ID, refresh Tether in SideStore or AltStore before then.")
-                    .accessibilityIdentifier("settings.expiresFooter")
-            }
-        }
-        .paperRow()
-    }
-
-    private var sharing: some View {
-        Section {
-            helpText(Self.sharingHelp, id: "sharing.footer")
-            Picker(selection: $idleStopAfter) {
+            helpText(Self.whenToStopHelp, id: "sharing.footer")
+            menu("Stop sharing when idle", note: "After no device is connected for this long.", selection: $idleStopAfter) {
                 ForEach(IdleStop.After.allCases, id: \.self) { Text($0.label).tag($0) }
-            } label: {
-                DashLabel("Stop sharing when idle")
             }
-            .pickerStyle(.menu)
-            .tint(Theme.secondary)
             .accessibilityIdentifier("sharing.idleStop")
-            Picker(selection: $lowBatteryStop) {
+            menu("Stop sharing at low battery", note: "Only while the iPhone isn't charging.", selection: $lowBatteryStop) {
                 ForEach(LowBatteryStop.Level.allCases, id: \.self) { Text($0.label).tag($0) }
-            } label: {
-                DashLabel("Stop sharing at low battery")
             }
-            .pickerStyle(.menu)
-            .tint(Theme.secondary)
             .accessibilityIdentifier("sharing.lowBattery")
-            Picker(selection: $resetDay) {
+        } header: {
+            header("When to stop", help: "sharing.footer", info: "sharing")
+        }
+        .paperRow()
+    }
+
+    static let whenToStopHelp = "Idle means no device is connected and nothing goes through the proxy. Stopping saves battery, and at low battery only happens while the iPhone isn't charging. Open Tether to share again."
+
+    private var data: some View {
+        Section {
+            helpText(Self.dataHelp, id: "data.footer")
+            menu("Data counts reset on", note: "Set it to your plan's billing day.", selection: $resetDay) {
                 ForEach(ResetDay.choices, id: \.self) { Text($0.label).tag($0.day) }
-            } label: {
-                DashLabel("Data counts start on")
             }
-            .pickerStyle(.menu)
-            .tint(Theme.secondary)
             .accessibilityIdentifier("sharing.resetDay")
             // The screens show the new dates as soon as Settings closes (#187).
             .onChange(of: resetDay) { model.resetDayChanged() }
         } header: {
-            header("Sharing", help: "sharing.footer", info: "sharing")
+            header("Data", help: "data.footer", info: "data")
         }
         .paperRow()
     }
 
-    static let sharingHelp = "Idle means no device is connected and nothing goes through the proxy. Stopping saves battery, and at low battery only happens while the iPhone isn't charging. Open Tether to share again. Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier."
+    static let dataHelp = "Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier."
 
     private var vpn: some View {
         Section {
@@ -206,6 +190,7 @@ struct SettingsView: View {
                 .toggleStyle(.ink)
                 .onChange(of: onlyThroughVPN) { model.checkVPN() }
                 .accessibilityIdentifier("vpn.only")
+            // With the switch on and no VPN, it says the devices are kept out, right where it's turned on (M8).
             row("Now", value: VPNText.now(vpn: model.vpnInterface != nil, onlyFamily: model.vpnOnlyFamily, onlyThroughVPN: onlyThroughVPN))
                 .accessibilityIdentifier("vpn.now")
         } header: {
@@ -216,10 +201,12 @@ struct SettingsView: View {
 
     static let vpnHelp = "When it's on and no VPN carries this iPhone's internet, no device gets through. Tether pauses the devices when it sees the VPN go, which can take a few seconds. Turn a VPN on in its app, or with Set VPN in Shortcuts: Tether can't pick one."
 
-    private var newDevices: some View {
+    /// DNS and the iPhone's own networks: what the devices get. One (i) shows both helps.
+    private var yourDevices: some View {
         Section {
             helpText(dns == .controlD && DNSChoice.controlD(typed: dnsControlD) != nil ? Self.controlDFooter : Self.footer,
                      id: "newDevices.footer")
+            helpText(Self.localNetworksHelp, id: "localNetworks.footer", shownBy: "newDevices.footer")
             Picker(selection: $dns) {
                 ForEach(DNSChoice.allCases, id: \.self) { Text($0.label).tag($0) }
             } label: {
@@ -255,8 +242,14 @@ struct SettingsView: View {
                         .accessibilityIdentifier("newDevices.controlDProblem")
                 }
             }
+            // Under the header it reads as one sentence. iOS's own switch is "Local Network" (M3).
+            Toggle(isOn: $localNetworksAllowed) { DashLabel("The iPhone's Wi-Fi and VPN networks") }
+                .toggleStyle(.ink)
+                // Turning it off closes what the devices have open there at once (#230).
+                .onChange(of: localNetworksAllowed) { model.localNetworksChanged() }
+                .accessibilityIdentifier("localNetworks.toggle")
         } header: {
-            header("DNS for your devices", help: "newDevices.footer", info: "newDevices")
+            header("Your devices", help: "newDevices.footer", info: "newDevices")
         }
         .paperRow()
         // A device whose config names Tether asks the new choice from its next lookup. What's typed is
@@ -276,84 +269,75 @@ struct SettingsView: View {
     private static let footer = "Your devices ask Tether, and Tether asks this server, so a change reaches them at once. A device whose DNS in WireGuard isn't 10.7.0.1 keeps its own: set it to 10.7.0.1 there, or add the device again. The server can see which sites your devices visit."
     private static let controlDFooter = "Your devices ask Tether, and Tether asks your Control D profile over HTTPS. Pick the country sites see in Control D, under Redirect (a paid plan). A device whose DNS in WireGuard isn't 10.7.0.1 keeps its own: set it to 10.7.0.1 there. Control D can see which sites your devices visit."
 
-    private var localNetworks: some View {
-        Section {
-            helpText(Self.localNetworksHelp, id: "localNetworks.footer")
-            Toggle(isOn: $localNetworksAllowed) { DashLabel("Local networks") }
-                .toggleStyle(.ink)
-                .accessibilityIdentifier("localNetworks.toggle")
-        } header: {
-            header("What your devices can reach", help: "localNetworks.footer", info: "localNetworks")
-        }
-        .paperRow()
-        // Turning it off closes what the devices have open there at once (#230).
-        .onChange(of: localNetworksAllowed) { model.localNetworksChanged() }
-    }
-
     static let localNetworksHelp = "Off: your devices reach the internet, but not the iPhone's Wi-Fi network, a VPN's private addresses or a Tailscale network. Tether's page still opens."
 
-    @ViewBuilder private var notices: some View {
-        if model.noticePermission == .notAsked {
-            Section {
-                Button { model.askForNotices() } label: { DashLabel("Allow notifications") }
-                    .accessibilityIdentifier("notices.allow")
-            } footer: {
-                note("Or Tether asks the first time it has something to tell you.")
-            }
-            .paperRow()
-        }
-        if model.noticePermission == .denied {
-            Section {
-                Label {
-                    Text("Notifications are off for Tether in iOS Settings.")
-                        .foregroundStyle(Theme.ink)
-                } icon: {
-                    Image(systemName: "bell.slash")
-                        .foregroundStyle(Theme.ink)
-                        .accessibilityHidden(true)
-                }
-                // One element: on iOS 26 the symbol is a separate one named "Notifications Off".
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("notices.denied")
-                Button {
-                    UIApplication.shared.open(URL(string: UIApplication.openNotificationSettingsURLString)!)
-                } label: {
-                    DashLabel("Open iOS Settings")
-                }
-                .accessibilityIdentifier("notices.settings")
-            }
-            .paperRow()
-        }
+    /// One row to the switches' own page (M6), with how many are on, or why none can be delivered.
+    private var notifications: some View {
         Section {
-            ForEach(NoticeKind.allCases, id: \.self) { kind in
-                NoticeSwitch(kind: kind, store: model.settingsDefaults)
+            Button { showNotifications = true } label: {
+                row("Notifications", value: noticeSummary)
             }
-        } header: {
-            header("Notify me when")
-        } footer: {
-            // Short, and says when these apply at all, so it stays out from behind an (i).
-            note("Only while Tether is in the background. While it's open, you see it on screen.")
-                .accessibilityIdentifier("notices.footer")
+            // A row, not a link: the title in ink.
+            .foregroundStyle(Theme.ink)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("settings.notifications")
         }
         .paperRow()
     }
-}
 
-
-/// One kind's switch, saved where `Notifier` reads it.
-private struct NoticeSwitch: View {
-    let kind: NoticeKind
-    @AppStorage private var on: Bool
-
-    init(kind: NoticeKind, store: UserDefaults) {
-        self.kind = kind
-        _on = AppStorage(wrappedValue: true, kind.key, store: store)
+    private var help: some View {
+        Section {
+            helpText(Self.logHelp, id: "settings.logFooter")
+            Button {
+                withAnimation(PaperMotion.change(reduceMotion: reduceMotion)) { wakeShown.toggle() }
+            } label: {
+                DashLabel(WakeHelp.title)
+            }
+            .foregroundStyle(Theme.ink)
+            .accessibilityValue(wakeShown ? "Shown" : "Hidden")
+            .accessibilityIdentifier("settings.wake")
+            if wakeShown {
+                PaperHelp(text: WakeHelp.lines.joined(separator: "\n"), id: "settings.wakeHelp")
+            }
+            ShareLink(item: LogFile(), preview: SharePreview("Tether log")) {
+                DashLabel("Share the log")
+            }
+            .accessibilityIdentifier("settings.log")
+            Button { showDiagnostics = true } label: {
+                DashLabel("Diagnostics")
+            }
+            .accessibilityIdentifier("settings.diagnostics")
+            Link(destination: URL(string: "https://github.com/viktor-svirsky/tether")!) {
+                DashLabel("Help and source code")
+            }
+            .accessibilityIdentifier("settings.help")
+        } header: {
+            header("Help", help: "settings.logFooter", info: "help")
+        }
+        .paperRow()
     }
 
-    var body: some View {
-        Toggle(isOn: $on) { DashLabel(kind.label) }
-            .toggleStyle(.ink)
-            .accessibilityIdentifier("notices.\(kind.rawValue)")
+    static let logHelp = "The log is a text file of what Tether did lately, for a bug report. Keys and full addresses are left out."
+
+    @ViewBuilder private var about: some View {
+        Section {
+            row("Version", value: Model.version)
+                .accessibilityIdentifier("settings.version")
+            if let expires = model.expires {
+                row("Stops opening", value: expires.formatted(date: .abbreviated, time: .omitted))
+                    .accessibilityIdentifier("settings.expires")
+            }
+            row("License", value: "MIT")
+        } header: {
+            header("About")
+        } footer: {
+            // Not behind an (i): when the build stops opening is a status, not help.
+            if model.expires != nil {
+                note(AppExpiry.about)
+                    .accessibilityIdentifier("settings.expiresFooter")
+            }
+        }
+        .paperRow()
     }
 }
 

@@ -2,30 +2,29 @@ import SwiftUI
 import UIKit
 
 /// Settings > Diagnostics (#256): the server's counters, read each second, see `Diagnostics`. A tap
-/// on a row, or Copy in its menu, copies its value, and says so for a moment.
+/// on a row, or Copy in its menu, copies its value, and Copy all copies every row with what this
+/// build, iOS and iPhone are (L5). Each copy says so the same way as the other screens (L4).
 struct DiagnosticsView: View {
     @ObservedObject var model: Model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// A value was just copied: "Copied" shows at the bottom for a moment. Not the value, which is
-    /// on the row, and a long one would cover it.
     @State private var copied = false
-
-    /// How long "Copied" shows, in seconds. A UI test under load can take longer than 2 s to look
-    /// after a menu closes, so in a Debug build it can pass `-diagnostics.copiedShownFor <s>`.
-    private static var copiedShownFor: Double {
-        #if DEBUG
-        let s = UserDefaults.standard.double(forKey: "diagnostics.copiedShownFor")
-        if s > 0 { return s }
-        #endif
-        return 2
-    }
 
     var body: some View {
         // The counters change at most once a second, here. Each value animates only when it changed.
         TimelineView(.periodic(from: .now, by: 1)) { _ in
+            let sections = Diagnostics.sections(model.serverDiagnostics, sharing: model.sharing)
             List {
                 PaperTitle("Diagnostics")
-                ForEach(Diagnostics.sections(model.serverDiagnostics, sharing: model.sharing)) { section in
+                Section {
+                    Button { copy(Diagnostics.all(sections, header: Self.header)) } label: {
+                        DashLabel("Copy all")
+                    }
+                    .foregroundStyle(Theme.ink)
+                    .accessibilityHint("Copies every row, for a bug report")
+                    .accessibilityIdentifier("diagnostics.copyAll")
+                }
+                .paperRow()
+                ForEach(sections) { section in
                     Section {
                         ForEach(section.rows) { row($0) }
                     } header: {
@@ -45,36 +44,32 @@ struct DiagnosticsView: View {
             .listStyle(.grouped)
             .listSectionSpacing(.compact)
             .paperList()
+            // Room under the last row, so "Copied" doesn't cover it.
+            .contentMargins(.bottom, 72, for: .scrollContent)
         }
-        .overlay(alignment: .bottom) {
-            if copied {
-                Text("Copied")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.paper)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(Theme.ink, in: Capsule())
-                    .padding()
-                    .accessibilityIdentifier("diagnostics.copied")
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
-            }
-        }
-        .task(id: copied) {
-            guard copied else { return }
-            try? await Task.sleep(for: .seconds(Self.copiedShownFor))
-            if !Task.isCancelled { withAnimation(PaperMotion.change) { copied = false } }
-        }
+        .copiedToast($copied, id: "diagnostics.copied")
         .paperNavigationBar("Diagnostics")
     }
 
-    private func copy(_ row: Diagnostics.Row) {
-        UIPasteboard.general.string = row.value
+    /// The log's first line: this build, iOS and the iPhone's model, as `Model.writeLog` writes it.
+    private static var header: String {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        var system = utsname()
+        uname(&system)
+        let machine = withUnsafeBytes(of: system.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        return "Tether \(Model.version), iOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion), \(machine)"
+    }
+
+    private func copy(_ text: String) {
+        UIPasteboard.general.string = text
+        // The toast announces when it shows. A copy while it still shows doesn't show it again, so
+        // VoiceOver hears that one here.
+        if copied { AccessibilityNotification.Announcement(Copy.copied).post() }
         withAnimation(PaperMotion.change) { copied = true }
-        AccessibilityNotification.Announcement("Copied").post()
     }
 
     private func row(_ row: Diagnostics.Row) -> some View {
-        Button { copy(row) } label: {
+        Button { copy(row.value) } label: {
             if row.wide {
                 VStack(alignment: .leading, spacing: 2) {
                     DashLabel(row.title)
@@ -101,7 +96,7 @@ struct DiagnosticsView: View {
         .foregroundStyle(Theme.ink)
         // A long press has Copy too, the way iOS copies elsewhere.
         .contextMenu {
-            Button("Copy", systemImage: "doc.on.doc") { copy(row) }
+            Button("Copy", systemImage: "doc.on.doc") { copy(row.value) }
         }
         .accessibilityElement(children: .combine)
         .accessibilityHint("Copies the value")

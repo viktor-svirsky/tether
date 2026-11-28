@@ -1,10 +1,10 @@
 import XCTest
 
-/// Settings > Sharing: the day the data counts and limits start over (#187), and how the screens
+/// Settings > Data: the day the data counts and limits start over (#187), and how the screens
 /// name the count then. The periods themselves are covered by the unit tests (MonthlyUsageTests,
 /// LimitTests), and the words by FormatTests.
 final class SettingsResetDayTests: TetherUITestCase {
-    static let footer = "Idle means no device is connected and nothing goes through the proxy. Stopping saves battery, and at low battery only happens while the iPhone isn't charging. Open Tether to share again. Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier."
+    static let footer = "Data counts start again on this day each month. Set it to your plan's billing day so the limits match your carrier."
     /// Starts the demo on the 15th. Read through the launch arguments, so the menu can't change it.
     private let onThe15th = ["-usage.resetDay", "15"]
     private let accessibilityXL = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"]
@@ -16,14 +16,16 @@ final class SettingsResetDayTests: TetherUITestCase {
     /// The 1st at first, the first choices in order, and the choice kept. The demo's day is
     /// October 17, so a change to the 15th ends the running count on November 15 (see
     /// MonthlyUsage.setResetDay), and the screens say so as soon as Settings closes.
-    func testDataCountsStartOnIsAMenuKeptAfterClosing() throws {
+    func testDataCountsResetOnIsAMenuKeptAfterClosing() throws {
         launch(.sharing)
         openSettings()
         let menu = app.buttons["sharing.resetDay"].firstMatch
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
-        XCTAssertTrue(menu.label.contains("Data counts start on"), menu.label)
+        XCTAssertTrue(menu.label.contains("Data counts reset on"), menu.label)
+        XCTAssertTrue(menu.label.contains("Set it to your plan's billing day."), menu.label)
+        XCTAssertTrue(sectionHeader("Data").exists)
         XCTAssertTrue(says(menu, "1st"), "the 1st at first: \(menu.label)")
-        XCTAssertEqual(showHelp("sharing", "sharing.footer").label, Self.footer)
+        XCTAssertEqual(showHelp("data", "data.footer").label, Self.footer)
         add(screenshot("settings-reset-day"))
         try audit()
         menu.tap()
