@@ -72,7 +72,7 @@ struct WidgetPublisher {
         /// Write the state for the widgets to read.
         var save = false
         var reloadWidgets = false
-        /// The Control Center button, from iOS 18.
+        /// The Control Center button.
         var reloadControls = false
     }
 

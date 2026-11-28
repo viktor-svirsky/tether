@@ -6,12 +6,11 @@ final class DevicePauseTests: TetherUITestCase {
     private let footer = "Pause stops it from connecting for a while, or until you resume it."
     private let lengths = ["For 30 minutes", "For 1 hour", "Until tomorrow", "Until I resume it"]
 
-    /// Taps Pause where a finger would, at the middle of its row. On iOS 18.5 the element's own tap
-    /// doesn't open the menu, while a tap at those coordinates does (checked with a probe test).
+    /// Taps Pause, which opens its menu.
     private func openPauseMenu() {
         let pause = reveal(element("device.pause"))
         waitUntilStill(pause)
-        pause.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        pause.tap()
     }
 
     /// Pause, then how long from its menu (#312).
