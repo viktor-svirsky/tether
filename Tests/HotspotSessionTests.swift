@@ -2641,6 +2641,16 @@ final class HotspotSessionTests: XCTestCase {
         XCTAssertEqual(knocker.rounds.first?.timeout, 1.5)
     }
 
+    /// The proxy's devices come from Go without times (#324): one served over IPv6 empties the list too.
+    func testAnIPv6ProxyDeviceEmptiesTheListThroughTheSession() async throws {
+        let knocker = try shareWithNeighbors()
+        server.proxyServed = ["172.20.10.3", "2607:fb91:88a2:e822::5"]
+        session.sampleTraffic()
+        await session.knockNeighbors()
+        XCTAssertEqual(knocker.rounds.count, 1, "the knock ran, so the empty list comes from it")
+        XCTAssertEqual(session.notUsingTether, [])
+    }
+
     /// A knock can make iOS ask about Local Network, so none goes out before Continue on the screen
     /// that comes first.
     func testNoKnockBeforeTheLocalNetworkScreensContinue() async throws {
