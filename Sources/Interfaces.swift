@@ -7,8 +7,8 @@ enum Interfaces {
     /// on the hotspot takes no IPv4 (it asks for IPv6 only and makes up 192.0.0.2 for itself) and
     /// can't reach 172.20.10.1. Then it's the iPhone's IPv6 address on the same bridge, and the session
     /// listens on 172.20.10.1 too, for a Windows PC, which does take IPv4 (#98). A CLAT's address in
-    /// 192.0.0.0/29 is no IPv4 from the carrier, and nor is IPv4 on another cellular interface than
-    /// pdp_ip0, the internet's: VoLTE often has its own, with IPv4 on an IPv6-only carrier.
+    /// 192.0.0.0/29 is no IPv4 from the carrier. Only pdp_ip0 is read here, which is usually the data
+    /// line (iOS doesn't promise it): another pdp_ip is often VoLTE's, with IPv4 on an IPv6-only carrier.
     /// The bridge may have more than one IPv6 address, some of them temporary ones that come and go.
     /// `current` is kept while the bridge has it, since a new address restarts the server and makes
     /// the devices' configs point at the wrong place. `HotspotAddressKeeper` keeps it across launches.
@@ -32,7 +32,8 @@ enum Interfaces {
     /// The carrier gives this iPhone IPv6 and no IPv4, so a Mac, an iPhone or an iPad on the hotspot
     /// will take no IPv4 either. Unlike `hotspotAddress`, this is known before a device joins and the
     /// bridge appears.
-    /// It takes pdp_ip0 with IPv6 to say so: no cellular at all, or Wi-Fi only, isn't IPv6 only.
+    /// It takes pdp_ip0, usually the data line, with IPv6 to say so: no cellular at all, or Wi-Fi
+    /// only, isn't IPv6 only.
     static func carrierIPv6Only(in interfaces: [String]) -> Bool {
         let lines = parse(interfaces)
         let ipv6 = lines.contains { $0.name == "pdp_ip0" && $0.address.contains(":") && !$0.address.contains("%") }
@@ -50,7 +51,7 @@ enum Interfaces {
         lines.contains { $0.name == "pdp_ip0" && !$0.address.contains(":") && !isCLAT($0.address) }
     }
 
-    /// What pdp_ip0, the cellular data's interface, has, for the log: "pdp_ip0: IPv6", say, or
+    /// What pdp_ip0, usually the cellular data's interface, has, for the log: "pdp_ip0: IPv6", say, or
     /// "pdp_ip0: no address". Never the address itself.
     static func pdpIp0(in interfaces: [String]) -> String {
         let lines = parse(interfaces).filter { $0.name == "pdp_ip0" && !$0.address.contains("%") }

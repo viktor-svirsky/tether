@@ -119,7 +119,7 @@ final class HotspotSessionTests: XCTestCase {
             (bridge, v6, #line),
             (bridge + ["pdp_ip0: 192.0.0.4"], v6, #line), // a CLAT's address isn't IPv4 from the carrier
             (bridge + ["pdp_ip0: 10.20.30.40"], "172.20.10.1", #line), // dual stack, as before
-            (bridge + ["pdp_ip1: 10.170.0.9"], v6, #line), // VoLTE's own IPv4 isn't for the internet
+            (bridge + ["pdp_ip1: 10.170.0.9"], v6, #line), // only pdp_ip0 is read: another is often VoLTE's
             (bridge + ["pdp_ip0: 192.0.0.8"], "172.20.10.1", #line), // just past the CLAT's range
             (["bridge100: 172.20.10.1", "bridge100: fe80::1%bridge100"], "172.20.10.1", #line), // no IPv6 to give
             (["bridge100: 172.20.10.1", "bridge101: \(v6)"], "172.20.10.1", #line), // another bridge's
@@ -329,7 +329,7 @@ final class HotspotSessionTests: XCTestCase {
     }
 
     /// Before a device joins, the hotspot has no bridge, so there's no IPv6 address to give yet. The
-    /// carrier's own interface, pdp_ip0, already says whether there will be IPv4 (#64).
+    /// carrier's interface, pdp_ip0, usually the data line, already says whether there will be IPv4 (#64).
     func testTheCarrierIsIPv6OnlyWhenTheInternetHasNoIPv4() {
         let v6 = "2607:fb90:1::2"
         let cases: [(interfaces: [String], ipv6Only: Bool, line: UInt)] = [
@@ -337,11 +337,11 @@ final class HotspotSessionTests: XCTestCase {
             (["en0: 192.168.1.5", "en0: 2001:db8::5"], false, #line), // Wi-Fi only
             (["pdp_ip0: \(v6)"], true, #line),
             (["pdp_ip0: \(v6)", "pdp_ip0: 192.0.0.4"], true, #line), // a CLAT's address isn't IPv4 from the carrier
-            (["pdp_ip0: \(v6)", "pdp_ip1: 10.170.0.9"], true, #line), // nor is VoLTE's
+            (["pdp_ip0: \(v6)", "pdp_ip1: 10.170.0.9"], true, #line), // only pdp_ip0 is read: another is often VoLTE's
             (["pdp_ip0: \(v6)", "pdp_ip0: 10.20.30.40"], false, #line), // dual stack
             (["pdp_ip0: 10.20.30.40"], false, #line),
             (["pdp_ip0: fe80::1%pdp_ip0"], false, #line), // link-local only, not online yet
-            (["pdp_ip1: \(v6)"], false, #line), // not the internet's
+            (["pdp_ip1: \(v6)"], false, #line), // only pdp_ip0 is read
         ]
         for c in cases {
             XCTAssertEqual(Interfaces.carrierIPv6Only(in: c.interfaces), c.ipv6Only, line: c.line)
